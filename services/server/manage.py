@@ -1,12 +1,5 @@
 import os
 from flask.cli import FlaskGroup
-
-try:
-    import ORE
-    print("ORE imported successfully before Flask initialization")
-except ImportError as e:
-    print(f"Warning: Could not import ORE: {e}")
-
 from project import create_app, db, socketio
 from project.api.users.models import User
 from project.db_models import seed_data, clean_data

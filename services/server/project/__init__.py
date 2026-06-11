@@ -1,12 +1,4 @@
 import os
-
-# CRITICAL: Import ORE before any Flask-SocketIO or gevent imports
-# This ensures ORE's C++ threading initializes before any monkey patching
-try:
-    import ORE
-except ImportError:
-    pass  # ORE might not be available in all environments
-
 from flask_bcrypt import Bcrypt
 from flask_sqlalchemy import SQLAlchemy
 from flask import Flask, request
