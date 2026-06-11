@@ -27,7 +27,7 @@
             "request": "attach",
             "connect": {
                 "host": "0.0.0.0",
-                "port": 5678 // 5678 for python-web container, and 5679 for python-worker container
+                "port": 5678
             },
             "pathMappings": [
                 {
@@ -37,22 +37,7 @@
             ]
         },
         {
-            "name": "Python: Backend - Worker Data",
-            "type": "debugpy",
-            "request": "attach",
-            "connect": {
-                "host": "0.0.0.0",
-                "port": 5677
-            },
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}\\services\\server",
-                    "remoteRoot": "."
-                }
-            ]
-        },
-        {
-            "name": "Python: Backend - Worker Pricing",
+            "name": "Python: Worker",
             "type": "debugpy",
             "request": "attach",
             "connect": {

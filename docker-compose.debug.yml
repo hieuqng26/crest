@@ -14,8 +14,8 @@ services:
     environment:
       - SERVICE_NAME=backend
       - DEBUG_PORT=5678
-      - CELERY_BROKER_URL=redis://default:Ey@123!@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://default:Ey@123!@redis:6379/0
+      - CELERY_BROKER_URL=redis://default:Ey%40123%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%40123%21@redis:6379/0
       - MLFLOW_TRACKING_URI=http://mlflow:5050
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -31,15 +31,17 @@ services:
 
   worker:
     image: mst-dev/backend:latest
-    command: celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
     volumes:
       - backend_data:/var/lib/app_data
+    ports:
+      - 5679:5679
     env_file:
       - env/.env.dev
     environment:
       - SERVICE_NAME=worker
-      - CELERY_BROKER_URL=redis://default:Ey@123!@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://default:Ey@123!@redis:6379/0
+      - DEBUG_PORT=5679
+      - CELERY_BROKER_URL=redis://default:Ey%40123%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%40123%21@redis:6379/0
       - MLFLOW_TRACKING_URI=http://mlflow:5050
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin

@@ -1,9 +1,9 @@
 #!/bin/sh
+
 if [ "$DATABASE" = "mssql" ] && [ "$SERVICE_NAME" = "backend" ]
 then
     echo "Waiting for MSSQL..."
 
-    # Wait until MSSQL is ready to accept connections
     until /opt/mssql-tools18/bin/sqlcmd -S $APP_DB_SERVER -U $APP_DB_USERNAME -P $APP_DB_PASSWORD -C -Q "SELECT 1" > /dev/null 2>&1
     do
         echo "MSSQL is unavailable - sleeping"
@@ -12,7 +12,6 @@ then
 
     echo "MSSQL is up - executing initialization"
 
-    # Create database if it doesn't exist
     /opt/mssql-tools18/bin/sqlcmd -S $APP_DB_SERVER -U $APP_DB_USERNAME -P $APP_DB_PASSWORD -C -Q "
     IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'$APP_DB_DATABASE')
     BEGIN
@@ -22,7 +21,6 @@ then
 
     echo "Database $APP_DB_DATABASE created"
 
-    # Create a new login and user with appropriate permissions
     /opt/mssql-tools18/bin/sqlcmd -S $APP_DB_SERVER -U $APP_DB_USERNAME -P $APP_DB_PASSWORD -C -d $APP_DB_DATABASE -Q "
     IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = N'$APP_DB_APP_USERNAME')
     BEGIN
@@ -47,21 +45,24 @@ then
     echo "Seeding the database..."
     python3.11 manage.py seed_data_db
 
-if [ "$FLASK_DEBUG" = "1" ]
+    if [ "$FLASK_DEBUG" = "1" ]
+    then
+        python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT manage.py run -h 0.0.0.0
+    else
+        gunicorn -c gunicorn_config.py manage:app
+    fi
+
+elif [ "$SERVICE_NAME" = "worker" ]
 then
-    python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT manage.py run -h 0.0.0.0
-else
-    # gunicorn --access-logfile=/var/log/gunicorn/access.log --error-logfile=/var/log/gunicorn/error.log --preload -k gevent -w 1 -b 0.0.0.0:5000 manage:app
-    gunicorn -c gunicorn_config.py manage:app
-fi
+    if [ -n "$DEBUG_PORT" ]
+    then
+        python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT -m celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
+    else
+        celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
+    fi
 
 else
-
-if [ "$FLASK_DEBUG" = "1" ]
-then
-    python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT manage.py run_worker
-else
-    python3.11 manage.py run_worker
-fi
+    echo "Unknown SERVICE_NAME: $SERVICE_NAME"
+    exit 1
 
 fi
