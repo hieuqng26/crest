@@ -23,6 +23,10 @@ services/client/node_modules
 # env files contain secrets — never commit
 env/
 
+# VSCode — ignore workspace settings but keep launch config
+.vscode/*
+!.vscode/launch.json
+
 # logs
 *.log
 
