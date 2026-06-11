@@ -1,0 +1,112 @@
+# Python virtual environments and cache
+.venv
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+*.egg
+
+# Project specific files
+test.ipynb
+project/data
+push_sftp.py
+project/qld/engine/qld/*
+
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test files and coverage
+.coverage
+.pytest_cache/
+.tox/
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Documentation
+*.md
+docs/
+README*
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Environment files
+.env*
+!.env.example
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Ignore git directories in ql_build
+ql_build/**/.git
+ql_build/**/.gitignore
+
+# Ignore build artifacts in ql_build
+ql_build/**/build/
+ql_build/**/bin/
+ql_build/**/obj/
+ql_build/**/*.o
+ql_build/**/*.obj
+ql_build/**/*.exe
+ql_build/**/*.dll
+ql_build/**/*.lib
+ql_build/**/*.pdb
+
+# Ignore Visual Studio files in ql_build
+ql_build/**/*.vcxproj.user
+ql_build/**/*.vcxproj.filters
+ql_build/**/*.sln.docstates
+ql_build/**/Debug/
+ql_build/**/Release/
+ql_build/**/x64/
+ql_build/**/.vs/
+
+# Ignore Python cache in ql_build
+ql_build/**/__pycache__/
+ql_build/**/*.pyc
+ql_build/**/*.pyo
+
+# Ignore temporary files in ql_build
+ql_build/**/*~
+ql_build/**/*.tmp
+ql_build/**/*.temp
+
+# Ignore test directories in ql_build to reduce size
+# ql_build/QLD/QLD-Python-Test/
+# ql_build/QLD/test/
+# ql_build/**/test/
+# ql_build/**/tests/
+# ql_build/**/Examples/
+# ql_build/**/Docs/

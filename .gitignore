@@ -1,0 +1,50 @@
+*.DS_Store
+services/server/.venv
+services/server/project/test/cem_OJK
+services/server/project/test/test_cem
+
+# Ignore data folder except data/ORE/Input
+services/server/project/data/*
+!services/server/project/data/ORE/
+!services/server/project/data/demo/
+services/server/project/data/ORE/*
+!services/server/project/data/ORE/Input/
+
+services/client/logs
+services/client/*.log
+services/client/npm-debug.log*
+services/client/yarn-debug.log*
+services/client/yarn-error.log*
+services/client/pnpm-debug.log*
+services/client/lerna-debug.log*
+services/client/package-lock.json
+services/client/node_modules
+
+# env files contain secrets — never commit
+env/
+
+# logs
+*.log
+
+# temporary files
+~*
+
+# python
+*__pycache__/
+.coverage
+*.pyc
+
+# ipynb
+*.ipynb
+
+# profiler
+*.prof
+*.lprof
+*.austin
+
+# pyarmor
+dist/
+.pyarmor/
+services/server/ql_build/*
+doc/*
+!doc/markdown

@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-50: 255 248 224;
+  --primary-100: 255 236 179;
+  --primary-200: 255 224 128;
+  --primary-300: 255 211 77;
+  --primary-400: 250 200 30;
+  --primary-500: 242 194 0;
+  --primary-600: 201 151 0;
+  --primary-700: 160 120 0;
+  --primary-800: 120 90 0;
+  --primary-900: 79 59 0;
+  --primary-950: 46 35 0;
+  --surface-0: 255 255 255;
+  --surface-50: 248 250 252;
+  --surface-100: 241 245 249;
+  --surface-200: 226 232 240;
+  --surface-300: 203 213 225;
+  --surface-400: 148 163 184;
+  --surface-500: 100 116 139;
+  --surface-600: 71 85 105;
+  --surface-700: 45 55 72;
+  --surface-800: 30 41 59;
+  --surface-900: 15 23 42;
+  --surface-950: 3 6 23;
+}

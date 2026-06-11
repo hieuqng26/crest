@@ -1,0 +1,17 @@
+services:
+  sftp:
+    image: atmoz/sftp
+    ports:
+      - "522:22"
+    volumes:
+      - sftp_media:/home
+    command: admin:Ey123!:::upload
+    restart: always
+    networks:
+      - app-network
+volumes:
+  sftp_media:
+  
+networks:
+  app-network:
+    driver: bridge

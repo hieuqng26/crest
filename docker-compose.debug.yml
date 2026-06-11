@@ -1,0 +1,123 @@
+services:
+  backend:
+    build:
+      context: services/server
+      dockerfile: Dockerfile
+    image: mst-dev/backend:latest
+    volumes:
+      - backend_data:/var/lib/app_data
+    ports:
+      - 5001:5000
+      - 5678:5678
+    env_file:
+      - env/.env.dev
+    environment:
+      - SERVICE_NAME=backend
+      - DEBUG_PORT=5678
+      - CELERY_BROKER_URL=redis://default:Ey@123!@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey@123!@redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5050
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - redis
+      - mssql
+      - minio
+      - mlflow
+    networks:
+      - app-network
+    restart: always
+
+  worker:
+    image: mst-dev/backend:latest
+    command: celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
+    volumes:
+      - backend_data:/var/lib/app_data
+    env_file:
+      - env/.env.dev
+    environment:
+      - SERVICE_NAME=worker
+      - CELERY_BROKER_URL=redis://default:Ey@123!@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey@123!@redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5050
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - app-network
+    restart: always
+
+  redis:
+    image: redis:alpine
+    command: ["redis-server", "--requirepass", "Ey@123!"]
+    environment:
+      - REDIS_USER=default
+      - REDIS_PASSWORD=Ey@123!
+    networks:
+      - app-network
+    restart: always
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=Supersecret@123!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - app-network
+    restart: always
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - app-network
+    restart: always
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5050
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root s3://mlflow-artifacts/
+    environment:
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    ports:
+      - "5050:5050"
+    volumes:
+      - mlflow_data:/mlflow
+    depends_on:
+      - minio
+    networks:
+      - app-network
+    restart: always
+
+volumes:
+  backend_data:
+  mssql_data:
+  minio_data:
+  mlflow_data:
+
+networks:
+  app-network:
+    driver: bridge

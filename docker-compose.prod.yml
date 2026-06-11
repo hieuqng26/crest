@@ -1,0 +1,79 @@
+services:
+  # Frontend service
+  frontend:
+    build:
+      context: services/client
+      dockerfile: Dockerfile
+    image: deval/frontend:latest
+    ports:
+      - 2000:9000
+    environment:
+      - SERVER_URL=http://backend:5000
+      - DOMAIN=localhost
+      - PORT=9000
+      - IGNORE=$
+    volumes:
+      - frontend_dist_prod:/usr/share/nginx/html # share static files with nginx
+      - nginx_logs:/var/log/nginx
+    networks:
+      - app-network
+    restart: always
+
+  # Backend service
+  backend:
+    build:
+      context: services/server
+      dockerfile: Dockerfile.prod
+    image: deval/backend:latest
+    volumes:
+      - backend_data_prod:/home/app/var/lib/app_data
+      - gunicorn_logs:/var/log/gunicorn
+    ports:
+      - 5001:5000
+    env_file:
+      - env/.env.prod
+    environment:
+      - SERVICE_NAME=backend
+    depends_on:
+      - redis
+      - mssql
+    networks:
+      - app-network
+    restart: always
+
+  # Redis service
+  redis:
+    image: 'redis:alpine'
+    environment:
+      - REDIS_USER=default
+      - REDIS_PASSWORD=Ey@123!
+    command: ["redis-server", "--requirepass", "Ey@123!"]
+    networks:
+      - app-network
+    restart: always
+
+  # DB service
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=Supersecret@123!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"  # Expose MSSQL default port
+    volumes:
+      - mssql_data_prod:/var/opt/mssql  # Persistent storage
+    networks:
+      - app-network
+    restart: always
+
+volumes:
+  mssql_data_prod:
+  frontend_dist_prod:
+  backend_data_prod:
+  gunicorn_logs:
+  nginx_logs:
+
+networks:
+  app-network:
+    driver: bridge

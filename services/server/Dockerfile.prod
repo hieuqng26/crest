@@ -1,0 +1,135 @@
+###########
+# BUILDER #
+###########
+
+# Use UBI Minimal as the base image for the builder
+FROM registry.access.redhat.com/ubi9/ubi-minimal AS builder
+
+# Set the work directory
+WORKDIR /usr/src/app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Install dependencies for building Python via microdnf (including findutils & tar)
+RUN microdnf update -y && \
+    microdnf install -y \
+      gcc \
+      findutils \
+      openssl-devel \
+      bzip2-devel \
+      libffi-devel \
+      zlib-devel \
+      wget \
+      make \
+      sqlite-devel \
+      xz-devel \
+      pam \
+      tar && \
+    microdnf clean all
+
+# Download and compile Python 3.11.9
+RUN cd /usr/src && \
+    wget --max-redirect=0 https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz && \
+    tar xzf Python-3.11.9.tgz && \
+    cd Python-3.11.9 && \
+    ./configure --enable-optimizations && \
+    make altinstall && \
+    ln -s /usr/local/bin/python3.11 /usr/bin/python3.11 && \
+    ln -s /usr/local/bin/pip3.11 /usr/bin/pip3.11 && \
+    cd /usr/src && \
+    rm -rf Python-3.11.9.tgz Python-3.11.9
+
+# Build Python wheels for dependencies
+COPY requirements.txt ./
+RUN python3.11 -m pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements.txt
+
+#########
+# FINAL #
+#########
+
+# Use UBI Minimal as the base image for the final stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal
+
+# Create directory for the app user
+RUN mkdir -p /home/app
+
+# Create the app user
+RUN microdnf update -y && \
+    microdnf install -y shadow-utils && \
+    microdnf clean all && \
+    groupadd --system app && useradd --system --home /usr/src/app --no-create-home --gid app app
+
+# Set environment variables and working directory
+ENV HOME=/home/app
+ENV APP_HOME=/home/app/server
+WORKDIR $APP_HOME
+
+# Create necessary directories and set permissions
+RUN mkdir -p /home/app/var/lib/app_data /var/log/gunicorn && \
+    chown -R app:app /home/app /var/log/gunicorn && \
+    chmod -R 755 /home/app /var/log/gunicorn
+
+# Install runtime system dependencies via microdnf
+RUN microdnf update -y && \
+    microdnf install -y \
+      gcc \
+      findutils \
+      openssl-devel \
+      bzip2-devel \
+      libffi-devel \
+      zlib-devel \
+      wget \
+      make \
+      sqlite-devel \
+      pam && \
+    microdnf clean all
+
+# Add Microsoft package signing key and repository
+RUN mkdir -p /etc/pki/rpm-gpg && \
+    curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/pki/rpm-gpg/microsoft.asc.gpg && \
+    curl https://packages.microsoft.com/config/rhel/9/prod.repo -o /etc/yum.repos.d/mssql-release.repo
+
+# Install the ODBC driver and tools
+RUN microdnf update -y && \
+    ACCEPT_EULA=Y microdnf install -y msodbcsql18 mssql-tools18 && \
+    microdnf clean all
+
+# Add SQLCMD to the PATH
+ENV PATH="$PATH:/opt/mssql-tools18/bin"
+
+# Copy Python 3.11 and wheels from builder
+COPY --from=builder /usr/local/bin/python3.11 /usr/local/bin/python3.11
+COPY --from=builder /usr/local/bin/pip3.11 /usr/local/bin/pip3.11
+COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
+
+# Install Python dependencies from wheels
+COPY --from=builder /usr/src/app/wheels /wheels
+COPY requirements.txt ./
+RUN python3.11 -m pip install --upgrade pip && \
+    python3.11 -m pip install --no-cache /wheels/* && \
+    rm -rf /wheels
+
+# Copy entrypoint script and make executable
+COPY gunicorn_config.py $APP_HOME/gunicorn_config.py
+COPY entrypoint.sh $APP_HOME/entrypoint.sh
+RUN chmod +x $APP_HOME/entrypoint.sh
+
+# Copy application code
+COPY manage.py pytest.ini requirements.txt $APP_HOME/
+COPY migrations[2]/ $APP_HOME/migrations/
+COPY project/ $APP_HOME/project/
+
+# Copy pyarmor runtime if present
+COPY pyarmor_runtime_00640[2]/ $APP_HOME/pyarmor_runtime_006402/
+
+# Set ownership to app user
+RUN chown -R app:app $APP_HOME
+
+# Remove any residual Python 3.9 packages
+RUN rm -rf /usr/lib/python3.9/site-packages
+
+# Switch to the app user and set entrypoint
+USER app
+ENTRYPOINT ["/home/app/server/entrypoint.sh"]
