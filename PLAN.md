@@ -207,57 +207,36 @@ POST /api/credit-risk/pd-lgd      (PD/LGD term structure)
 
 ## 6. Frontend Page Map
 
-```
-/                           Home (splash, sign-in)
-/auth/login                 Login
-/dashboard                  Summary: recent runs, model performance KPIs
-
-/ingest                     Ingest Hub
-  /ingest/upload            File Upload (CSV/Excel/Parquet → dataset)
-  /ingest/query             Live DB Query builder + preview
-  /ingest/datasets          Dataset registry table
-
-/configure                  Model Config Hub
-  /configure/registry       Algorithm catalogue (families, param schemas)
-  /configure/new            New model config form (Pydantic-driven)
-  /configure/list           Saved configs
-
-/calibrate                  Calibration Hub
-  /calibrate/new            Launch run: pick dataset + config
-  /calibrate/jobs           Run list (status, progress bars, ETA)
-  /calibrate/:run_id        Live progress + log stream
-
-/evaluate                   Evaluation Hub
-  /evaluate/:run_id         Full diagnostics dashboard:
-                              - Classification: ROC/AUC, KS, Gini, confusion matrix,
-                                hosmer-lemeshow, calibration curve, feature importance
-                              - Time-series: ACF/PACF, residual plots, MAPE/RMSE,
-                                Ljung-Box, heteroscedasticity tests
-                              - Statistical: coefficient table, p-values, VIF,
-                                log-likelihood, AIC/BIC, deviance residuals
-
-/forecast                   Forecast Hub
-  /forecast/:run_id         Actual vs Predicted chart + forecast horizon slider
-
-/credit-risk                Credit Risk Hub
-  /credit-risk/ecl          IFRS 9 ECL dashboard (PD×LGD×EAD, stage buckets)
-  /credit-risk/pd-lgd       PD/LGD term structure visualisation
-  /credit-risk/transitions  Credit grade transition matrix heatmap
-
-/uam                        User Access Management (unchanged)
-/log                        Audit Logs (unchanged)
-```
-
-### Sidebar Menu Groups
+> **Phase 2 complete.** All pages built with mock data. Current routes:
+>
+> | Route | Component | Status |
+> |---|---|---|
+> | `/datasets` | `views/ingest/Datasets.vue` | ✅ done — lazy DataTable, Upload + Query dialogs |
+> | `/datasets/:id` | `views/ingest/DatasetView.vue` | ✅ done — lazy server-paged viewer |
+> | `/models` | `views/configure/Models.vue` | ✅ done — algorithm catalog master/detail |
+> | `/configurations` | `views/configure/Configurations.vue` | ✅ done — saved configs table |
+> | `/calibrate/new` | `views/calibrate/CalibrateNew.vue` | ✅ done — 1-3 dataset merge pipeline + CV search |
+> | `/calibrate/jobs` | `views/calibrate/CalibrateJobs.vue` | ✅ done — status pills + filter popover + table |
+> | `/calibrate/:run_id` | `views/calibrate/CalibrateRun.vue` | ✅ done — unified tabbed run page (Overview/Progress/Diagnostics/Forecast) |
+> | `/credit-risk/ecl` | `views/credit_risk/CreditRiskECL.vue` | ✅ done — ECL flat panel redesign |
+> | `/credit-risk/pd-lgd` | `views/credit_risk/CreditRiskPdLgd.vue` | ✅ done — PD/LGD term structure redesign |
+>
+> Shared stores: `datasetsStore.js`, `configsStore.js`.
+> Shared utils: `mergePlan.js`, `runUtils.js`.
+> Mock data lives in each view's `mock/` folder — all replaced in Phase 4.
 
 ```
-Data         → Ingest Hub (upload, query, datasets)
-Models       → Configure Hub (registry, configs)
-Calibration  → Calibrate Hub (new run, job list)
-Evaluation   → Evaluate Hub
-Forecast     → Forecast Hub
-Credit Risk  → Credit Risk Hub
-System       → UAM, Audit Logs
+/datasets               Dataset registry + Upload/Query dialogs
+/datasets/:id           Lazy paginated dataset viewer
+/models                 Algorithm catalog (master/detail + New Config dialog)
+/configurations         Saved model configs table
+/calibrate/new          New calibration run (merge pipeline + training options)
+/calibrate/jobs         All jobs (status pills, filter popover, flat table)
+/calibrate/:run_id      Run detail — Overview · Progress · Diagnostics · Forecast tabs
+/credit-risk/ecl        IFRS 9 ECL dashboard
+/credit-risk/pd-lgd     PD/LGD term structure
+/uam                    User Access Management (unchanged)
+/log                    Audit Logs (unchanged)
 ```
 
 ---
@@ -281,27 +260,62 @@ System       → UAM, Audit Logs
 - [x] Update `requirements.txt` (add mlflow, minio, lightgbm; remove geo libs)
 - [x] Update `docker-compose.debug.yml` (add MinIO, Celery worker, MLflow server)
 
-### Phase 2 — Frontend (dummy data)
-- [ ] Update router + AppMenu with new page map
-- [ ] Ingest views (upload + dataset table)
-- [ ] Configure views (registry browser + config form)
-- [ ] Calibrate views (launch form + job list + live progress)
-- [ ] Evaluate views (diagnostic widget layout — mock data)
-- [ ] Forecast view (actual vs predicted chart — mock data)
-- [ ] Credit Risk views (ECL dashboard — mock data)
+### Phase 2 — Frontend (dummy data) ✅ COMPLETE
+- [x] Update router + AppMenu with new page map
+- [x] Ingest views (Datasets registry + lazy viewer)
+- [x] Configure views (algorithm catalog + saved configs)
+- [x] Calibrate views (launch form + jobs list + unified run page with tabs)
+- [x] Evaluate + Forecast merged into CalibrateRun tabs
+- [x] Credit Risk views (ECL + PD/LGD — mock data, modern UI)
 
-### Phase 3 — Backend API
-- [ ] `datasets/` blueprint + MinIO upload
-- [ ] `models/` blueprint + registry endpoint
-- [ ] `calibrations/` blueprint + Celery task
-- [ ] `evaluations/` diagnostics computation
-- [ ] `forecasts/` endpoint
-- [ ] `credit_risk/` ECL/PD-LGD logic
+### Phase 3 — Backend API (current)
+
+All blueprints registered in `create_app()`. DB models complete (`Dataset`, `ModelConfig`, `CalibrationRun`, `Forecast`). `BaseMLModel` ABC and empty `REGISTRY` dict exist. All route files are stubs returning 501. Config has MSSQL + Redis; **MinIO, Celery broker, MLflow config keys not yet added.**
+
+**Implementation order:**
+
+#### 3a — Config + infrastructure wiring ✅
+- Added `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `MINIO_*`, `MLFLOW_TRACKING_URI` to `DevelopmentConfig` / `ProductionConfig`
+- `project/workers/__init__.py` — Celery app init
+- `project/core/storage.py` — MinIO client helper (`upload_bytes`, `download_bytes`, `upload_file`)
+
+#### 3b — Model registry plugins ✅
+- `core/model_registry/diagnostics.py` — shared `classification_diagnostics()` (AUC, KS, Gini, confusion matrix, calibration curve, Hosmer-Lemeshow, feature importance)
+- `core/model_registry/plugins/` — `LogisticRegressionPlugin`, `GradientBoostingPlugin`, `ARIMAPlugin`, `RidgePlugin`, `GLMBinomialPlugin`
+- `core/model_registry/__init__.py` — `REGISTRY` dict populated; `registry_metadata()` for `/registry` endpoint
+
+#### 3c — Datasets blueprint ✅
+- `GET /api/datasets/` — DB query, excludes deleted
+- `POST /api/datasets/upload` — pandas parse → MinIO → Dataset row
+- `POST /api/datasets/query` — pyodbc read-only SELECT → Dataset row
+- `GET /api/datasets/<id>` — single row
+- `DELETE /api/datasets/<id>` — soft-delete
+
+#### 3d — Model configs blueprint ✅
+- `GET /api/model-configs/registry` — `registry_metadata()` from REGISTRY
+- `GET /api/model-configs/` — DB list
+- `POST /api/model-configs/` — Pydantic hyperparams validation → insert
+- `GET /api/model-configs/<id>` — single row
+
+#### 3e — Calibrations blueprint + Celery task ✅
+- `POST /api/calibrations/` — create `CalibrationRun(queued)` → `run_calibration.delay(run_id)`
+- `GET /api/calibrations/` — paginated list with joins (config/dataset name)
+- `GET /api/calibrations/<run_id>` — run detail
+- `GET /api/calibrations/<run_id>/diagnostics` — `val_metrics_json`
+- `GET /api/calibrations/<run_id>/forecast` — Forecast rows
+- `POST /api/calibrations/<run_id>/recalibrate` — clone → new run
+- `project/workers/tasks.py` — `run_calibration` Celery task: load → scaler → fit → mlflow → pickle to MinIO → diagnostics → SocketIO progress events
+
+#### 3f/g — Evaluations, Forecasts, Credit Risk blueprints ✅
+- `/api/evaluations/<run_id>` — proxy to val_metrics_json
+- `/api/forecasts/<run_id>` — Forecast rows
+- `POST /api/credit-risk/ecl` — PD × LGD × EAD computation, stage bucketing
+- `POST /api/credit-risk/pd-lgd` — term structure curves from run metrics
 
 ### Phase 4 — Integration
-- [ ] Wire frontend to real API (remove mock data)
-- [ ] SocketIO live progress events
-- [ ] MLflow headless integration
+- [ ] Wire frontend to real API (replace mock data + store bindings)
+- [ ] SocketIO live progress events from Celery task → `send_notification`
+- [ ] MLflow headless integration (experiment per model config, run per calibration)
 - [ ] End-to-end test with sample PD dataset
 
 ---

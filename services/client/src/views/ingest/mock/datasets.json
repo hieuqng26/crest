@@ -1,0 +1,7 @@
+[
+  { "id": 1, "name": "PD_2024_Q4.csv",            "source": "upload",     "row_count": 42180, "status": "ready",      "created_by": "analyst@bank.com", "created_at": "2026-06-10 08:22" },
+  { "id": 2, "name": "MacroFactors_Q3.parquet",   "source": "upload",     "row_count": 2400,  "status": "ready",      "created_by": "quant@bank.com",   "created_at": "2026-06-09 15:10" },
+  { "id": 3, "name": "LGD_Corp_2023.xlsx",         "source": "upload",     "row_count": 8900,  "status": "ready",      "created_by": "analyst@bank.com", "created_at": "2026-06-08 11:45" },
+  { "id": 4, "name": "RiskDB_PD_Retail_Live",      "source": "live_query", "row_count": 61000, "status": "ready",      "created_by": "risk@bank.com",    "created_at": "2026-06-07 09:01" },
+  { "id": 5, "name": "MacroFactors_Q2.parquet",    "source": "upload",     "row_count": 2400,  "status": "processing", "created_by": "quant@bank.com",   "created_at": "2026-06-06 14:55" }
+]

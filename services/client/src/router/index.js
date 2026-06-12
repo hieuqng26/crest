@@ -1,9 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from '@/views/Home.vue'
 import AppLayout from '@/layout/AppLayout.vue'
-import Dashboard from '@/views/Dashboard.vue'
-import AuditLog from '@/views/AuditLog.vue'
-import UAM from '@/views/users/UAM.vue'
+import Home from '@/views/Home.vue'
 import NotFound from '@/views/auth/NotFound.vue'
 import Login from '@/views/auth/Login.vue'
 import Access from '@/views/auth/Access.vue'
@@ -14,108 +11,68 @@ import { isValidJwt } from '@/utils'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    {
-      path: '/',
-      name: 'home',
-      component: Home,
-      meta: { requiresAuth: true }
-    },
+    { path: '/', name: 'home', component: Home, meta: { requiresAuth: true } },
     {
       path: '/',
       component: AppLayout,
       children: [
-        {
-          path: '/dashboard',
-          name: 'dashboard',
-          component: Dashboard,
-          meta: { requiresAuth: true }
-        },
-        //==========System admin==========
-        {
-          path: '/uam',
-          name: 'uam',
-          component: UAM,
-          meta: {
-            requiresAuth: true
-          }
-        },
-        {
-          path: '/log',
-          name: 'log',
-          component: AuditLog,
-          meta: {
-            requiresAuth: true
-          }
-        }
+        { path: '/dashboard', name: 'dashboard', component: () => import('@/views/Dashboard.vue'), meta: { requiresAuth: true } },
+
+        // Datasets
+        { path: '/datasets',      name: 'datasets',      component: () => import('@/views/ingest/Datasets.vue'),    meta: { requiresAuth: true } },
+        { path: '/datasets/:id',  name: 'dataset_view',  component: () => import('@/views/ingest/DatasetView.vue'), meta: { requiresAuth: true }, props: true },
+
+        // Models
+        { path: '/models',          name: 'models',         component: () => import('@/views/configure/Models.vue'),         meta: { requiresAuth: true } },
+        { path: '/configurations',  name: 'configurations', component: () => import('@/views/configure/Configurations.vue'), meta: { requiresAuth: true } },
+
+        // Calibrate
+        { path: '/calibrate/new',         name: 'calibrate_new',  component: () => import('@/views/calibrate/CalibrateNew.vue'),  meta: { requiresAuth: true } },
+        { path: '/calibrate/jobs',         name: 'calibrate_jobs', component: () => import('@/views/calibrate/CalibrateJobs.vue'), meta: { requiresAuth: true } },
+        { path: '/calibrate/:run_id',      name: 'calibrate_run',  component: () => import('@/views/calibrate/CalibrateRun.vue'),  meta: { requiresAuth: true } },
+
+        // Evaluate (legacy URL → redirects to unified run page)
+        { path: '/evaluate/:run_id', name: 'evaluate_run', component: () => import('@/views/evaluate/EvaluateRedirect.vue'), meta: { requiresAuth: true } },
+
+        // Forecast (legacy URL → redirects to unified run page)
+        { path: '/forecast/:run_id', name: 'forecast_run', component: () => import('@/views/forecast/ForecastRedirect.vue'), meta: { requiresAuth: true } },
+
+        // Credit Risk
+        { path: '/credit-risk/ecl',         name: 'credit_risk_ecl',         component: () => import('@/views/credit_risk/CreditRiskECL.vue'),         meta: { requiresAuth: true } },
+        { path: '/credit-risk/pd-lgd',      name: 'credit_risk_pd_lgd',      component: () => import('@/views/credit_risk/CreditRiskPdLgd.vue'),        meta: { requiresAuth: true } },
+        { path: '/credit-risk/transitions', name: 'credit_risk_transitions',  component: () => import('@/views/credit_risk/CreditRiskTransitions.vue'),  meta: { requiresAuth: true } },
+
+        // System
+        { path: '/uam', name: 'uam', component: () => import('@/views/users/UAM.vue'), meta: { requiresAuth: true } },
+        { path: '/log', name: 'log', component: () => import('@/views/AuditLog.vue'),  meta: { requiresAuth: true } },
       ]
     },
-    //==========Exceptions==========
-    {
-      path: '/pages/notfound',
-      name: 'notfound',
-      component: NotFound
-    },
-    {
-      path: '/auth/login',
-      name: 'login',
-      component: Login
-    },
-    {
-      path: '/auth/access',
-      name: 'accessDenied',
-      component: Access
-    },
-    {
-      path: '/auth/error',
-      name: 'error',
-      component: Error
-    },
-    // Catch-all route for 404
-    {
-      path: '/:pathMatch(.*)*',
-      component: NotFound,
-      meta: { status: 404 }
-    }
+    { path: '/pages/notfound', name: 'notfound',     component: NotFound },
+    { path: '/auth/login',     name: 'login',        component: Login },
+    { path: '/auth/access',    name: 'accessDenied', component: Access },
+    { path: '/auth/error',     name: 'error',        component: Error },
+    { path: '/:pathMatch(.*)*', component: NotFound, meta: { status: 404 } }
   ]
 })
 
 router.beforeEach((to, from, next) => {
-  // if to is login and user is already logged in, redirect to dashboard
   if (to.name === 'login') {
     const token = store.state.jwt?.accessToken
-    if (token && isValidJwt(token)) {
-      return next({ name: 'dashboard' })
-    }
+    if (token && isValidJwt(token)) return next({ name: 'dashboard' })
   }
-
-  if (to.matched.some((record) => record.meta.requiresAuth)) {
-    // if no token exists, redirect to login
-    if (!store.state.jwt) {
-      return next({ name: 'login', params: { redirect: to.fullPath } })
-    }
-    // if access token expires
-    else if (!isValidJwt(store.state.jwt.accessToken)) {
-      // attempt to refresh it
-      store
-        .dispatch('refreshToken')
+  if (to.matched.some((r) => r.meta.requiresAuth)) {
+    if (!store.state.jwt) return next({ name: 'login', params: { redirect: to.fullPath } })
+    if (!isValidJwt(store.state.jwt.accessToken)) {
+      store.dispatch('refreshToken')
         .then(() => {
-          const newAccessToken = store.state.jwt?.accessToken
-          if (!newAccessToken || !isValidJwt(newAccessToken)) {
-            return next({ name: 'login', params: { redirect: to.fullPath } })
-          } else {
-            return next()
-          }
+          const t = store.state.jwt?.accessToken
+          return t && isValidJwt(t) ? next() : next({ name: 'login', params: { redirect: to.fullPath } })
         })
-        .catch(() => {
-          // if refresh token fails, redirect to login
-          return next({ name: 'login', params: { redirect: to.fullPath } })
-        })
+        .catch(() => next({ name: 'login', params: { redirect: to.fullPath } }))
     } else {
-      // if access token is valid, continue
       return next()
     }
   } else {
-    // if route does not require auth, continue
     return next()
   }
 })

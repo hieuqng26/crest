@@ -101,6 +101,22 @@ services/server/project/
 - Dark theme is default (`ey-dark`). Never use EY Yellow `#FFE600` as text on light surfaces.
 - Mock data pattern: put mock JSON in `src/views/<module>/mock/` and swap with real API calls in Phase 3.
 
+### UI design principles
+
+Every page Claude touches must follow these rules — no exceptions. They are non-negotiable, even when adding "just one quick field":
+
+- **Clean and modern, not corporate-default.** Prefer flat panels (`surface-card` + 1px `surface-border` + 12px radius) over heavy `shadow-1` cards. Strip stripes, default backgrounds, and chrome that don't carry information.
+- **Information hierarchy is the design.** Page title is `text-3xl tracking-tight`. Section titles are tiny uppercase (`0.7rem`, `letter-spacing: 0.06em`, muted color). Numbers and identifiers are larger and lighter; everything supporting them is smaller and muted. Never give two elements equal weight unless they are equal.
+- **Don't dump everything on screen.** If a page has >5 controls or >4 sections, ask what's secondary and hide it: overflow `⋮` menus for row actions, `OverlayPanel` for filter detail, tabs for parallel views, drawers/dialogs for create flows. The default view should answer the user's most likely question; everything else is one click away.
+- **Smart compression over verbose dumps.** Stage tags → colored dots + label. Six KPI cards → one flat strip with dividers. Big legend boxes → small pills above the chart. Status icon + Tag + label trio → one colored dot + one word.
+- **Smooth, predictable workflow.** Primary action lives in the page header, top-right. Filters live above the table, never inside it. Tabs and segmented controls (status / portfolio / scaler) all use the same pill component. URLs reflect state (`?tab=`, `?algorithm=`) so users can share and back-navigate.
+- **Empty / loading / error states are first-class.** Dashed-border placeholders with a muted icon and one short sentence — not blank divs.
+- **Consistency across pages.** Reuse the same patterns established in `views/calibrate/CalibrateJobs.vue`, `CalibrateRun.vue`, `views/credit_risk/CreditRiskECL.vue`: segmented pill (`.seg-pill` / `.status-pill`), flat panel (`.panel`), status dot with ping, custom thin progress track, flat-table `:deep()` rules. Don't invent a new card style if one already exists.
+- **PrimeVue components, custom styling.** Use PrimeVue for behavior (DataTable, Dropdown, Menu, OverlayPanel, Chart). Override default look with scoped `:deep()` to match the language above — defaults are too busy.
+- **Test the feel.** A finished page should let the user do the most likely action without reading documentation. If you have to add a tooltip to explain what something does, the design isn't done yet.
+
+When redesigning an existing page, always look at `CalibrateJobs.vue` and `CalibrateRun.vue` first — they are the reference implementation for the visual language.
+
 ### General
 
 - No comments explaining WHAT code does — only WHY (non-obvious constraints, workarounds).

@@ -52,7 +52,20 @@ class DevelopmentConfig(Config):
     REDIS_DB = os.getenv('REDIS_DB', '0')
     REDIS_URL = f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     REDIS_QUEUES = ['default']
-    # SESSION_COOKIE_SAMESITE = 'Strict'
+
+    # Celery
+    CELERY_BROKER_URL = REDIS_URL
+    CELERY_RESULT_BACKEND = REDIS_URL
+
+    # MinIO / S3 artifact store
+    MINIO_ENDPOINT   = os.getenv('MINIO_ENDPOINT',   'minio:9000')
+    MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+    MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
+    MINIO_BUCKET     = os.getenv('MINIO_BUCKET',     'mst-artifacts')
+    MINIO_SECURE     = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
+
+    # MLflow (headless)
+    MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 
     # Main application database (for user info, results)
     mssql_server_main = os.getenv('APP_DB_SERVER', 'tcp:mssql,1433')
@@ -101,7 +114,20 @@ class ProductionConfig(Config):
     REDIS_DB = os.getenv('REDIS_DB', '0')
     REDIS_URL = f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     REDIS_QUEUES = ['default']
-    # SESSION_COOKIE_SAMESITE = 'Strict'
+
+    # Celery
+    CELERY_BROKER_URL = REDIS_URL
+    CELERY_RESULT_BACKEND = REDIS_URL
+
+    # MinIO / S3 artifact store
+    MINIO_ENDPOINT   = os.getenv('MINIO_ENDPOINT',   'minio:9000')
+    MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+    MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
+    MINIO_BUCKET     = os.getenv('MINIO_BUCKET',     'mst-artifacts')
+    MINIO_SECURE     = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
+
+    # MLflow (headless)
+    MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 
     # Main application database (for user info, results)
     mssql_server_main = os.getenv('APP_DB_SERVER', 'tcp:mssql,1433')
