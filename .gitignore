@@ -5,7 +5,8 @@ services/server/project/test/test_cem
 
 # Ignore data folder except data/ORE/Input
 services/server/project/data/*
-!services/server/project/data/ORE/
+!services/server/project/data/ORE
+!services/server/project/data/test_data
 !services/server/project/data/demo/
 services/server/project/data/ORE/*
 !services/server/project/data/ORE/Input/
