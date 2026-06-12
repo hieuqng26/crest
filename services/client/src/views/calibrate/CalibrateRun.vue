@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
+import calibrationsAPI from '@/api/calibrationsAPI'
 import { getRun, statusSeverity, duration, isTimeSeries } from './runUtils'
 import OverviewTab    from './runTabs/OverviewTab.vue'
 import ProgressTab    from './runTabs/ProgressTab.vue'
@@ -13,8 +14,30 @@ const router = useRouter()
 const toast = useToast()
 const runId = computed(() => route.params.run_id)
 
-const run = ref(getRun(runId.value))
-watch(runId, (id) => { run.value = getRun(id) })
+const run = ref(null)
+const loadRun = async () => { run.value = await getRun(runId.value) }
+
+let pollTimer = null
+const startPolling = () => {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    const fresh = await getRun(runId.value)
+    run.value = fresh
+    if (fresh.status !== 'running' && fresh.status !== 'queued') stopPolling()
+  }, 3000)
+}
+const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
+onMounted(async () => {
+  await loadRun()
+  if (run.value?.status === 'running' || run.value?.status === 'queued') startPolling()
+})
+onUnmounted(stopPolling)
+watch(() => run.value?.status, (s) => {
+  if (s === 'running' || s === 'queued') startPolling()
+  else stopPolling()
+})
+watch(runId, async () => { stopPolling(); await loadRun() })
 
 const TABS = [
   { key: 'overview',    label: 'Overview',    icon: 'pi pi-info-circle' },
@@ -27,20 +50,30 @@ const activeKey = computed({
   set: (v) => router.replace({ query: { ...route.query, tab: v } })
 })
 
-const diagnosticsDisabled = computed(() => run.value.status !== 'success')
-const forecastDisabled    = computed(() => run.value.status !== 'success' || !isTimeSeries(run.value.algorithm))
+const diagnosticsDisabled = computed(() => run.value?.status !== 'success')
+const forecastDisabled    = computed(() => run.value?.status !== 'success' || !isTimeSeries(run.value?.algorithm))
 const tabDisabled = (key) =>
   (key === 'diagnostics' && diagnosticsDisabled.value) ||
   (key === 'forecast' && forecastDisabled.value)
 
 const onRunUpdate = (next) => { run.value = next }
 
-const cancel = () => {
+const cancel = async () => {
+  try {
+    await calibrationsAPI.recalibrate(runId.value, { cancel: true })
+  } catch { /* best-effort */ }
   run.value = { ...run.value, status: 'failed', finished_at: new Date().toISOString().slice(0, 16).replace('T', ' ') }
+  stopPolling()
   toast.add({ severity: 'warn', summary: 'Run cancelled', detail: run.value.run_id, life: 2500 })
 }
-const rerun = () => {
-  router.push({ name: 'calibrate_new', query: { config_id: 1 } })
+const rerun = async () => {
+  try {
+    const { data } = await calibrationsAPI.recalibrate(runId.value, {})
+    toast.add({ severity: 'info', summary: 'Re-run queued', detail: data.run_id, life: 2500 })
+    router.push({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
 }
 const copyRunId = () => {
   navigator.clipboard?.writeText(run.value.run_id)
@@ -59,11 +92,17 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
 
 <template>
   <div class="p-5 mx-auto" style="max-width: 1400px">
-    <!-- Breadcrumb / back -->
     <button class="back-link mb-3" @click="router.push({ name: 'calibrate_jobs' })">
       <i class="pi pi-arrow-left text-xs" />
       <span>All jobs</span>
     </button>
+
+    <div v-if="!run" class="text-center py-8 text-color-secondary">
+      <i class="pi pi-spin pi-spinner text-2xl block mb-2" />
+      Loading run…
+    </div>
+
+    <template v-else>
 
     <!-- Run header -->
     <header class="run-header mb-4">
@@ -157,6 +196,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
         </p>
       </div>
     </div>
+    </template><!-- end v-else (run loaded) -->
   </div>
 </template>
 

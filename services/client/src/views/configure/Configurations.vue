@@ -3,8 +3,8 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { FilterMatchMode } from 'primevue/api'
-import registry from './mock/registry.json'
-import { configs, addConfig, duplicateConfig, deleteConfig } from './configsStore'
+import modelConfigsAPI from '@/api/modelConfigsAPI'
+import { configs, registry, fetchConfigs, addConfig, duplicateConfig, deleteConfig } from './configsStore'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,10 +13,10 @@ const toast = useToast()
 const FAMILY_LABEL = { classification: 'Classification', timeseries: 'Time Series', statistical: 'Statistical' }
 const FAMILY_SEVERITY = { classification: 'info', timeseries: 'warning', statistical: 'success' }
 
-const algorithmOptions = [
+const algorithmOptions = computed(() => [
   { label: 'All algorithms', value: null },
-  ...registry.map(a => ({ label: `${a.algorithm} (${FAMILY_LABEL[a.family]})`, value: a.algorithm }))
-]
+  ...registry.value.map(a => ({ label: `${a.algorithm} (${FAMILY_LABEL[a.family]})`, value: a.algorithm }))
+])
 const familyOptions = [
   { label: 'All',            value: null },
   { label: 'Classification', value: 'classification' },
@@ -24,11 +24,13 @@ const familyOptions = [
   { label: 'Statistical',    value: 'statistical' }
 ]
 
+onMounted(fetchConfigs)
+
 const algorithmFilter = ref(route.query.algorithm || null)
 const familyFilter = ref(null)
 const filters = ref({ global: { value: '', matchMode: FilterMatchMode.CONTAINS } })
 
-const algoFamily = (algoName) => registry.find(a => a.algorithm === algoName)?.family
+const algoFamily = (algoName) => registry.value.find(a => a.algorithm === algoName)?.family
 
 const filteredRows = computed(() =>
   configs.value.filter(c =>
@@ -41,11 +43,11 @@ const filteredRows = computed(() =>
 const drawerVisible = ref(false)
 const form = ref({ name: '', algorithm: null, target: '', features: '', hyperparams: {} })
 const selectedAlgoMeta = computed(() =>
-  registry.find(a => a.algorithm === form.value.algorithm) || null
+  registry.value.find(a => a.algorithm === form.value.algorithm) || null
 )
 
 watch(() => form.value.algorithm, (algo) => {
-  const meta = registry.find(a => a.algorithm === algo)
+  const meta = registry.value.find(a => a.algorithm === algo)
   form.value.hyperparams = meta
     ? meta.params.reduce((acc, p) => (acc[p.name] = p.default, acc), {})
     : {}
@@ -62,7 +64,8 @@ const openDrawer = (presetAlgorithm = null) => {
   drawerVisible.value = true
 }
 
-const saveConfig = () => {
+const saving = ref(false)
+const saveConfig = async () => {
   if (!form.value.name.trim()) {
     toast.add({ severity: 'warn', summary: 'Validation', detail: 'Config name is required', life: 3000 })
     return
@@ -71,18 +74,28 @@ const saveConfig = () => {
     toast.add({ severity: 'warn', summary: 'Validation', detail: 'Algorithm is required', life: 3000 })
     return
   }
-  addConfig({
-    name: form.value.name,
-    algorithm: form.value.algorithm,
-    target_col: form.value.target
-  })
-  toast.add({ severity: 'success', summary: 'Saved', detail: `Config "${form.value.name}" created`, life: 2500 })
-  drawerVisible.value = false
+  saving.value = true
+  try {
+    const { data } = await modelConfigsAPI.create({
+      name: form.value.name,
+      algorithm: form.value.algorithm,
+      target_col: form.value.target,
+      feature_cols: form.value.features ? form.value.features.split(',').map(s => s.trim()).filter(Boolean) : [],
+      hyperparams: form.value.hyperparams
+    })
+    addConfig(data)
+    toast.add({ severity: 'success', summary: 'Saved', detail: `Config "${data.name}" created`, life: 2500 })
+    drawerVisible.value = false
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Save failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    saving.value = false
+  }
 }
 
 const calibrate = (cfg) => router.push({ name: 'calibrate_new', query: { config_id: cfg.id } })
-const onDuplicate = (cfg) => {
-  const row = duplicateConfig(cfg)
+const onDuplicate = async (cfg) => {
+  const row = await duplicateConfig(cfg)
   toast.add({ severity: 'info', summary: 'Duplicated', detail: row.name, life: 2000 })
 }
 const onDelete = (cfg) => {

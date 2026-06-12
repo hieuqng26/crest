@@ -1,10 +1,10 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
-import { datasets, getDataset } from '@/views/ingest/datasetsStore'
-import { configs } from '@/views/configure/configsStore'
-import registry from '@/views/configure/mock/registry.json'
+import calibrationsAPI from '@/api/calibrationsAPI'
+import { datasets, getDataset, fetchDatasets } from '@/views/ingest/datasetsStore'
+import { configs, registry, fetchConfigs } from '@/views/configure/configsStore'
 import { intersectColumns, findUnjoinable, projectSchema } from './mergePlan'
 
 const route = useRoute()
@@ -60,7 +60,7 @@ const selectedConfigMeta = computed(() =>
 )
 const algorithmMeta = computed(() =>
   selectedConfigMeta.value
-    ? registry.find(a => a.algorithm === selectedConfigMeta.value.algorithm) || null
+    ? registry.value.find(a => a.algorithm === selectedConfigMeta.value.algorithm) || null
     : null
 )
 const searchableParams = computed(() =>
@@ -203,24 +203,37 @@ const pickerOpen = ref(false)
 const pickerValue = ref(null)
 watch(pickerValue, (v) => { if (v != null) addDataset(v) })
 
-const launch = () => {
+const launch = async () => {
   if (!canLaunch.value) {
     toast.add({ severity: 'warn', summary: 'Validation', detail: 'Fix merge issues and pick a model config', life: 3000 })
     return
   }
   submitting.value = true
-  setTimeout(() => {
+  try {
+    const { data } = await calibrationsAPI.create({
+      dataset_id:      selectedDatasetIds.value[0],
+      model_config_id: selectedConfig.value,
+      train_split:     trainSplit.value / 100,
+      scaler:          scaler.value,
+      cv_search:       cvSearch.value.mode !== 'none' ? cvSearch.value : null,
+      param_grid:      cvSearch.value.mode !== 'none' ? paramGrid.value : null,
+      merge_steps:     mergeSteps.value
+    })
+    toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${data.run_id}`, life: 3000 })
+    router.push({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Launch failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
     submitting.value = false
-    const fakeRunId = 'new-' + Math.random().toString(36).slice(2, 10)
-    toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${fakeRunId} started`, life: 3000 })
-    router.push({ name: 'calibrate_run', params: { run_id: fakeRunId } })
-  }, 800)
+  }
 }
 
-// Auto-seed first dataset if none picked
-if (datasets.value.length && selectedDatasetIds.value.length === 0) {
-  // leave empty; user must explicitly pick
-}
+onMounted(async () => {
+  await Promise.all([
+    datasets.value.length === 0 ? fetchDatasets() : Promise.resolve(),
+    configs.value.length  === 0 ? fetchConfigs()  : Promise.resolve()
+  ])
+})
 </script>
 
 <template>

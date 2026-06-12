@@ -131,6 +131,47 @@ def query_dataset():
     return jsonify(result), 201
 
 
+@datasets.get('/<int:dataset_id>/rows')
+@jwt_required()
+def get_dataset_rows(dataset_id):
+    ds = Dataset.query.filter_by(id=dataset_id).first()
+    if not ds or ds.status == 'deleted':
+        return jsonify({'error': 'Not found'}), 404
+    if not ds.file_path:
+        return jsonify({'rows': [], 'total': 0}), 200
+
+    try:
+        object_name = ds.file_path.split('/', 1)[-1]
+        file_bytes  = storage.download_bytes(object_name)
+        ext         = object_name.rsplit('.', 1)[-1].lower()
+        df          = _read_dataframe(file_bytes, ext)
+    except Exception as e:
+        logger.error(f"Failed to load dataset {dataset_id}: {e}")
+        return jsonify({'error': f'Could not load file: {e}'}), 500
+
+    total = len(df)
+
+    # Filter
+    q = request.args.get('filter', '').strip()
+    if q:
+        mask = df.apply(lambda row: row.astype(str).str.contains(q, case=False).any(), axis=1)
+        df = df[mask]
+
+    # Sort
+    sort_col   = request.args.get('sort')
+    sort_order = request.args.get('order', 'asc')
+    if sort_col and sort_col in df.columns:
+        df = df.sort_values(sort_col, ascending=(sort_order == 'asc'))
+
+    # Paginate
+    offset = max(0, int(request.args.get('offset', 0)))
+    limit  = min(500, max(1, int(request.args.get('limit', 50))))
+    page   = df.iloc[offset: offset + limit]
+
+    rows = page.where(pd.notnull(page), None).to_dict(orient='records')
+    return jsonify({'rows': rows, 'total': total}), 200
+
+
 @datasets.get('/<int:dataset_id>')
 @jwt_required()
 def get_dataset(dataset_id):

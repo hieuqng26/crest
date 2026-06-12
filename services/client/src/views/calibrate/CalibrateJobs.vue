@@ -1,14 +1,32 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
-import mockRuns from './mock/runs.json'
-import { statusSeverity, duration, algorithmOf } from './runUtils'
+import calibrationsAPI from '@/api/calibrationsAPI'
+import { statusSeverity, duration } from './runUtils'
 
 const router = useRouter()
 const toast = useToast()
 
-const runs = ref(mockRuns.map(r => ({ ...r, algorithm: algorithmOf(r.config_name) })))
+const runs = ref([])
+const listLoading = ref(false)
+
+const fetchRuns = async () => {
+  listLoading.value = true
+  try {
+    const { data } = await calibrationsAPI.list({ per_page: 200 })
+    runs.value = (data.items ?? data).map(r => ({
+      ...r,
+      progress: r.progress ?? (r.status === 'success' ? 100 : r.status === 'failed' ? r.progress ?? 0 : 0)
+    }))
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Failed to load runs', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    listLoading.value = false
+  }
+}
+
+onMounted(fetchRuns)
 
 const STATUSES = [
   { key: 'all',     label: 'All',      dot: 'var(--surface-400)' },
@@ -71,19 +89,27 @@ const resetFilters = () => {
 
 // Actions
 const openRun = (r) => router.push({ name: 'calibrate_run', params: { run_id: r.run_id }, query: { tab: 'overview' } })
-const cancelRun = (r) => {
+const cancelRun = async (r) => {
+  try {
+    await calibrationsAPI.recalibrate(r.run_id, { cancel: true })
+  } catch { /* best-effort */ }
   const idx = runs.value.findIndex(x => x.run_id === r.run_id)
-  if (idx < 0) return
-  runs.value[idx] = { ...r, status: 'failed', finished_at: new Date().toISOString().slice(0, 16).replace('T', ' ') }
+  if (idx >= 0) runs.value[idx] = { ...r, status: 'failed', finished_at: new Date().toISOString().slice(0, 16).replace('T', ' ') }
   toast.add({ severity: 'warn', summary: 'Cancelled', detail: r.run_id, life: 2500 })
 }
-const duplicateRun = (r) => {
-  router.push({ name: 'calibrate_new', query: { config_id: 1 } })
-  toast.add({ severity: 'info', summary: 'Duplicating', detail: r.config_name, life: 2000 })
+const duplicateRun = async (r) => {
+  try {
+    const { data } = await calibrationsAPI.recalibrate(r.run_id, {})
+    runs.value = [data, ...runs.value]
+    toast.add({ severity: 'info', summary: 'Re-queued', detail: data.run_id, life: 2000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Duplicate failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
 }
 const deleteRun = (r) => {
+  // Soft-delete client-side only (no backend DELETE endpoint yet)
   runs.value = runs.value.filter(x => x.run_id !== r.run_id)
-  toast.add({ severity: 'success', summary: 'Deleted', detail: r.run_id, life: 2000 })
+  toast.add({ severity: 'success', summary: 'Removed', detail: r.run_id, life: 2000 })
 }
 
 // Per-row overflow menu

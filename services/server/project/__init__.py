@@ -88,14 +88,10 @@ def create_app():
     from project.api.auth.models import ActiveSession  # noqa: F401
     from project.api.auditlog.models import AuditLog  # noqa: F401
     from project.api.roles.models import Role  # noqa: F401
-    from project.api.jobs.models.job_models import Job, JobHistory  # noqa: F401
     from project.db_models.calibration_models import Dataset, ModelConfig, CalibrationRun, Forecast  # noqa: F401
 
     from project.api.auth.routes import auth
-    from project.api.files.routes import files
-    from project.api.data.routes import data
     from project.api.users.routes import user
-    from project.api.jobs.routes import job
     from project.api.auditlog.routes import auditlog
     from project.api.roles.routes import role
     from project.api.datasets import datasets
@@ -105,11 +101,8 @@ def create_app():
     from project.api.forecasts import forecasts
     from project.api.credit_risk import credit_risk
 
-    app.register_blueprint(files, url_prefix="/api/files")
-    app.register_blueprint(data, url_prefix="/api/data")
     app.register_blueprint(auth, url_prefix="/api/auth")
     app.register_blueprint(user, url_prefix="/api/user")
-    app.register_blueprint(job, url_prefix="/api/job")
     app.register_blueprint(auditlog, url_prefix="/api/log")
     app.register_blueprint(role, url_prefix="/api/role")
     app.register_blueprint(datasets, url_prefix="/api/datasets")

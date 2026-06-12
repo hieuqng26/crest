@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
-import registry from './mock/registry.json'
-import { addConfig, countByAlgorithm } from './configsStore'
+import modelConfigsAPI from '@/api/modelConfigsAPI'
+import { registry, fetchConfigs, addConfig, countByAlgorithm } from './configsStore'
 
 const router = useRouter()
 const toast = useToast()
@@ -12,12 +12,14 @@ const FAMILY_LABEL = { classification: 'Classification', timeseries: 'Time Serie
 const FAMILY_SEVERITY = { classification: 'info', timeseries: 'warning', statistical: 'success' }
 const FAMILY_ORDER = ['classification', 'timeseries', 'statistical']
 
+onMounted(fetchConfigs)
+
 const search = ref('')
 
 const filteredRegistry = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return registry
-  return registry.filter(a => a.algorithm.toLowerCase().includes(q))
+  if (!q) return registry.value
+  return registry.value.filter(a => a.algorithm.toLowerCase().includes(q))
 })
 
 const treeNodes = computed(() => {
@@ -43,11 +45,18 @@ const treeNodes = computed(() => {
 })
 
 const expandedKeys = ref(FAMILY_ORDER.reduce((acc, f) => (acc[`family:${f}`] = true, acc), {}))
-const selectedKey = ref({ [registry[0].algorithm]: true })
+const selectedKey = ref({})
 const selectedAlgorithm = computed(() => {
   const key = Object.keys(selectedKey.value)[0]
-  return registry.find(a => a.algorithm === key) || registry[0]
+  return registry.value.find(a => a.algorithm === key) ?? registry.value[0] ?? null
 })
+
+// Once the registry loads, seed the default selection
+watch(registry, (val) => {
+  if (val.length && !Object.keys(selectedKey.value).length) {
+    selectedKey.value = { [val[0].algorithm]: true }
+  }
+}, { immediate: true })
 
 const drawerVisible = ref(false)
 const form = ref({ name: '', target: '', features: '', hyperparams: {} })
@@ -62,23 +71,29 @@ const openDrawer = () => {
   drawerVisible.value = true
 }
 
-const saveConfig = () => {
+const saving = ref(false)
+const saveConfig = async () => {
   if (!form.value.name.trim()) {
     toast.add({ severity: 'warn', summary: 'Validation', detail: 'Config name is required', life: 3000 })
     return
   }
-  addConfig({
-    name: form.value.name,
-    algorithm: selectedAlgorithm.value.algorithm,
-    target_col: form.value.target
-  })
-  toast.add({
-    severity: 'success',
-    summary: 'Saved',
-    detail: `Config "${form.value.name}" created`,
-    life: 2500
-  })
-  drawerVisible.value = false
+  saving.value = true
+  try {
+    const { data } = await modelConfigsAPI.create({
+      name: form.value.name,
+      algorithm: selectedAlgorithm.value.algorithm,
+      target_col: form.value.target,
+      feature_cols: form.value.features ? form.value.features.split(',').map(s => s.trim()).filter(Boolean) : [],
+      hyperparams: form.value.hyperparams
+    })
+    addConfig(data)
+    toast.add({ severity: 'success', summary: 'Saved', detail: `Config "${data.name}" created`, life: 2500 })
+    drawerVisible.value = false
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Save failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    saving.value = false
+  }
 }
 
 const goToConfigurations = () =>
@@ -127,7 +142,10 @@ const goToConfigurations = () =>
 
       <!-- Right: detail -->
       <div class="col-12 md:col-8 lg:col-9 p-0">
-        <div class="surface-card border-round shadow-1 p-4 h-full flex flex-column gap-4 overflow-auto">
+        <div v-if="!selectedAlgorithm" class="surface-card border-round shadow-1 p-4 h-full flex align-items-center justify-content-center text-color-secondary">
+          <i class="pi pi-spin pi-spinner text-2xl mr-2" /> Loading catalog…
+        </div>
+        <div v-else class="surface-card border-round shadow-1 p-4 h-full flex flex-column gap-4 overflow-auto">
           <div>
             <div class="flex align-items-center gap-2 mb-1">
               <h3 class="text-xl font-semibold m-0">{{ selectedAlgorithm.algorithm }}</h3>
@@ -167,7 +185,7 @@ const goToConfigurations = () =>
               @click="goToConfigurations"
             />
           </div>
-        </div>
+        </div><!-- end v-else detail panel -->
       </div>
     </div>
 

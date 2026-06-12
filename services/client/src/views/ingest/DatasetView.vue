@@ -3,8 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { FilterMatchMode } from 'primevue/api'
-import { getDataset } from './datasetsStore'
-import { generateRows, sortRows } from './mock/rowGenerator'
+import datasetsAPI from '@/api/datasetsAPI'
+import { getDataset, fetchDatasets, datasets } from './datasetsStore'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const router = useRouter()
@@ -25,31 +25,37 @@ const visibleCols = ref(dataset.value?.columns ?? [])
 const colOptions = computed(() => (dataset.value?.columns ?? []).map(c => ({ label: c, value: c })))
 const orderedVisible = computed(() => (dataset.value?.columns ?? []).filter(c => visibleCols.value.includes(c)))
 
-const totalRecords = computed(() => dataset.value?.row_count ?? 0)
-const sourceSeverity = (s) => (s === 'upload' ? 'info' : 'warning')
+onMounted(async () => {
+  if (!dataset.value) await fetchDatasets()
+  if (dataset.value) {
+    visibleCols.value = dataset.value.columns
+    loadRows()
+  }
+})
 
-const loadRows = () => {
+const loadRows = async () => {
   if (!dataset.value) return
   loading.value = true
-  // Simulate async server call — Phase 3 swap target:
-  //   GET /api/datasets/:id/rows?offset=&limit=&sort=&order=&filter=
-  setTimeout(() => {
-    let slice = generateRows({
-      datasetId: dataset.value.id,
-      columns: dataset.value.columns,
+  try {
+    const { data } = await datasetsAPI.rows(dataset.value.id, {
       offset: first.value,
       limit: pageSize.value,
-      totalRows: totalRecords.value
+      sort: sortField.value,
+      order: sortOrder.value === 1 ? 'asc' : sortOrder.value === -1 ? 'desc' : null,
+      filter: filters.value.global.value?.toString().trim() || ''
     })
-    if (sortField.value) slice = sortRows(slice, sortField.value, sortOrder.value)
-    const q = filters.value.global.value?.toString().trim().toLowerCase()
-    if (q) slice = slice.filter(r =>
-      dataset.value.columns.some(c => String(r[c]).toLowerCase().includes(q))
-    )
-    rows.value = slice
+    // Backend returns { rows: [...], total: N }
+    rows.value = Array.isArray(data) ? data : (data.rows ?? [])
+    if (!Array.isArray(data) && data.total != null) totalOverride.value = data.total
+  } catch {
+    rows.value = []
+  } finally {
     loading.value = false
-  }, 120)
+  }
 }
+
+const totalOverride = ref(null)
+const totalRecords = computed(() => totalOverride.value ?? dataset.value?.row_count ?? 0)
 
 const onPage   = (e) => { first.value = e.first; pageSize.value = e.rows; loadRows() }
 const onSort   = (e) => { sortField.value = e.sortField; sortOrder.value = e.sortOrder; loadRows() }
@@ -68,15 +74,7 @@ const downloadCsv = () => {
   toast.add({ severity: 'info', summary: 'Exported current page', life: 2000 })
 }
 
-onMounted(() => {
-  if (!dataset.value) {
-    toast.add({ severity: 'error', summary: 'Dataset not found', life: 2500 })
-    router.replace({ name: 'datasets' })
-    return
-  }
-  visibleCols.value = dataset.value.columns
-  loadRows()
-})
+const sourceSeverity = (s) => (s === 'upload' ? 'info' : 'warning')
 </script>
 
 <template>

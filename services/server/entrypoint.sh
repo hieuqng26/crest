@@ -42,8 +42,6 @@ then
     flask --app manage.py db upgrade
     echo "Seeding users..."
     python3.11 manage.py seed_db
-    echo "Seeding the database..."
-    python3.11 manage.py seed_data_db
 
     if [ "$FLASK_DEBUG" = "1" ]
     then

@@ -1,17 +1,17 @@
 import authAPI from './authAPI'
-import fileAPI from './fileAPI'
 import userAPI from './userAPI'
 import roleAPI from './roleAPI'
-import jobAPI from './jobAPI'
 import logAPI from './logAPI'
-import dataAPI from './dataAPI'
+import datasetsAPI from './datasetsAPI'
+import modelConfigsAPI from './modelConfigsAPI'
+import calibrationsAPI from './calibrationsAPI'
 
 export {
   authAPI,
-  fileAPI,
   userAPI,
   roleAPI,
-  jobAPI,
   logAPI,
-  dataAPI
+  datasetsAPI,
+  modelConfigsAPI,
+  calibrationsAPI
 }

@@ -19,6 +19,11 @@ from project.core.model_registry import get_model_class
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Calibration task
+# ---------------------------------------------------------------------------
+
+
 def _make_flask_app():
     """Import create_app lazily to avoid circular imports inside worker."""
     from project import create_app

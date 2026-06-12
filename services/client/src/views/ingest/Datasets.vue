@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
-import { datasets, addDataset, deleteDataset } from './datasetsStore'
+import datasetsAPI from '@/api/datasetsAPI'
+import { datasets, loading, fetchDatasets, addDataset, deleteDataset } from './datasetsStore'
 
 const router = useRouter()
 const toast = useToast()
@@ -26,82 +27,76 @@ const filtered = computed(() =>
 )
 
 const view = (d) => router.push({ name: 'dataset_view', params: { id: d.id } })
-const onDelete = (d) => {
-  deleteDataset(d.id)
+const onDelete = async (d) => {
+  await deleteDataset(d.id)
   toast.add({ severity: 'success', summary: 'Deleted', detail: d.name, life: 2000 })
 }
+
+onMounted(fetchDatasets)
 
 // --- Upload dialog ---
 const uploadVisible = ref(false)
 const uploading = ref(false)
-const uploaded = ref(null)
+const uploadFile = ref(null)
+const uploadName = ref('')
 
-const openUpload = () => { uploaded.value = null; uploading.value = false; uploadVisible.value = true }
+const openUpload = () => { uploadFile.value = null; uploadName.value = ''; uploading.value = false; uploadVisible.value = true }
 
-const onUpload = (event) => {
-  uploading.value = true
-  setTimeout(() => {
-    uploading.value = false
-    uploaded.value = {
-      name: event.files[0].name,
-      row_count: 12500,
-      columns: ['obligor_id', 'default_flag', 'pd_estimate', 'lgd', 'ead', 'rating', 'sector', 'year']
-    }
-    toast.add({ severity: 'success', summary: 'Uploaded', detail: uploaded.value.name, life: 2500 })
-  }, 1000)
+const onSelectFile = (event) => {
+  uploadFile.value = event.files[0]
+  if (!uploadName.value) uploadName.value = event.files[0].name.replace(/\.[^.]+$/, '')
 }
 
-const saveUpload = () => {
-  if (!uploaded.value) return
-  addDataset({
-    name: uploaded.value.name,
-    source: 'upload',
-    row_count: uploaded.value.row_count,
-    columns: uploaded.value.columns
-  })
-  toast.add({ severity: 'success', summary: 'Registered', detail: uploaded.value.name, life: 2500 })
-  uploadVisible.value = false
+const saveUpload = async () => {
+  if (!uploadFile.value) { toast.add({ severity: 'warn', summary: 'Select a file first', life: 2500 }); return }
+  if (!uploadName.value.trim()) { toast.add({ severity: 'warn', summary: 'Dataset name is required', life: 2500 }); return }
+  uploading.value = true
+  try {
+    const { data } = await datasetsAPI.upload(uploadFile.value, uploadName.value.trim())
+    addDataset(data)
+    toast.add({ severity: 'success', summary: 'Uploaded', detail: data.name, life: 2500 })
+    uploadVisible.value = false
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Upload failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    uploading.value = false
+  }
 }
 
 // --- Live query dialog ---
 const queryVisible = ref(false)
-const sql = ref('SELECT obligor_id, default_flag, pd_estimate, lgd, ead, rating, sector, year\nFROM risk_db.dbo.pd_master\nWHERE year >= 2020')
+const sql = ref('SELECT TOP 100 obligor_id, default_flag, pd_estimate, lgd, ead\nFROM risk_db.dbo.pd_master\nWHERE year >= 2020')
 const queryName = ref('')
 const running = ref(false)
 const preview = ref(null)
 
 const openQuery = () => { preview.value = null; running.value = false; queryName.value = ''; queryVisible.value = true }
 
-const runQuery = () => {
+const runQuery = async () => {
   running.value = true
-  setTimeout(() => {
-    running.value = false
+  preview.value = null
+  try {
+    const { data } = await datasetsAPI.query(sql.value, queryName.value || 'preview', '')
+    // Backend registers the dataset; use it as the preview summary
     preview.value = {
-      columns: ['obligor_id', 'default_flag', 'pd_estimate', 'lgd', 'ead', 'rating', 'sector', 'year'],
-      rows: [
-        { obligor_id: 'OB001', default_flag: 0, pd_estimate: 0.012, lgd: 0.45, ead: 1200000, rating: 'BBB', sector: 'Manufacturing', year: 2023 },
-        { obligor_id: 'OB002', default_flag: 1, pd_estimate: 0.087, lgd: 0.60, ead: 450000,  rating: 'BB',  sector: 'Retail',         year: 2023 },
-        { obligor_id: 'OB003', default_flag: 0, pd_estimate: 0.003, lgd: 0.40, ead: 3400000, rating: 'A',   sector: 'Finance',        year: 2022 }
-      ],
-      total_rows: 61203
+      columns: data.schema_json ? JSON.parse(data.schema_json).columns ?? [] : [],
+      total_rows: data.row_count ?? 0,
+      dataset: data
     }
-  }, 800)
+    if (!queryName.value) queryName.value = data.name
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Query failed', detail: e?.response?.data?.error ?? e.message, life: 5000 })
+  } finally {
+    running.value = false
+  }
 }
 
 const saveQuery = () => {
-  if (!preview.value) {
+  if (!preview.value?.dataset) {
     toast.add({ severity: 'warn', summary: 'Run the query first', life: 2500 }); return
   }
-  if (!queryName.value.trim()) {
-    toast.add({ severity: 'warn', summary: 'Validation', detail: 'Dataset name is required', life: 2500 }); return
-  }
-  addDataset({
-    name: queryName.value.trim(),
-    source: 'live_query',
-    row_count: preview.value.total_rows,
-    columns: preview.value.columns
-  })
-  toast.add({ severity: 'success', summary: 'Registered', detail: queryName.value, life: 2500 })
+  addDataset(preview.value.dataset)
+  toast.add({ severity: 'success', summary: 'Registered', detail: preview.value.dataset.name, life: 2500 })
   queryVisible.value = false
 }
 </script>
@@ -172,40 +167,35 @@ const saveQuery = () => {
         </div>
       </template>
 
-      <FileUpload
-        name="dataset"
-        accept=".csv,.xlsx,.parquet"
-        :maxFileSize="104857600"
-        :auto="true"
-        :customUpload="true"
-        @uploader="onUpload"
-        chooseLabel="Choose file"
-      >
-        <template #empty>
-          <div class="flex flex-column align-items-center gap-2 py-4 text-color-secondary">
-            <i class="pi pi-cloud-upload text-4xl" />
-            <span>Drag and drop a file here or click <b>Choose file</b></span>
-          </div>
-        </template>
-      </FileUpload>
+      <div class="flex flex-column gap-4">
+        <FileUpload
+          mode="basic"
+          name="dataset"
+          accept=".csv,.xlsx,.parquet"
+          :maxFileSize="104857600"
+          :auto="false"
+          chooseLabel="Choose file"
+          class="w-full"
+          @select="onSelectFile"
+        />
 
-      <ProgressBar v-if="uploading" mode="indeterminate" class="mt-3" style="height:4px" />
-
-      <div v-if="uploaded" class="surface-ground border-round p-4 mt-4">
-        <div class="flex align-items-center gap-2 mb-3">
-          <i class="pi pi-check-circle text-green-400 text-xl" />
-          <span class="font-semibold">{{ uploaded.name }}</span>
-          <Tag value="ready" severity="success" class="ml-auto" />
+        <div v-if="uploadFile" class="surface-ground border-round p-3 flex align-items-center gap-2">
+          <i class="pi pi-file text-xl text-color-secondary" />
+          <span class="text-sm font-mono flex-1 min-w-0 overflow-hidden text-overflow-ellipsis">{{ uploadFile.name }}</span>
+          <Tag :value="(uploadFile.size / 1024).toFixed(0) + ' KB'" severity="secondary" />
         </div>
-        <div class="text-sm text-color-secondary mb-2">{{ uploaded.row_count.toLocaleString() }} rows detected</div>
-        <div class="flex flex-wrap gap-2">
-          <Chip v-for="col in uploaded.columns" :key="col" :label="col" class="text-xs" />
+
+        <div class="flex flex-column gap-1">
+          <label class="font-medium text-sm">Dataset name</label>
+          <InputText v-model="uploadName" placeholder="e.g. PD_Corporate_2024" class="w-full" />
         </div>
       </div>
 
+      <ProgressBar v-if="uploading" mode="indeterminate" class="mt-3" style="height:4px" />
+
       <template #footer>
         <Button label="Cancel" severity="secondary" text @click="uploadVisible = false" />
-        <Button label="Save to Registry" icon="pi pi-save" :disabled="!uploaded" @click="saveUpload" />
+        <Button label="Upload & Register" icon="pi pi-upload" :loading="uploading" :disabled="!uploadFile || !uploadName.trim()" @click="saveUpload" />
       </template>
     </Dialog>
 

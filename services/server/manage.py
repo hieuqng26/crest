@@ -2,7 +2,6 @@ import os
 from flask.cli import FlaskGroup
 from project import create_app, db, socketio
 from project.api.users.models import User
-from project.db_models import seed_data, clean_data
 
 app = create_app()
 cli = FlaskGroup(create_app=create_app)
@@ -20,16 +19,6 @@ def seed_db():
     if User.query.first() is None:
         db.session.add(User(email="admin", password="admin", role="admin"))
         db.session.commit()
-
-
-@cli.command("seed_data_db")
-def seed_data_db():
-    seed_data()
-
-
-@cli.command("clean_data_db")
-def clean_data_db():
-    clean_data()
 
 
 if __name__ == "__main__":
