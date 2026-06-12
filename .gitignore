@@ -20,9 +20,6 @@ services/client/lerna-debug.log*
 services/client/package-lock.json
 services/client/node_modules
 
-# env files contain secrets — never commit
-env/
-
 # VSCode — ignore workspace settings but keep launch config
 .vscode/*
 !.vscode/launch.json
