@@ -71,15 +71,19 @@ class CalibrationRun(db.Model):
     model_config_id = db.Column(db.Integer, db.ForeignKey('model_configs.id'), nullable=False)
     status = db.Column(db.String(32), nullable=False, default='queued')  # queued|running|success|failed
     triggered_by = db.Column(db.String(64), db.ForeignKey('users.email'), nullable=False)
-    mlflow_run_id = db.Column(db.String(128), nullable=True)
     artifact_path = db.Column(db.String(1024), nullable=True)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
     train_metrics_json = db.Column(db.Text, nullable=True)
     val_metrics_json = db.Column(db.Text, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
+    progress = db.Column(db.Integer, nullable=False, default=0)
+    progress_message = db.Column(db.String(512), nullable=True)
+    search_config_json = db.Column(db.Text, nullable=True)
+    best_params_json = db.Column(db.Text, nullable=True)
 
     forecasts = db.relationship('Forecast', backref='calibration_run', cascade='all, delete', lazy=True)
+    logs = db.relationship('CalibrationRunLog', backref='calibration_run', cascade='all, delete', lazy=True)
 
     def to_dict(self):
         return dict(
@@ -89,13 +93,33 @@ class CalibrationRun(db.Model):
             model_config_id=self.model_config_id,
             status=self.status,
             triggered_by=self.triggered_by,
-            mlflow_run_id=self.mlflow_run_id,
             artifact_path=self.artifact_path,
             started_at=self.started_at.isoformat() if self.started_at else None,
             finished_at=self.finished_at.isoformat() if self.finished_at else None,
             train_metrics_json=self.train_metrics_json,
             val_metrics_json=self.val_metrics_json,
             error_message=self.error_message,
+            progress=self.progress,
+            progress_message=self.progress_message,
+            search_config_json=self.search_config_json,
+            best_params_json=self.best_params_json,
+        )
+
+
+class CalibrationRunLog(db.Model):
+    __tablename__ = 'calibration_run_logs'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    run_id = db.Column(db.String(64), db.ForeignKey('calibration_runs.run_id'), nullable=False, index=True)
+    logged_at = db.Column(db.DateTime, nullable=False)
+    level = db.Column(db.String(16), nullable=False, default='info')  # info | warn | error
+    message = db.Column(db.String(1024), nullable=False)
+
+    def to_dict(self):
+        return dict(
+            t=self.logged_at.strftime('%H:%M:%S') if self.logged_at else None,
+            level=self.level,
+            message=self.message,
         )
 
 

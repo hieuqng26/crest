@@ -1,6 +1,6 @@
 import os
 from flask.cli import FlaskGroup
-from project import create_app, db, socketio
+from project import create_app, db
 from project.api.users.models import User
 
 app = create_app()
@@ -22,11 +22,4 @@ def seed_db():
 
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1:
-        cli()
-    else:
-        if app.config.get("CONFIG_NAME") == "production":
-            socketio.run(app, debug=False, host='0.0.0.0')
-        else:
-            socketio.run(app, debug=True, allow_unsafe_werkzeug=True, host='0.0.0.0')
+    cli()

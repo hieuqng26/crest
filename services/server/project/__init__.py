@@ -5,12 +5,10 @@ from flask import Flask, request
 from flask_wtf import CSRFProtect
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-from flask_socketio import SocketIO
 from flask_migrate import Migrate
 from flask_caching import Cache
 from werkzeug.middleware.proxy_fix import ProxyFix
 from contextlib import contextmanager
-from project.api.utils import validate_request_query_string
 from project.config import Config, DevelopmentConfig, ProductionConfig, TestingConfig
 from project.logger import get_logger
 
@@ -19,7 +17,6 @@ logger = get_logger(__name__)
 db = SQLAlchemy()
 migrate = Migrate()
 bcrypt = Bcrypt()
-socketio = SocketIO()
 cache = Cache()
 DATA_STORE = os.getenv('DATA_STORE', '/var/lib/app_data')
 
@@ -80,7 +77,6 @@ def create_app():
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     jwt.init_app(app)
-    socketio.init_app(app, cors_allowed_origins="*", async_mode='threading')
     cache.init_app(app, config={'CACHE_TYPE': 'RedisCache', 'CACHE_REDIS_URL': app.config['REDIS_URL']})
 
     # Import models so Alembic autogenerate can detect them
@@ -88,7 +84,7 @@ def create_app():
     from project.api.auth.models import ActiveSession  # noqa: F401
     from project.api.auditlog.models import AuditLog  # noqa: F401
     from project.api.roles.models import Role  # noqa: F401
-    from project.db_models.calibration_models import Dataset, ModelConfig, CalibrationRun, Forecast  # noqa: F401
+    from project.db_models.calibration_models import Dataset, ModelConfig, CalibrationRun, Forecast, CalibrationRunLog  # noqa: F401
 
     from project.api.auth.routes import auth
     from project.api.users.routes import user
@@ -154,17 +150,3 @@ def create_app():
         return response
 
     return app
-
-# @validate_request
-
-
-@socketio.on('connect')
-# @validate_request
-def handle_socket():
-    if not validate_request_query_string():
-        raise ConnectionRefusedError("Invalid SocketIO request")
-    logger.info('socketio connected')
-
-
-def send_notification(event, data):
-    socketio.emit(event, data)

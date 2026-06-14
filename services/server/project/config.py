@@ -65,7 +65,6 @@ class DevelopmentConfig(Config):
     MINIO_SECURE     = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
 
     # MLflow (headless)
-    MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 
     # Main application database (for user info, results)
     mssql_server_main = os.getenv('APP_DB_SERVER', 'tcp:mssql,1433')
@@ -127,7 +126,6 @@ class ProductionConfig(Config):
     MINIO_SECURE     = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
 
     # MLflow (headless)
-    MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 
     # Main application database (for user info, results)
     mssql_server_main = os.getenv('APP_DB_SERVER', 'tcp:mssql,1433')

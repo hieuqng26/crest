@@ -12,6 +12,14 @@ const httpClient = axios.create({
 
 const setAuthHeader = (jwt) => ({ Authorization: `Bearer ${jwt}` })
 
+httpClient.interceptors.request.use((config) => {
+  // Don't overwrite if the caller explicitly set Authorization (e.g. the refresh-token request)
+  if (config.headers['Authorization']) return config
+  const token = store.state.jwt?.accessToken
+  if (token) config.headers['Authorization'] = `Bearer ${token}`
+  return config
+})
+
 let isRefreshing = false
 let refreshSubscribers = []
 

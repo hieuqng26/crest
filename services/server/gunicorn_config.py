@@ -13,8 +13,7 @@ bind = ['0.0.0.0:5000']
 # Optimal number of workers based on CPU cores
 workers = 5  # Adjust based on (2 x CPUs) + 1
 
-# Use asynchronous worker class
-worker_class = 'gevent'
+worker_class = 'gthread'
 
 # Increase threads for concurrency
 threads = 4

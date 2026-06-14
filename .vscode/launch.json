@@ -26,13 +26,13 @@
             "type": "debugpy",
             "request": "attach",
             "connect": {
-                "host": "0.0.0.0",
+                "host": "localhost",
                 "port": 5678
             },
             "pathMappings": [
                 {
-                    "localRoot": "${workspaceFolder}\\services\\server",
-                    "remoteRoot": "."
+                    "localRoot": "${workspaceFolder}/services/server",
+                    "remoteRoot": "/usr/src/app"
                 }
             ]
         },
@@ -41,13 +41,13 @@
             "type": "debugpy",
             "request": "attach",
             "connect": {
-                "host": "0.0.0.0",
+                "host": "localhost",
                 "port": 5679
             },
             "pathMappings": [
                 {
-                    "localRoot": "${workspaceFolder}\\services\\server",
-                    "remoteRoot": "."
+                    "localRoot": "${workspaceFolder}/services/server",
+                    "remoteRoot": "/usr/src/app"
                 }
             ]
         },

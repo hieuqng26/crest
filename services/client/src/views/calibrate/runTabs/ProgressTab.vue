@@ -1,9 +1,8 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { socket } from '@/api/socket'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import calibrationsAPI from '@/api/calibrationsAPI'
 
 const props = defineProps({ run: { type: Object, required: true } })
-const emit = defineEmits(['update:run'])
 
 const SEVERITIES = ['info', 'warn', 'error']
 const enabled = ref({ info: true, warn: true, error: true })
@@ -11,9 +10,7 @@ const search = ref('')
 const autoScroll = ref(true)
 const logEl = ref(null)
 
-const logs = ref([
-  { t: new Date().toISOString().slice(11, 19), level: 'info', text: `Connecting to run ${props.run.run_id}…` }
-])
+const logs = ref([])
 
 const filteredLogs = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -29,41 +26,41 @@ const counts = computed(() => {
   return c
 })
 
-const appendLog = (level, text) => {
-  const t = new Date().toISOString().slice(11, 19)
-  logs.value.push({ t, level, text })
-}
+const isActive = () => props.run.status === 'running' || props.run.status === 'queued'
 
-const inferLevel = (msg) => {
-  const m = msg?.toLowerCase() ?? ''
-  if (m.includes('error') || m.includes('fail')) return 'error'
-  if (m.includes('warn'))  return 'warn'
-  return 'info'
-}
+let pollTimer = null
 
-// SocketIO: listen for progress events from the Celery task
-const onProgress = (payload) => {
-  if (payload.run_id !== props.run.run_id) return
-  const level = payload.progress === -1 ? 'error' : inferLevel(payload.message)
-  appendLog(level, payload.message)
-  const next = payload.progress >= 0
-    ? { ...props.run, progress: payload.progress }
-    : { ...props.run, status: 'failed' }
-  if (payload.progress === 100) next.status = 'success'
-  emit('update:run', next)
-}
-
-onMounted(() => {
-  socket.on('calibration_progress', onProgress)
-  if (props.run.status === 'running' || props.run.status === 'queued') {
-    appendLog('info', 'Waiting for task worker…')
-  } else if (props.run.status === 'success') {
-    appendLog('info', 'Run completed successfully.')
-  } else if (props.run.status === 'failed') {
-    appendLog('error', props.run.error_message ?? 'Run failed.')
+const fetchLogs = async () => {
+  try {
+    const { data } = await calibrationsAPI.logs(props.run.run_id)
+    logs.value = data.map(l => ({ t: l.t, level: l.level, text: l.message }))
+  } catch (e) {
+    console.warn('[ProgressTab] fetchLogs failed:', e?.response?.status, e?.message)
   }
-})
-onUnmounted(() => socket.off('calibration_progress', onProgress))
+}
+
+const startPolling = () => {
+  if (pollTimer) return
+  pollTimer = setInterval(fetchLogs, 2000)
+}
+
+const stopPolling = () => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+onUnmounted(stopPolling)
+
+// immediate: true ensures fetchLogs() is called on component creation for any status,
+// including terminal states (failed/success) where there is no polling to retry.
+watch(() => props.run.status, (s) => {
+  if (s === 'running' || s === 'queued') {
+    fetchLogs()
+    startPolling()
+  } else {
+    stopPolling()
+    fetchLogs()
+  }
+}, { immediate: true })
 
 watch(filteredLogs, async () => {
   if (!autoScroll.value || !logEl.value) return

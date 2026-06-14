@@ -4,7 +4,6 @@ import { usePrimeVue } from 'primevue/config'
 import { useLayout } from '@/layout/composables/layout'
 import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
-import { socket } from '@/api/socket'
 import router from '@/router'
 
 defineProps({
@@ -21,13 +20,6 @@ const user = ref(currentUser)
 const $primevue = usePrimeVue()
 
 const appName = import.meta.env.VITE_APP_NAME
-
-// notificaitons
-const nRequests = ref(0)
-
-socket.on('nPendingRequests', (data) => {
-  nRequests.value = data
-})
 
 const op = ref()
 

@@ -49,12 +49,6 @@ const DATE_OPTIONS = [
   { label: 'All time',      value: 'all' }
 ]
 
-const counts = computed(() => {
-  const c = { all: runs.value.length, running: 0, queued: 0, success: 0, failed: 0 }
-  for (const r of runs.value) c[r.status] = (c[r.status] || 0) + 1
-  return c
-})
-
 const allAlgorithms = computed(() => [...new Set(runs.value.map(r => r.algorithm))])
 const allUsers      = computed(() => [...new Set(runs.value.map(r => r.triggered_by))])
 
@@ -63,14 +57,16 @@ const activeFilterCount = computed(() =>
 )
 
 const daysAgo = (iso) => {
-  if (!iso) return Infinity
-  const d = new Date(iso.replace(' ', 'T') + ':00Z')
-  return (Date.now() - d.getTime()) / 86400000
+  if (!iso) return 0
+  // isoformat() from Python already includes T and +00:00 — don't append timezone twice
+  const s = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z'
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? 0 : (Date.now() - d.getTime()) / 86400000
 }
 
-const filtered = computed(() =>
+// Runs matching all filters except the status pill — used for counts + final filter
+const preFiltered = computed(() =>
   runs.value
-    .filter(r => activeStatus.value === 'all' || r.status === activeStatus.value)
     .filter(r => algoFilter.value.length === 0 || algoFilter.value.includes(r.algorithm))
     .filter(r => userFilter.value.length === 0 || userFilter.value.includes(r.triggered_by))
     .filter(r => dateRange.value === 'all' || daysAgo(r.started_at) <= Number(dateRange.value))
@@ -79,6 +75,17 @@ const filtered = computed(() =>
       if (!q) return true
       return (r.run_id + r.config_name + r.dataset_name).toLowerCase().includes(q)
     })
+)
+
+// Counts reflect the current date/algo/user/search context so pills match the table
+const counts = computed(() => {
+  const c = { all: preFiltered.value.length, running: 0, queued: 0, success: 0, failed: 0 }
+  for (const r of preFiltered.value) c[r.status] = (c[r.status] || 0) + 1
+  return c
+})
+
+const filtered = computed(() =>
+  preFiltered.value.filter(r => activeStatus.value === 'all' || r.status === activeStatus.value)
 )
 
 const resetFilters = () => {
@@ -91,10 +98,12 @@ const resetFilters = () => {
 const openRun = (r) => router.push({ name: 'calibrate_run', params: { run_id: r.run_id }, query: { tab: 'overview' } })
 const cancelRun = async (r) => {
   try {
-    await calibrationsAPI.recalibrate(r.run_id, { cancel: true })
-  } catch { /* best-effort */ }
-  const idx = runs.value.findIndex(x => x.run_id === r.run_id)
-  if (idx >= 0) runs.value[idx] = { ...r, status: 'failed', finished_at: new Date().toISOString().slice(0, 16).replace('T', ' ') }
+    const { data } = await calibrationsAPI.cancel(r.run_id)
+    const idx = runs.value.findIndex(x => x.run_id === r.run_id)
+    if (idx >= 0) runs.value[idx] = { ...runs.value[idx], ...data }
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
   toast.add({ severity: 'warn', summary: 'Cancelled', detail: r.run_id, life: 2500 })
 }
 const duplicateRun = async (r) => {
@@ -106,10 +115,42 @@ const duplicateRun = async (r) => {
     toast.add({ severity: 'error', summary: 'Duplicate failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
 }
-const deleteRun = (r) => {
-  // Soft-delete client-side only (no backend DELETE endpoint yet)
-  runs.value = runs.value.filter(x => x.run_id !== r.run_id)
-  toast.add({ severity: 'success', summary: 'Removed', detail: r.run_id, life: 2000 })
+const deleteRun = async (r) => {
+  try {
+    await calibrationsAPI.delete(r.run_id)
+    runs.value = runs.value.filter(x => x.run_id !== r.run_id)
+    toast.add({ severity: 'success', summary: 'Run deleted', detail: r.run_id, life: 2000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
+}
+
+// Bulk selection
+const selectMode = ref(false)
+const selection = ref([])
+const confirmingBulkDelete = ref(false)
+
+const exitSelectMode = () => { selectMode.value = false; selection.value = []; confirmingBulkDelete.value = false }
+const clearSelection = () => { selection.value = []; confirmingBulkDelete.value = false }
+
+const bulkDelete = async () => {
+  const runIds = selection.value.map(r => r.run_id)
+  try {
+    const { data } = await calibrationsAPI.bulkDelete(runIds)
+    const deletedSet = new Set(
+      selection.value
+        .filter(r => r.status !== 'queued' && r.status !== 'running')
+        .map(r => r.run_id)
+    )
+    runs.value = runs.value.filter(r => !deletedSet.has(r.run_id))
+    const msg = data.skipped > 0
+      ? `${data.deleted} deleted, ${data.skipped} skipped (active runs)`
+      : `${data.deleted} run${data.deleted > 1 ? 's' : ''} deleted`
+    toast.add({ severity: 'success', summary: 'Deleted', detail: msg, life: 3000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
+  exitSelectMode()
 }
 
 // Per-row overflow menu
@@ -172,6 +213,15 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
           outlined
           @click="toggleFilterPanel"
         />
+        <Button
+          :label="selectMode ? 'Cancel' : 'Select'"
+          :icon="selectMode ? 'pi pi-times' : 'pi pi-check-square'"
+          :severity="selectMode ? 'secondary' : 'secondary'"
+          :outlined="!selectMode"
+          :text="selectMode"
+          size="small"
+          @click="selectMode ? exitSelectMode() : (selectMode = true)"
+        />
       </div>
     </div>
 
@@ -233,20 +283,46 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
       <Button label="Reset" text size="small" @click="resetFilters" />
     </div>
 
-    <!-- Results count -->
-    <div class="text-xs text-color-secondary mb-2">
-      Showing {{ filtered.length }} of {{ runs.length }} runs
+    <!-- Results count + bulk action bar -->
+    <div class="flex align-items-center justify-content-between mb-2" style="min-height: 1.75rem">
+      <span class="text-xs text-color-secondary">Showing {{ filtered.length }} of {{ runs.length }} runs</span>
+
+      <Transition name="bulk-bar">
+        <div v-if="selectMode && selection.length > 0" class="bulk-bar flex align-items-center gap-2">
+          <span class="text-xs text-color-secondary">
+            <b class="text-color">{{ selection.length }}</b> selected
+          </span>
+          <Button label="Clear" text size="small" severity="secondary" @click="clearSelection" />
+          <template v-if="!confirmingBulkDelete">
+            <Button
+              :label="`Delete ${selection.length} run${selection.length > 1 ? 's' : ''}`"
+              icon="pi pi-trash"
+              size="small"
+              severity="danger"
+              outlined
+              @click="confirmingBulkDelete = true"
+            />
+          </template>
+          <template v-else>
+            <span class="text-xs text-red-400 font-medium">Delete {{ selection.length }} run{{ selection.length > 1 ? 's' : '' }}?</span>
+            <Button label="Cancel" text size="small" severity="secondary" @click="confirmingBulkDelete = false" />
+            <Button label="Confirm" icon="pi pi-trash" size="small" severity="danger" @click="bulkDelete" />
+          </template>
+        </div>
+      </Transition>
     </div>
 
     <!-- Table -->
     <div class="border-1 surface-border border-round overflow-hidden">
       <DataTable
         :value="filtered"
+        v-model:selection="selection"
+        dataKey="run_id"
         size="small"
         :paginator="filtered.length > 15"
         :rows="15"
         rowHover
-        @rowClick="(e) => openRun(e.data)"
+        @rowClick="(e) => { if (!e.originalEvent.target.closest('.p-checkbox, .p-button')) openRun(e.data) }"
         class="jobs-table"
         sortField="started_at"
         :sortOrder="-1"
@@ -260,6 +336,8 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
               @click="resetFilters(); activeStatus = 'all'; search = ''" class="mt-2" />
           </div>
         </template>
+
+        <Column v-if="selectMode" selectionMode="multiple" style="width: 3rem" :exportable="false" />
 
         <Column header="Run" sortable sortField="config_name">
           <template #body="{ data }">
@@ -303,7 +381,7 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
         <Column header="Duration" sortable sortField="started_at" style="width: 8rem">
           <template #body="{ data }">
             <div class="text-sm font-mono">{{ duration(data.started_at, data.finished_at, data.status) }}</div>
-            <div class="text-xs text-color-secondary">{{ data.started_at.split(' ')[0] }}</div>
+            <div class="text-xs text-color-secondary">{{ data.started_at?.substring(0, 10) ?? '—' }}</div>
           </template>
         </Column>
 
@@ -428,6 +506,27 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
   height: 100%;
   border-radius: 999px;
   transition: width 250ms ease;
+}
+
+/* Bulk action bar */
+.bulk-bar {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 4px 10px 4px 12px;
+}
+
+.bulk-bar-enter-active,
+.bulk-bar-leave-active { transition: opacity 150ms ease, transform 150ms ease; }
+.bulk-bar-enter-from,
+.bulk-bar-leave-to { opacity: 0; transform: translateY(-4px); }
+
+/* Checkbox column alignment */
+:deep(.jobs-table .p-checkbox) { margin: 0; }
+:deep(.jobs-table .p-datatable-thead > tr > th:first-child),
+:deep(.jobs-table .p-datatable-tbody > tr > td:first-child) {
+  padding-left: 1rem;
+  padding-right: 0.25rem;
 }
 
 /* Table polish — kill stripes, lighter rows, padded cells */

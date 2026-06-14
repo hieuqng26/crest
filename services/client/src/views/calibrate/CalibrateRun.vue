@@ -60,9 +60,12 @@ const onRunUpdate = (next) => { run.value = next }
 
 const cancel = async () => {
   try {
-    await calibrationsAPI.recalibrate(runId.value, { cancel: true })
-  } catch { /* best-effort */ }
-  run.value = { ...run.value, status: 'failed', finished_at: new Date().toISOString().slice(0, 16).replace('T', ' ') }
+    const { data } = await calibrationsAPI.cancel(runId.value)
+    run.value = { ...run.value, ...data }
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    return
+  }
   stopPolling()
   toast.add({ severity: 'warn', summary: 'Run cancelled', detail: run.value.run_id, life: 2500 })
 }
