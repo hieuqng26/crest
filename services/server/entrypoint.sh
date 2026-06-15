@@ -54,7 +54,7 @@ elif [ "$SERVICE_NAME" = "worker" ]
 then
     if [ -n "$DEBUG_PORT" ]
     then
-        python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT --wait-for-client -m celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default --pool=solo
+        python3.11 -m debugpy --listen 0.0.0.0:$DEBUG_PORT -m celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default --pool=solo
     else
         celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
     fi

@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
+
 from project import db
 
 
 class Dataset(db.Model):
-    __tablename__ = 'datasets'
+    __tablename__ = "datasets"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(db.String(255), nullable=False)
@@ -12,11 +13,13 @@ class Dataset(db.Model):
     file_path = db.Column(db.String(1024), nullable=True)
     schema_json = db.Column(db.Text, nullable=True)
     row_count = db.Column(db.Integer, nullable=True)
-    created_by = db.Column(db.String(64), db.ForeignKey('users.email'), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now(timezone.utc))
-    status = db.Column(db.String(32), nullable=False, default='ready')
+    created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+    )
+    status = db.Column(db.String(32), nullable=False, default="ready")
 
-    calibration_runs = db.relationship('CalibrationRun', backref='dataset', lazy=True)
+    calibration_runs = db.relationship("CalibrationRun", backref="dataset", lazy=True)
 
     def to_dict(self):
         return dict(
@@ -34,19 +37,25 @@ class Dataset(db.Model):
 
 
 class ModelConfig(db.Model):
-    __tablename__ = 'model_configs'
+    __tablename__ = "model_configs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(db.String(255), nullable=False)
-    family = db.Column(db.String(32), nullable=False)   # 'classification' | 'timeseries' | 'statistical'
+    family = db.Column(
+        db.String(32), nullable=False
+    )  # 'classification' | 'timeseries' | 'statistical'
     algorithm = db.Column(db.String(128), nullable=False)
     hyperparams_json = db.Column(db.Text, nullable=True)
     feature_cols_json = db.Column(db.Text, nullable=True)
     target_col = db.Column(db.String(255), nullable=True)
-    created_by = db.Column(db.String(64), db.ForeignKey('users.email'), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+    )
 
-    calibration_runs = db.relationship('CalibrationRun', backref='model_config', lazy=True)
+    calibration_runs = db.relationship(
+        "CalibrationRun", backref="model_config", lazy=True
+    )
 
     def to_dict(self):
         return dict(
@@ -63,14 +72,20 @@ class ModelConfig(db.Model):
 
 
 class CalibrationRun(db.Model):
-    __tablename__ = 'calibration_runs'
+    __tablename__ = "calibration_runs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
-    dataset_id = db.Column(db.Integer, db.ForeignKey('datasets.id'), nullable=False)
-    model_config_id = db.Column(db.Integer, db.ForeignKey('model_configs.id'), nullable=False)
-    status = db.Column(db.String(32), nullable=False, default='queued')  # queued|running|success|failed
-    triggered_by = db.Column(db.String(64), db.ForeignKey('users.email'), nullable=False)
+    dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
+    model_config_id = db.Column(
+        db.Integer, db.ForeignKey("model_configs.id"), nullable=False
+    )
+    status = db.Column(
+        db.String(32), nullable=False, default="queued"
+    )  # queued|running|success|failed
+    triggered_by = db.Column(
+        db.String(64), db.ForeignKey("users.email"), nullable=False
+    )
     artifact_path = db.Column(db.String(1024), nullable=True)
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
@@ -82,8 +97,12 @@ class CalibrationRun(db.Model):
     search_config_json = db.Column(db.Text, nullable=True)
     best_params_json = db.Column(db.Text, nullable=True)
 
-    forecasts = db.relationship('Forecast', backref='calibration_run', cascade='all, delete', lazy=True)
-    logs = db.relationship('CalibrationRunLog', backref='calibration_run', cascade='all, delete', lazy=True)
+    forecasts = db.relationship(
+        "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
+    )
+    logs = db.relationship(
+        "CalibrationRunLog", backref="calibration_run", cascade="all, delete", lazy=True
+    )
 
     def to_dict(self):
         return dict(
@@ -107,30 +126,41 @@ class CalibrationRun(db.Model):
 
 
 class CalibrationRunLog(db.Model):
-    __tablename__ = 'calibration_run_logs'
+    __tablename__ = "calibration_run_logs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    run_id = db.Column(db.String(64), db.ForeignKey('calibration_runs.run_id'), nullable=False, index=True)
+    run_id = db.Column(
+        db.String(64),
+        db.ForeignKey("calibration_runs.run_id"),
+        nullable=False,
+        index=True,
+    )
     logged_at = db.Column(db.DateTime, nullable=False)
-    level = db.Column(db.String(16), nullable=False, default='info')  # info | warn | error
+    level = db.Column(
+        db.String(16), nullable=False, default="info"
+    )  # info | warn | error
     message = db.Column(db.String(1024), nullable=False)
 
     def to_dict(self):
         return dict(
-            t=self.logged_at.strftime('%H:%M:%S') if self.logged_at else None,
+            t=self.logged_at.strftime("%H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
         )
 
 
 class Forecast(db.Model):
-    __tablename__ = 'forecasts'
+    __tablename__ = "forecasts"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    calibration_run_id = db.Column(db.Integer, db.ForeignKey('calibration_runs.id'), nullable=False)
+    calibration_run_id = db.Column(
+        db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False
+    )
     forecast_horizon = db.Column(db.Integer, nullable=True)
     forecast_json = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now(timezone.utc))
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+    )
 
     def to_dict(self):
         return dict(

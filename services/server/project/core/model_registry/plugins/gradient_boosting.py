@@ -1,6 +1,7 @@
 import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier as _GBC
 from pydantic import BaseModel, Field
+from sklearn.ensemble import GradientBoostingClassifier as _GBC
+
 from project.core.model_registry.base import BaseMLModel
 from project.core.model_registry.diagnostics import classification_diagnostics
 
@@ -12,8 +13,8 @@ class GradientBoostingParams(BaseModel):
 
 
 class GradientBoostingPlugin(BaseMLModel):
-    family = 'classification'
-    algorithm = 'GradientBoosting'
+    family = "classification"
+    algorithm = "GradientBoosting"
     param_schema = GradientBoostingParams
 
     def __init__(self):
@@ -23,7 +24,7 @@ class GradientBoostingPlugin(BaseMLModel):
         self._model = _GBC(
             n_estimators=params.n_estimators,
             learning_rate=params.learning_rate,
-            max_depth=params.max_depth
+            max_depth=params.max_depth,
         )
         self._model.fit(X, y)
 

@@ -1,25 +1,42 @@
+import json
 import os
-from flask import request, make_response, jsonify
-from dateutil import tz, parser
-import pytz
-from tzlocal import get_localzone
+import re
+import uuid
 from datetime import datetime
 from functools import wraps
-import uuid
-import re
-import json
+
 import numpy as np
 import pandas as pd
+import pytz
+from dateutil import parser, tz
+from flask import jsonify, make_response, request
+from tzlocal import get_localzone
 
 from project.logger import get_logger
 
 logger = get_logger(__name__)
 
-SAFE_REQUEST_PASSWORD = os.getenv("SAFE_REQUEST_PASSWORD_REGEX", r'^.{8,20}$')
+SAFE_REQUEST_PASSWORD = os.getenv("SAFE_REQUEST_PASSWORD_REGEX", r"^.{8,20}$")
 SAFE_REQUEST_PASSWORD_REGEX = re.compile(SAFE_REQUEST_PASSWORD)
-SAFE_REQUEST_VALUE_REGEX = re.compile(r'^[a-zA-Z0-9_\- \x1e\x1f&<>./();:,\$=*#+@|\\\"\'\[\]\{\}"]*$')
-DANGEROUS_REQUEST_VALUES = ["###", "+--", "--", "'='", "--+", "DECLARE @", "CAST(", "EXEC(", "process.kill(", "process.exit(", "while("]
-DANGEROUS_REQUEST_VALUE_REGEX = re.compile("|".join(map(re.escape, DANGEROUS_REQUEST_VALUES)))
+SAFE_REQUEST_VALUE_REGEX = re.compile(
+    r'^[a-zA-Z0-9_\- \x1e\x1f&<>./();:,\$=*#+@|\\\"\'\[\]\{\}"]*$'
+)
+DANGEROUS_REQUEST_VALUES = [
+    "###",
+    "+--",
+    "--",
+    "'='",
+    "--+",
+    "DECLARE @",
+    "CAST(",
+    "EXEC(",
+    "process.kill(",
+    "process.exit(",
+    "while(",
+]
+DANGEROUS_REQUEST_VALUE_REGEX = re.compile(
+    "|".join(map(re.escape, DANGEROUS_REQUEST_VALUES))
+)
 SAFE_HEADER_REGEX = re.compile(r'^[a-zA-Z0-9_\- ./();:,+=*?"]*$')
 SQLI_PATTERNS = [
     # Look for UNION followed closely by SELECT (more precise than matching 'union' alone)
@@ -38,11 +55,11 @@ SQLI_PATTERNS = [
 ]
 
 # Set the local timezone to Singapore
-local_tz = tz.gettz('Asia/Singapore')
+local_tz = tz.gettz("Asia/Singapore")
 
 
 def valid_date(date, dayfirst=False):
-    '''Parse date string to datetime object'''
+    """Parse date string to datetime object"""
     if date is None:
         return None
 
@@ -51,7 +68,7 @@ def valid_date(date, dayfirst=False):
         try:
             # Parse the date string
             dt = parser.parse(date, dayfirst=dayfirst)
-        except Exception as e:
+        except Exception:
             raise ValueError(f"Invalid date format. Date: {date}.")
     elif isinstance(date, datetime):
         dt = date
@@ -70,12 +87,12 @@ def convert_to_local_timezone(naive_dt):
         local_timezone = get_localzone()
         local_dt = naive_dt.replace(tzinfo=pytz.utc).astimezone(local_timezone)
         return local_dt
-    except Exception as e:
+    except Exception:
         return naive_dt
 
 
 def toJSON(df):
-    logger.debug('Converting DataFrame to JSON')
+    logger.debug("Converting DataFrame to JSON")
 
     if df is None:
         return None
@@ -90,20 +107,22 @@ def toJSON(df):
         # Convert datetime columns to ISO format strings
         for col in df_copy.columns:
             if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
-                df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S').replace('NaT', None)
+                df_copy[col] = (
+                    df_copy[col].dt.strftime("%Y-%m-%d %H:%M:%S").replace("NaT", None)
+                )
 
         # Convert to dict and then to JSON
-        records = df_copy.to_dict(orient='records')
+        records = df_copy.to_dict(orient="records")
     elif isinstance(df, list):
         records = df
     else:
-        raise ValueError(f'Cannot parse to JSON of type {type(df)}')
+        raise ValueError(f"Cannot parse to JSON of type {type(df)}")
 
     # Custom JSON encoder to handle any remaining non-serializable objects
     def json_serializer(obj):
         if pd.isna(obj):
             return None
-        elif hasattr(obj, 'isoformat'):  # datetime objects
+        elif hasattr(obj, "isoformat"):  # datetime objects
             return obj.isoformat()
         elif isinstance(obj, (pd.Timestamp, pd.Timedelta)):
             return str(obj)
@@ -138,7 +157,7 @@ def convert_level_to_json(level_dict):
 
 
 def validate_boolean(boolean):
-    if boolean != True and boolean != False:
+    if boolean is not True and boolean is not False:
         raise TypeError("Variable must be Boolean")
 
 
@@ -147,14 +166,18 @@ def valid_uuid(uuid_id):
         correct_uuid = str(uuid.UUID(str(uuid_id)))
         return correct_uuid
     except Exception:
-        e = NameError(f"Invalid uuid")
+        e = NameError("Invalid uuid")
         logger.exception(e)
         raise e
         # return make_response(jsonify({'message': str(e)}), 404)
 
 
 def is_empty_df(df):
-    if (df is None) or (isinstance(df, pd.DataFrame) and df.empty) or (isinstance(df, dict) and len(df) == 0):
+    if (
+        (df is None)
+        or (isinstance(df, pd.DataFrame) and df.empty)
+        or (isinstance(df, dict) and len(df) == 0)
+    ):
         return True
     return False
 
@@ -189,65 +212,73 @@ def validate_string_length(str_in):
 
 
 def validate_request_query_string():
-    query_string = request.query_string.decode('utf-8')
+    query_string = request.query_string.decode("utf-8")
     if query_string and isinstance(query_string, str):
         if not bool(SAFE_REQUEST_VALUE_REGEX.match(query_string)):
             return False
     return True
 
 
-def validate_request(allowed_keys=['']):
+def validate_request(allowed_keys=[""]):
     def wrapper(fn):
         @wraps(fn)
         def decorator(*args, **kwargs):
             # ensure no garbage info is contained in request
-            if request.content_type == 'application/json':
+            if request.content_type == "application/json":
                 data = request.get_json()
                 for key, value in data.items():
-                    if not key in allowed_keys:
-                        e = ValueError(f"Invalid key detected in request")
+                    if key not in allowed_keys:
+                        e = ValueError("Invalid key detected in request")
                         logger.exception(e)
-                        return make_response(jsonify({'message': str(e)}), 400)
+                        return make_response(jsonify({"message": str(e)}), 400)
                     if key in ["ldap_connection_id", "page", "page_size"]:
                         if not validate_int_id(value):
-                            e = ValueError(f"Invalid value detected in request")
+                            e = ValueError("Invalid value detected in request")
                             logger.exception(e)
-                            return make_response(jsonify({'message': str(e)}), 400)
+                            return make_response(jsonify({"message": str(e)}), 400)
                     elif isinstance(value, str):
                         if key.upper() in ["PASSWORD"]:
                             if not bool(SAFE_REQUEST_PASSWORD_REGEX.match(value)):
-                                e = ValueError(f"Value in request has invalid character or format")
+                                e = ValueError(
+                                    "Value in request has invalid character or format"
+                                )
                                 logger.exception(e)
-                                return make_response(jsonify({'message': str(e)}), 400)
+                                return make_response(jsonify({"message": str(e)}), 400)
                         else:
                             if not bool(SAFE_REQUEST_VALUE_REGEX.match(value)):
-                                e = ValueError(f"Invalid value detected in request")
+                                e = ValueError("Invalid value detected in request")
                                 logger.exception(e)
-                                return make_response(jsonify({'message': str(e)}), 400)
+                                return make_response(jsonify({"message": str(e)}), 400)
                             elif not validate_string_length(value):
-                                e = ValueError(f"Invalid value detected in request")
+                                e = ValueError("Invalid value detected in request")
                                 logger.exception(e)
-                                return make_response(jsonify({'message': str(e)}), 400)
+                                return make_response(jsonify({"message": str(e)}), 400)
                             elif bool(DANGEROUS_REQUEST_VALUE_REGEX.search(value)):
-                                e = ValueError(f"Invalid value detected in request")
+                                e = ValueError("Invalid value detected in request")
                                 logger.exception(e)
-                                return make_response(jsonify({'message': str(e)}), 400)
+                                return make_response(jsonify({"message": str(e)}), 400)
                             elif is_suspect_sqli(value):
-                                e = ValueError(f"Possible SQL injection detected in request")
+                                e = ValueError(
+                                    "Possible SQL injection detected in request"
+                                )
                                 logger.exception(e)
-                                return make_response(jsonify({'message': str(e)}), 400)
+                                return make_response(jsonify({"message": str(e)}), 400)
 
             # check header
             for header, value in request.headers.items():
                 if not bool(SAFE_HEADER_REGEX.match(value)):
-                    e = ValueError(f"Invalid value detected in header")
+                    e = ValueError("Invalid value detected in header")
                     logger.exception(e)
-                    return make_response(jsonify({'message': str(e)}), 400)
+                    return make_response(jsonify({"message": str(e)}), 400)
                 # limit asterisk to certain header names
-                elif '*' in value and header not in ["Access-Control-Allow-Origin", "Accept", "Cache-Control"]:
-                    e = ValueError(f"Invalid value detected in header")
+                elif "*" in value and header not in [
+                    "Access-Control-Allow-Origin",
+                    "Accept",
+                    "Cache-Control",
+                ]:
+                    e = ValueError("Invalid value detected in header")
                     logger.exception(e)
-                    return make_response(jsonify({'message': str(e)}), 400)
+                    return make_response(jsonify({"message": str(e)}), 400)
                 # limit question mark to certain header names
                 # elif '?' in value and header not in ["Sec-Ch-Ua-Mobile", "If-None-Match", "Referer"]:  # Refer could contain URL with query so may contain "?"
                 #     e = ValueError(f"Invalid value detected in header")
@@ -255,5 +286,7 @@ def validate_request(allowed_keys=['']):
                 #     return make_response(jsonify({'message': str(e)}), 400)
 
             return fn(*args, **kwargs)
+
         return decorator
+
     return wrapper

@@ -1,6 +1,7 @@
 import logging
+
 # import psutil
-import os
+
 # import logstash
 
 
@@ -11,7 +12,9 @@ def get_logger(name):
     # Only add handler if logger doesn't have one yet
     if not logger.handlers:
         handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)

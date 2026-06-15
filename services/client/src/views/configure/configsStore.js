@@ -36,9 +36,22 @@ export const duplicateConfig = async (cfg) => {
   return data
 }
 
+export const updateConfig = async (id, body) => {
+  const { data } = await modelConfigsAPI.update(id, body)
+  configs.value = configs.value.map(c => c.id === id ? data : c)
+  return data
+}
+
 export const deleteConfig = async (id) => {
-  // No backend DELETE endpoint yet — remove from local list only until Phase 4 backend adds it
+  await modelConfigsAPI.delete(id)
   configs.value = configs.value.filter(c => c.id !== id)
+}
+
+export const bulkDeleteConfigs = async (ids) => {
+  const { data } = await modelConfigsAPI.bulkDelete(ids)
+  const deletedSet = new Set(ids)
+  configs.value = configs.value.filter(c => !deletedSet.has(c.id))
+  return data
 }
 
 export const countByAlgorithm = (algorithm) =>

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
 import { datasets, loading, fetchDatasets, addDataset, deleteDataset } from './datasetsStore'
+import { fmtDate as formatDate } from '@/utils/datetime'
 
 const router = useRouter()
 const toast = useToast()
@@ -27,9 +28,34 @@ const filtered = computed(() =>
 )
 
 const view = (d) => router.push({ name: 'dataset_view', params: { id: d.id } })
+
 const onDelete = async (d) => {
   await deleteDataset(d.id)
   toast.add({ severity: 'success', summary: 'Deleted', detail: d.name, life: 2000 })
+}
+
+// --- Bulk delete ---
+const selectMode = ref(false)
+const selection = ref([])
+const confirmingBulkDelete = ref(false)
+
+const exitSelectMode = () => {
+  selectMode.value = false
+  selection.value = []
+  confirmingBulkDelete.value = false
+}
+
+const bulkDelete = async () => {
+  const ids = selection.value.map(d => d.id)
+  try {
+    const { data } = await datasetsAPI.bulkDelete(ids)
+    const deletedSet = new Set(ids)
+    datasets.value = datasets.value.filter(d => !deletedSet.has(d.id))
+    toast.add({ severity: 'success', summary: 'Deleted', detail: `${data.deleted} dataset${data.deleted !== 1 ? 's' : ''} deleted`, life: 3000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
+  exitSelectMode()
 }
 
 onMounted(fetchDatasets)
@@ -77,7 +103,6 @@ const runQuery = async () => {
   preview.value = null
   try {
     const { data } = await datasetsAPI.query(sql.value, queryName.value || 'preview', '')
-    // Backend registers the dataset; use it as the preview summary
     preview.value = {
       columns: data.schema_json ? JSON.parse(data.schema_json).columns ?? [] : [],
       total_rows: data.row_count ?? 0,
@@ -115,39 +140,84 @@ const saveQuery = () => {
     </div>
 
     <div class="surface-card border-round shadow-1 p-4">
+      <!-- Toolbar -->
       <div class="flex flex-wrap align-items-center gap-3 mb-3">
         <IconField class="flex-1" style="min-width: 16rem">
           <InputIcon class="pi pi-search" />
           <InputText v-model="search" placeholder="Search datasets…" class="w-full" />
         </IconField>
-        <SelectButton v-model="sourceFilter" :options="sourceOptions" optionLabel="label" optionValue="value" />
+
+        <Dropdown
+          v-model="sourceFilter"
+          :options="sourceOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="All"
+          class="w-11rem"
+        />
+
+        <template v-if="!selectMode">
+          <Button label="Select" icon="pi pi-check-square" size="small" severity="secondary" text @click="selectMode = true" />
+        </template>
+        <template v-else>
+          <span class="text-sm text-color-secondary">{{ selection.length }} selected</span>
+          <template v-if="!confirmingBulkDelete">
+            <Button
+              label="Delete selected"
+              icon="pi pi-trash"
+              size="small"
+              severity="danger"
+              :disabled="selection.length === 0"
+              @click="confirmingBulkDelete = true"
+            />
+          </template>
+          <template v-else>
+            <span class="text-sm font-medium text-red-400">Delete {{ selection.length }} dataset{{ selection.length !== 1 ? 's' : '' }}?</span>
+            <Button label="Confirm" icon="pi pi-check" size="small" severity="danger" @click="bulkDelete" />
+            <Button label="Cancel"  size="small" severity="secondary" text @click="confirmingBulkDelete = false" />
+          </template>
+          <Button icon="pi pi-times" size="small" severity="secondary" text rounded @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
+        </template>
       </div>
 
-      <DataTable :value="filtered" stripedRows size="small" :paginator="filtered.length > 10" :rows="10">
+      <DataTable
+        :value="filtered"
+        v-model:selection="selection"
+        :selectionMode="selectMode ? 'multiple' : null"
+        dataKey="id"
+        size="small"
+        :paginator="filtered.length > 15"
+        :rows="15"
+      >
         <template #empty>
           <div class="text-center p-4 text-color-secondary">
             <i class="pi pi-inbox text-3xl block mb-2" />
             <p class="m-0">No datasets match your filters.</p>
           </div>
         </template>
-        <Column field="id"   header="ID"   style="width:4rem" sortable />
+
+        <Column v-if="selectMode" selectionMode="multiple" style="width: 3rem" />
+
+        <Column field="id" header="ID" style="width:4rem" sortable />
         <Column field="name" header="Name" sortable />
         <Column field="source" header="Source" sortable>
           <template #body="{ data }">
-            <Tag :value="data.source" :severity="sourceSeverity(data.source)" />
+            <Tag :value="data.source === 'live_query' ? 'Live Query' : 'Upload'" :severity="sourceSeverity(data.source)" />
           </template>
         </Column>
         <Column field="row_count" header="Rows" sortable>
-          <template #body="{ data }">{{ data.row_count.toLocaleString() }}</template>
+          <template #body="{ data }">{{ data.row_count?.toLocaleString() }}</template>
         </Column>
         <Column field="created_by" header="Created By" sortable />
-        <Column field="created_at" header="Date"        sortable />
-        <Column field="status"     header="Status"      sortable>
+        <Column field="created_at" header="Date" sortable>
+          <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
+        </Column>
+        <Column field="status" header="Status" sortable>
           <template #body="{ data }">
             <Tag :value="data.status" :severity="statusSeverity(data.status)" />
           </template>
         </Column>
-        <Column header="" style="width:8rem">
+        <Column v-if="!selectMode" header="" style="width:7rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
               <Button icon="pi pi-eye"   text rounded size="small" v-tooltip.top="'View'"   @click="view(data)" />
@@ -219,7 +289,7 @@ const saveQuery = () => {
             <span class="font-semibold text-sm">Preview</span>
             <Tag :value="`${preview.total_rows.toLocaleString()} total rows`" severity="info" class="ml-auto" />
           </div>
-          <DataTable :value="preview.rows" size="small" stripedRows class="w-full mb-3">
+          <DataTable :value="preview.rows" size="small" class="w-full mb-3">
             <Column v-for="col in preview.columns" :key="col" :field="col" :header="col" />
           </DataTable>
           <div class="flex flex-column gap-1">

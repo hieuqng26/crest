@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import { statusSeverity, duration } from './runUtils'
+import { fmtDate } from '@/utils/datetime'
 
 const router = useRouter()
 const toast = useToast()
@@ -109,10 +110,10 @@ const cancelRun = async (r) => {
 const duplicateRun = async (r) => {
   try {
     const { data } = await calibrationsAPI.recalibrate(r.run_id, {})
-    runs.value = [data, ...runs.value]
+    runs.value = runs.value.map(x => x.run_id === data.run_id ? { ...x, ...data } : x)
     toast.add({ severity: 'info', summary: 'Re-queued', detail: data.run_id, life: 2000 })
   } catch (e) {
-    toast.add({ severity: 'error', summary: 'Duplicate failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
 }
 const deleteRun = async (r) => {
@@ -159,7 +160,7 @@ const menuItems = ref([])
 const showMenu = (e, r) => {
   menuItems.value = [
     { label: 'Open',      icon: 'pi pi-arrow-up-right', command: () => openRun(r) },
-    { label: 'Duplicate', icon: 'pi pi-copy',           command: () => duplicateRun(r) },
+    { label: 'Re-run',    icon: 'pi pi-refresh',         command: () => duplicateRun(r) },
     { separator: true },
     { label: 'Cancel',    icon: 'pi pi-times', disabled: r.status !== 'running' && r.status !== 'queued', command: () => cancelRun(r) },
     { label: 'Delete',    icon: 'pi pi-trash', class: 'text-red-400', command: () => deleteRun(r) }
@@ -381,7 +382,7 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
         <Column header="Duration" sortable sortField="started_at" style="width: 8rem">
           <template #body="{ data }">
             <div class="text-sm font-mono">{{ duration(data.started_at, data.finished_at, data.status) }}</div>
-            <div class="text-xs text-color-secondary">{{ data.started_at?.substring(0, 10) ?? '—' }}</div>
+            <div class="text-xs text-color-secondary">{{ fmtDate(data.started_at) }}</div>
           </template>
         </Column>
 

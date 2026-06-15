@@ -1,59 +1,62 @@
 import json
+
 from flask import jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from pydantic import ValidationError
-from project import db, app_session
+
+from project import app_session
+from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
 from project.db_models.calibration_models import ModelConfig
-from project.core.model_registry import REGISTRY, registry_metadata, get_model_class
 from project.logger import get_logger
+
 from . import model_configs
 
 logger = get_logger(__name__)
 
 
-@model_configs.get('/registry')
+@model_configs.get("/registry")
 @jwt_required()
 def list_registry():
     return jsonify(registry_metadata()), 200
 
 
-@model_configs.get('/')
+@model_configs.get("/")
 @jwt_required()
 def list_configs():
     rows = ModelConfig.query.order_by(ModelConfig.created_at.desc()).all()
     return jsonify([r.to_dict() for r in rows]), 200
 
 
-@model_configs.post('/')
+@model_configs.post("/")
 @jwt_required()
 def create_config():
     body = request.get_json(silent=True) or {}
-    required = ('name', 'algorithm')
+    required = ("name", "algorithm")
     missing = [f for f in required if not body.get(f)]
     if missing:
-        return jsonify({'error': f'Missing fields: {missing}'}), 400
+        return jsonify({"error": f"Missing fields: {missing}"}), 400
 
-    algorithm = body['algorithm']
+    algorithm = body["algorithm"]
     if algorithm not in REGISTRY:
-        return jsonify({'error': f"Unknown algorithm '{algorithm}'"}), 400
+        return jsonify({"error": f"Unknown algorithm '{algorithm}'"}), 400
 
     # Validate hyperparams against Pydantic schema
     plugin_cls = get_model_class(algorithm)
-    raw_params = body.get('hyperparams', {})
+    raw_params = body.get("hyperparams", {})
     try:
         plugin_cls.param_schema(**raw_params)
     except ValidationError as e:
-        return jsonify({'error': 'Invalid hyperparameters', 'detail': e.errors()}), 422
+        return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
 
     with app_session() as session:
         cfg = ModelConfig(
-            name=body['name'],
+            name=body["name"],
             family=REGISTRY[algorithm].family,
             algorithm=algorithm,
             hyperparams_json=json.dumps(raw_params),
-            feature_cols_json=json.dumps(body.get('feature_cols', [])),
-            target_col=body.get('target_col', ''),
-            created_by=get_jwt_identity()
+            feature_cols_json=json.dumps(body.get("feature_cols", [])),
+            target_col=body.get("target_col", ""),
+            created_by=get_jwt_identity(),
         )
         session.add(cfg)
         session.flush()
@@ -62,10 +65,75 @@ def create_config():
     return jsonify(result), 201
 
 
-@model_configs.get('/<int:config_id>')
+@model_configs.get("/<int:config_id>")
 @jwt_required()
 def get_config(config_id):
     cfg = ModelConfig.query.filter_by(id=config_id).first()
     if not cfg:
-        return jsonify({'error': 'Not found'}), 404
+        return jsonify({"error": "Not found"}), 404
     return jsonify(cfg.to_dict()), 200
+
+
+@model_configs.patch("/<int:config_id>")
+@jwt_required()
+def update_config(config_id):
+    cfg = ModelConfig.query.filter_by(id=config_id).first()
+    if not cfg:
+        return jsonify({"error": "Not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    algorithm = body.get("algorithm", cfg.algorithm)
+    if algorithm not in REGISTRY:
+        return jsonify({"error": f"Unknown algorithm '{algorithm}'"}), 400
+
+    raw_params = body.get("hyperparams", json.loads(cfg.hyperparams_json or "{}"))
+    plugin_cls = get_model_class(algorithm)
+    try:
+        plugin_cls.param_schema(**raw_params)
+    except ValidationError as e:
+        return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
+
+    with app_session() as session:
+        cfg = ModelConfig.query.filter_by(id=config_id).first()
+        if "name" in body:
+            cfg.name = body["name"]
+        cfg.algorithm = algorithm
+        cfg.family = REGISTRY[algorithm].family
+        cfg.hyperparams_json = json.dumps(raw_params)
+        if "feature_cols" in body:
+            cfg.feature_cols_json = json.dumps(body["feature_cols"])
+        if "target_col" in body:
+            cfg.target_col = body["target_col"]
+        session.add(cfg)
+        session.flush()
+        result = cfg.to_dict()
+
+    return jsonify(result), 200
+
+
+@model_configs.delete("/<int:config_id>")
+@jwt_required()
+def delete_config(config_id):
+    cfg = ModelConfig.query.filter_by(id=config_id).first()
+    if not cfg:
+        return jsonify({"error": "Not found"}), 404
+    with app_session() as session:
+        session.delete(ModelConfig.query.filter_by(id=config_id).first())
+    return "", 204
+
+
+@model_configs.post("/bulk-delete")
+@jwt_required()
+def bulk_delete_configs():
+    ids = (request.get_json(silent=True) or {}).get("ids", [])
+    if not ids:
+        return jsonify({"error": "ids is required"}), 400
+    deleted = 0
+    for cid in ids:
+        cfg = ModelConfig.query.filter_by(id=cid).first()
+        if not cfg:
+            continue
+        with app_session() as session:
+            session.delete(ModelConfig.query.filter_by(id=cid).first())
+        deleted += 1
+    return jsonify({"deleted": deleted}), 200

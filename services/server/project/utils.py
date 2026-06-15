@@ -28,7 +28,7 @@ def join_path(*parts):
     for part in parts:
         if part:
             # Convert backslashes to forward slashes and strip leading/trailing slashes
-            normalized = str(part).replace('\\', '/').strip('/')
+            normalized = str(part).replace("\\", "/").strip("/")
             if normalized:  # Only add non-empty parts
                 clean_parts.append(normalized)
 
@@ -36,10 +36,10 @@ def join_path(*parts):
         return ""
 
     # Join with forward slashes
-    result = '/'.join(clean_parts)
+    result = "/".join(clean_parts)
 
     # If the first original part started with '/', preserve that
-    if str(parts[0]).startswith('/'):
-        result = '/' + result
+    if str(parts[0]).startswith("/"):
+        result = "/" + result
 
     return result

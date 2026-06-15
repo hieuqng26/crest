@@ -1,5 +1,6 @@
-import os
+
 from flask.cli import FlaskGroup
+
 from project import create_app, db
 from project.api.users.models import User
 

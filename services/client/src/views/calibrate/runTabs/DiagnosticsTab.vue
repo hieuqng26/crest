@@ -1,116 +1,316 @@
 <script setup>
 import { computed } from 'vue'
-import d from '@/views/evaluate/mock/diagnostics.json'
 
-const rocData = computed(() => ({
-  labels: d.roc_curve.fpr.map(v => v.toFixed(2)),
-  datasets: [
-    { label: `AUC = ${d.metrics.auc_roc}`, data: d.roc_curve.tpr, borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,0.1)', fill: true, tension: 0.3, pointRadius: 0 },
-    { label: 'Random', data: d.roc_curve.fpr, borderColor: '#6b7280', borderDash: [4, 4], pointRadius: 0, fill: false }
-  ]
-}))
+const props = defineProps({ run: { type: Object, required: true } })
 
-const calibData = computed(() => ({
-  labels: d.calibration_curve.mean_predicted.map(v => v.toFixed(2)),
-  datasets: [
-    { label: 'Model', data: d.calibration_curve.fraction_positive, borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)', fill: false, tension: 0.3 },
-    { label: 'Perfect', data: d.calibration_curve.mean_predicted, borderColor: '#6b7280', borderDash: [4, 4], pointRadius: 0, fill: false }
-  ]
-}))
+const diag = computed(() => {
+  try { return JSON.parse(props.run.val_metrics_json || 'null') } catch { return null }
+})
 
-const fiData = computed(() => ({
-  labels: d.feature_importance.map(f => f.feature),
-  datasets: [{ label: 'Importance', data: d.feature_importance.map(f => f.importance), backgroundColor: '#60a5fa' }]
-}))
-
-const chartOptions = {
+const chartBase = {
   maintainAspectRatio: false,
-  plugins: { legend: { labels: { color: '#9ca3af' } } },
+  plugins: { legend: { labels: { color: '#9ca3af', boxWidth: 14, padding: 12 } } },
   scales: {
-    x: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.1)' } },
-    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.1)' } }
+    x: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' } },
+    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' } }
   }
 }
 
-const kpis = [
-  { label: 'AUC-ROC',   value: d.metrics.auc_roc },
-  { label: 'KS',        value: d.metrics.ks },
-  { label: 'Gini',      value: d.metrics.gini },
-  { label: 'Accuracy',  value: d.metrics.accuracy },
-  { label: 'Precision', value: d.metrics.precision },
-  { label: 'Recall',    value: d.metrics.recall },
-  { label: 'F1',        value: d.metrics.f1 }
-]
+const kpis = computed(() => {
+  const d = diag.value
+  if (!d) return []
+  const KEYS = ['auc_roc', 'ks', 'gini', 'accuracy', 'precision', 'recall', 'f1',
+                'rmse', 'mae', 'r2', 'mape', 'concordance_index']
+  return KEYS
+    .filter(k => typeof d[k] === 'number')
+    .map(k => ({ label: k.replace(/_/g, ' ').toUpperCase(), value: d[k] }))
+})
 
-const cm = d.confusion_matrix
+const hl = computed(() => diag.value?.hosmer_lemeshow ?? null)
+
+const rocData = computed(() => {
+  const rc = diag.value?.roc_curve
+  if (!rc) return null
+  return {
+    labels: rc.fpr.map(v => v.toFixed(2)),
+    datasets: [
+      { label: `AUC = ${diag.value.auc_roc?.toFixed(3)}`, data: rc.tpr, borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Random', data: rc.fpr, borderColor: '#6b7280', borderDash: [5, 5], pointRadius: 0, fill: false, borderWidth: 1.5 }
+    ]
+  }
+})
+
+const calibData = computed(() => {
+  const cc = diag.value?.calibration_curve
+  if (!cc) return null
+  return {
+    labels: cc.mean_predicted.map(v => v.toFixed(2)),
+    datasets: [
+      { label: 'Model', data: cc.fraction_positive, borderColor: '#34d399', fill: false, tension: 0.3, pointRadius: 3, borderWidth: 2 },
+      { label: 'Perfect', data: cc.mean_predicted, borderColor: '#6b7280', borderDash: [5, 5], pointRadius: 0, fill: false, borderWidth: 1.5 }
+    ]
+  }
+})
+
+const fiData = computed(() => {
+  const fi = diag.value?.feature_importance
+  if (!fi?.length) return null
+  const sorted = [...fi].sort((a, b) => b.importance - a.importance).slice(0, 15)
+  return {
+    labels: sorted.map(f => f.feature),
+    datasets: [{ label: 'Importance', data: sorted.map(f => f.importance), backgroundColor: 'rgba(96,165,250,0.75)', borderColor: '#60a5fa', borderWidth: 1, borderRadius: 3 }]
+  }
+})
+
+const cm = computed(() => diag.value?.confusion_matrix ?? null)
+
+const cmTotal = computed(() => {
+  if (!cm.value) return 0
+  return cm.value[0][0] + cm.value[0][1] + cm.value[1][0] + cm.value[1][1]
+})
+
+const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%' : '—'
 </script>
 
 <template>
-  <div class="flex flex-column gap-4">
+  <div v-if="diag" class="diag-root">
+
     <!-- KPI strip -->
-    <div class="flex flex-wrap gap-3">
-      <div v-for="kpi in kpis" :key="kpi.label"
-        class="surface-card border-round px-4 py-3 shadow-1 text-center min-w-6rem">
-        <div class="text-xl font-bold text-blue-400">{{ kpi.value.toFixed(3) }}</div>
-        <div class="text-xs text-color-secondary mt-1">{{ kpi.label }}</div>
+    <div v-if="kpis.length" class="kpi-strip">
+      <div v-for="kpi in kpis" :key="kpi.label" class="kpi-card">
+        <div class="kpi-value">{{ kpi.value.toFixed(3) }}</div>
+        <div class="kpi-label">{{ kpi.label }}</div>
       </div>
-      <div class="surface-card border-round px-4 py-3 shadow-1 text-center min-w-10rem"
-        :class="d.hosmer_lemeshow.passed ? 'border-green-400' : 'border-red-400'" style="border-left:3px solid">
-        <div class="text-sm font-bold" :class="d.hosmer_lemeshow.passed ? 'text-green-400' : 'text-red-400'">
-          {{ d.hosmer_lemeshow.passed ? 'HL PASS' : 'HL FAIL' }}
+      <div
+        v-if="hl"
+        class="kpi-card hl-card"
+        :class="hl.passed ? 'hl-pass' : 'hl-fail'"
+      >
+        <div class="kpi-value" :class="hl.passed ? 'text-green-400' : 'text-red-400'">
+          {{ hl.passed ? 'PASS' : 'FAIL' }}
         </div>
-        <div class="text-xs text-color-secondary mt-1">p = {{ d.hosmer_lemeshow.p_value }}</div>
+        <div class="kpi-label">HL  p = {{ Number(hl.p_value).toFixed(4) }}</div>
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 m-0">
-      <div class="surface-card border-round shadow-1 p-4">
-        <h4 class="text-sm font-semibold mb-3 m-0">ROC Curve</h4>
-        <div style="height: 280px">
-          <Chart type="line" :data="rocData" :options="chartOptions" class="h-full" />
+    <!-- ROC + Calibration -->
+    <div v-if="rocData || calibData" class="charts-grid">
+      <div v-if="rocData" class="chart-card">
+        <div class="chart-title">ROC Curve</div>
+        <div class="chart-body">
+          <Chart type="line" :data="rocData" :options="chartBase" style="height:100%;width:100%" />
         </div>
       </div>
-      <div class="surface-card border-round shadow-1 p-4">
-        <h4 class="text-sm font-semibold mb-3 m-0">Calibration Curve</h4>
-        <div style="height: 280px">
-          <Chart type="line" :data="calibData" :options="chartOptions" class="h-full" />
+      <div v-if="calibData" class="chart-card">
+        <div class="chart-title">Calibration Curve</div>
+        <div class="chart-body">
+          <Chart type="line" :data="calibData" :options="chartBase" style="height:100%;width:100%" />
         </div>
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 m-0">
-      <div class="surface-card border-round shadow-1 p-4">
-        <h4 class="text-sm font-semibold mb-3 m-0">Feature Importance</h4>
-        <div style="height: 240px">
-          <Chart type="bar" :data="fiData" :options="{ ...chartOptions, indexAxis: 'y' }" class="h-full" />
+    <!-- Feature importance + Confusion matrix -->
+    <div class="charts-grid">
+      <div v-if="fiData" class="chart-card">
+        <div class="chart-title">Feature Importance</div>
+        <div class="chart-body">
+          <Chart type="bar" :data="fiData" :options="{ ...chartBase, indexAxis: 'y' }" style="height:100%;width:100%" />
         </div>
       </div>
-      <div class="surface-card border-round shadow-1 p-4">
-        <h4 class="text-sm font-semibold mb-3 m-0">Confusion Matrix</h4>
-        <div class="flex justify-content-center align-items-center" style="height: 240px">
-          <table class="text-center" style="border-collapse: separate; border-spacing: 4px">
-            <thead>
-              <tr>
-                <th class="text-xs text-color-secondary px-3"></th>
-                <th class="text-xs text-color-secondary px-3">Pred: 0</th>
-                <th class="text-xs text-color-secondary px-3">Pred: 1</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="text-xs text-color-secondary pr-3">Act: 0</td>
-                <td class="border-round p-3 font-bold text-green-400 bg-green-900 text-lg" style="min-width: 80px">{{ cm[0][0].toLocaleString() }}</td>
-                <td class="border-round p-3 font-bold text-red-300 bg-red-900 text-lg"     style="min-width: 80px">{{ cm[0][1].toLocaleString() }}</td>
-              </tr>
-              <tr>
-                <td class="text-xs text-color-secondary pr-3">Act: 1</td>
-                <td class="border-round p-3 font-bold text-red-300 bg-red-900 text-lg"     style="min-width: 80px">{{ cm[1][0].toLocaleString() }}</td>
-                <td class="border-round p-3 font-bold text-green-400 bg-green-900 text-lg" style="min-width: 80px">{{ cm[1][1].toLocaleString() }}</td>
-              </tr>
-            </tbody>
-          </table>
+
+      <div v-if="cm" class="chart-card">
+        <div class="chart-title">Confusion Matrix</div>
+        <div class="cm-wrap">
+          <div class="cm-grid">
+            <!-- corner + col headers -->
+            <div class="cm-corner"></div>
+            <div class="cm-col-header">Predicted 0</div>
+            <div class="cm-col-header">Predicted 1</div>
+
+            <!-- row 0 -->
+            <div class="cm-row-header">Actual 0</div>
+            <div class="cm-cell cm-correct">
+              <span class="cm-count">{{ cm[0][0].toLocaleString() }}</span>
+              <span class="cm-pct">{{ cmPct(cm[0][0]) }}</span>
+              <span class="cm-tag">TN</span>
+            </div>
+            <div class="cm-cell cm-wrong">
+              <span class="cm-count">{{ cm[0][1].toLocaleString() }}</span>
+              <span class="cm-pct">{{ cmPct(cm[0][1]) }}</span>
+              <span class="cm-tag">FP</span>
+            </div>
+
+            <!-- row 1 -->
+            <div class="cm-row-header">Actual 1</div>
+            <div class="cm-cell cm-wrong">
+              <span class="cm-count">{{ cm[1][0].toLocaleString() }}</span>
+              <span class="cm-pct">{{ cmPct(cm[1][0]) }}</span>
+              <span class="cm-tag">FN</span>
+            </div>
+            <div class="cm-cell cm-correct">
+              <span class="cm-count">{{ cm[1][1].toLocaleString() }}</span>
+              <span class="cm-pct">{{ cmPct(cm[1][1]) }}</span>
+              <span class="cm-tag">TP</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+
+  </div>
+
+  <div v-else class="empty-state">
+    <i class="pi pi-chart-bar text-3xl block mb-2 opacity-40" />
+    <p class="m-0">No diagnostic data available for this run.</p>
   </div>
 </template>
+
+<style scoped>
+.diag-root { display: flex; flex-direction: column; gap: 1rem; }
+
+/* KPI strip */
+.kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+}
+.kpi-card {
+  flex: 1 1 7rem;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  text-align: center;
+}
+.hl-card { border-left-width: 3px; }
+.hl-pass { border-left-color: #34d399; }
+.hl-fail { border-left-color: #f87171; }
+.kpi-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #60a5fa;
+  letter-spacing: -0.01em;
+}
+.kpi-label {
+  font-size: 0.68rem;
+  color: var(--text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.2rem;
+}
+
+/* Chart grid — 2 cols, collapses to 1 on narrow */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+@media (max-width: 860px) {
+  .charts-grid { grid-template-columns: 1fr; }
+}
+
+.chart-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 1rem;
+  min-width: 0; /* prevent chart overflow */
+}
+.chart-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.01em;
+}
+.chart-body {
+  height: 260px;
+  position: relative;
+}
+
+/* Confusion matrix */
+.cm-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem 0.5rem;
+}
+.cm-grid {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 6px;
+}
+.cm-corner { }
+.cm-col-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-color-secondary);
+  text-align: center;
+  padding-bottom: 2px;
+}
+.cm-row-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-color-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+.cm-cell {
+  min-width: 100px;
+  min-height: 80px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  padding: 0.75rem;
+}
+.cm-correct {
+  background: rgba(52, 211, 153, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+}
+.cm-wrong {
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+}
+.cm-count {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.cm-correct .cm-count { color: #34d399; }
+.cm-wrong   .cm-count { color: #f87171; }
+.cm-pct {
+  font-size: 0.75rem;
+  color: var(--text-color-secondary);
+}
+.cm-tag {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  opacity: 0.5;
+}
+.cm-correct .cm-tag { color: #34d399; }
+.cm-wrong   .cm-tag { color: #f87171; }
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+  border: 1px dashed var(--surface-border);
+  border-radius: 10px;
+  color: var(--text-color-secondary);
+}
+</style>

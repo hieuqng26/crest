@@ -12,7 +12,7 @@ const model = [
   {
     label: 'Models',
     items: [
-      { label: 'Algorithm Catalog', to: { name: 'models' },         module: 'configure' },
+      { label: 'Model Catalog',     to: { name: 'models' },         module: 'configure' },
       { label: 'Configurations',    to: { name: 'configurations' }, module: 'configure' }
     ]
   },

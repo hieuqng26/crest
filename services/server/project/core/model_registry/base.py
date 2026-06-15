@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any
+
 import numpy as np
 
 
@@ -9,8 +10,9 @@ class BaseMLModel(ABC):
     family and algorithm are declared as class-level attributes.
     param_schema must be a Pydantic BaseModel subclass.
     """
-    family: str       # 'classification' | 'timeseries' | 'statistical'
-    algorithm: str    # e.g. 'LogisticRegression'
+
+    family: str  # 'classification' | 'timeseries' | 'statistical'
+    algorithm: str  # e.g. 'LogisticRegression'
     param_schema: type  # Pydantic model
 
     @abstractmethod

@@ -21,6 +21,12 @@ const MERGE_TYPES = [
 
 const selectedDatasetIds = ref([])
 const mergeSteps = ref([])
+const expandedDatasets = ref(new Set())
+const toggleExpand = (id) => {
+  const s = new Set(expandedDatasets.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  expandedDatasets.value = s
+}
 const selectedConfig = ref(route.query.config_id ? Number(route.query.config_id) : null)
 const trainSplit = ref(80)
 const scaler = ref('none')
@@ -286,18 +292,22 @@ onMounted(async () => {
             <div class="text-xs text-color-secondary">
               {{ d.row_count.toLocaleString() }} rows · {{ d.columns.length }} cols
             </div>
-            <div class="flex flex-wrap gap-1 mt-2">
+            <div class="flex flex-wrap gap-1 mt-2" :style="expandedDatasets.has(d.id) ? '' : 'max-height: 4.5rem; overflow: hidden'">
               <Chip
-                v-for="c in d.columns.slice(0, 4)"
+                v-for="c in d.columns"
                 :key="c"
                 :label="c"
                 class="text-xs"
                 style="font-size: 10px; padding: 2px 6px"
               />
-              <span v-if="d.columns.length > 4" class="text-xs text-color-secondary self-center">
-                +{{ d.columns.length - 4 }}
-              </span>
             </div>
+            <button
+              v-if="d.columns.length > 4"
+              class="mt-1 text-xs text-primary border-none bg-transparent cursor-pointer p-0"
+              @click.stop="toggleExpand(d.id)"
+            >
+              {{ expandedDatasets.has(d.id) ? 'Show less' : `+${d.columns.length - 4} more` }}
+            </button>
           </div>
 
           <!-- Merge step card (between datasets) -->
@@ -354,23 +364,6 @@ onMounted(async () => {
         </span>
         Pick another dataset, change the merge order, or switch to a union.
       </Message>
-    </div>
-
-    <!-- Resulting schema -->
-    <div v-if="selectedDatasets.length > 0" class="surface-card border-round shadow-1 p-4 mb-4">
-      <h3 class="text-base font-semibold m-0 mb-2">Resulting schema</h3>
-      <div v-if="unjoinable.length > 0" class="text-sm text-color-secondary">
-        Resolve merge issues above to see the projected schema.
-      </div>
-      <template v-else>
-        <div class="text-sm text-color-secondary mb-3">
-          ≈ {{ schema.estimatedRows.toLocaleString() }} rows ·
-          {{ schema.columns.length }} column{{ schema.columns.length === 1 ? '' : 's' }}
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Chip v-for="c in schema.columns" :key="c" :label="c" class="text-xs" />
-        </div>
-      </template>
     </div>
 
     <!-- Model configuration -->

@@ -1,14 +1,16 @@
 import os
-from flask_bcrypt import Bcrypt
-from flask_sqlalchemy import SQLAlchemy
+from contextlib import contextmanager
+
 from flask import Flask, request
-from flask_wtf import CSRFProtect
+from flask_bcrypt import Bcrypt
+from flask_caching import Cache
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
-from flask_caching import Cache
+from flask_sqlalchemy import SQLAlchemy
+from flask_wtf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
-from contextlib import contextmanager
+
 from project.config import Config, DevelopmentConfig, ProductionConfig, TestingConfig
 from project.logger import get_logger
 
@@ -18,7 +20,7 @@ db = SQLAlchemy()
 migrate = Migrate()
 bcrypt = Bcrypt()
 cache = Cache()
-DATA_STORE = os.getenv('DATA_STORE', '/var/lib/app_data')
+DATA_STORE = os.getenv("DATA_STORE", "/var/lib/app_data")
 
 
 @contextmanager
@@ -40,19 +42,23 @@ def create_app():
     """
     app = Flask(__name__)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=4, x_host=4)
-    app.config['WTF_CSRF_ENABLED'] = os.getenv('WTF_CSRF_ENABLED', 'FALSE').upper() == 'TRUE'
-    app.config['WTF_CSRF_CHECK_DEFAULT'] = os.getenv('WTF_CSRF_CHECK_DEFAULT', 'FALSE').upper() == 'TRUE'
+    app.config["WTF_CSRF_ENABLED"] = (
+        os.getenv("WTF_CSRF_ENABLED", "FALSE").upper() == "TRUE"
+    )
+    app.config["WTF_CSRF_CHECK_DEFAULT"] = (
+        os.getenv("WTF_CSRF_CHECK_DEFAULT", "FALSE").upper() == "TRUE"
+    )
     csrf = CSRFProtect()
     csrf.init_app(app)
 
     # Choose the configuration
-    if os.getenv("CONFIG_NAME") == 'production':
+    if os.getenv("CONFIG_NAME") == "production":
         app.config.from_object(ProductionConfig)
         # allowed_origins = ProductionConfig.ALLOWED_ORIGINS.split(',')
-    elif os.getenv("CONFIG_NAME") == 'development':
+    elif os.getenv("CONFIG_NAME") == "development":
         app.config.from_object(DevelopmentConfig)
         # allowed_origins = DevelopmentConfig.ALLOWED_ORIGINS.split(',')
-    elif os.getenv("CONFIG_NAME") == 'testing':
+    elif os.getenv("CONFIG_NAME") == "testing":
         app.config.from_object(TestingConfig)
         # allowed_origins = TestingConfig.ALLOWED_ORIGINS.split(',')
     else:
@@ -60,14 +66,18 @@ def create_app():
         # allowed_origins = Config.ALLOWED_ORIGINS.split(',')
 
     # cookies
-    app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
+    app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
 
     # Configure CORS, actually not set here, but set at after_request()
     allowed_origins = []
-    CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": allowed_origins}})
+    CORS(
+        app,
+        supports_credentials=True,
+        resources={r"/api/*": {"origins": allowed_origins}},
+    )
 
     # JWT
-    app.config['JWT_SECRET_KEY'] = Config.JWT_SECRET_KEY
+    app.config["JWT_SECRET_KEY"] = Config.JWT_SECRET_KEY
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = Config.JWT_ACCESS_TOKEN_EXPIRES
     app.config["JWT_REFRESH_TOKEN_EXPIRES"] = Config.JWT_REFRESH_TOKEN_EXPIRES
     app.config["JWT_TOKEN_LOCATION"] = Config.JWT_TOKEN_LOCATION
@@ -77,25 +87,33 @@ def create_app():
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     jwt.init_app(app)
-    cache.init_app(app, config={'CACHE_TYPE': 'RedisCache', 'CACHE_REDIS_URL': app.config['REDIS_URL']})
+    cache.init_app(
+        app,
+        config={"CACHE_TYPE": "RedisCache", "CACHE_REDIS_URL": app.config["REDIS_URL"]},
+    )
 
     # Import models so Alembic autogenerate can detect them
-    from project.api.users.models import User  # noqa: F401
-    from project.api.auth.models import ActiveSession  # noqa: F401
     from project.api.auditlog.models import AuditLog  # noqa: F401
-    from project.api.roles.models import Role  # noqa: F401
-    from project.db_models.calibration_models import Dataset, ModelConfig, CalibrationRun, Forecast, CalibrationRunLog  # noqa: F401
-
-    from project.api.auth.routes import auth
-    from project.api.users.routes import user
     from project.api.auditlog.routes import auditlog
-    from project.api.roles.routes import role
-    from project.api.datasets import datasets
-    from project.api.model_configs import model_configs
+    from project.api.auth.models import ActiveSession  # noqa: F401
+    from project.api.auth.routes import auth
     from project.api.calibrations import calibrations
+    from project.api.credit_risk import credit_risk
+    from project.api.datasets import datasets
     from project.api.evaluations import evaluations
     from project.api.forecasts import forecasts
-    from project.api.credit_risk import credit_risk
+    from project.api.model_configs import model_configs
+    from project.api.roles.models import Role  # noqa: F401
+    from project.api.roles.routes import role
+    from project.api.users.models import User  # noqa: F401
+    from project.api.users.routes import user
+    from project.db_models.calibration_models import (  # noqa: F401
+        CalibrationRun,
+        CalibrationRunLog,
+        Dataset,
+        Forecast,
+        ModelConfig,
+    )
 
     app.register_blueprint(auth, url_prefix="/api/auth")
     app.register_blueprint(user, url_prefix="/api/user")
@@ -115,23 +133,27 @@ def create_app():
 
     @app.after_request
     def after_request(response):
-        allowed_origins_env = os.getenv('CORS_ORIGIN')
-        allowed_origins = [s.strip() for s in allowed_origins_env.split(',')]
-        origin = request.headers.get('Origin')
+        allowed_origins_env = os.getenv("CORS_ORIGIN")
+        allowed_origins = [s.strip() for s in allowed_origins_env.split(",")]
+        origin = request.headers.get("Origin")
         if origin in allowed_origins:
             # use "set" instead of "add" to ensure only one origin
-            response.headers.set('Access-Control-Allow-Origin', origin)
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
+            response.headers.set("Access-Control-Allow-Origin", origin)
+        response.headers.add(
+            "Access-Control-Allow-Headers", "Content-Type, Authorization"
+        )
+        response.headers.add(
+            "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"
+        )
+        response.headers.add("Access-Control-Allow-Credentials", "true")
 
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content-Security-Policy
         csp_origin = origin if origin in allowed_origins else "'self'"
         # use "set" instead of "add" to ensure only one origin
-        response.headers['Content-Security-Policy'] = (
+        response.headers["Content-Security-Policy"] = (
             f"default-src 'self' {csp_origin}; "
             f"script-src 'self' {csp_origin}; "
             f"style-src 'self' {csp_origin}; "
@@ -145,7 +167,9 @@ def create_app():
 
         # Strict transport security
         if request.is_secure:
-            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains; preload"
+            )
 
         return response
 

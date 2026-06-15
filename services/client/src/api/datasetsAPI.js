@@ -1,9 +1,10 @@
 import { httpClient } from './httpClient'
 
 const datasetsAPI = {
-  list:   ()           => httpClient.get('/datasets/'),
-  get:    (id)         => httpClient.get(`/datasets/${id}`),
-  delete: (id)         => httpClient.delete(`/datasets/${id}`),
+  list:        ()      => httpClient.get('/datasets/'),
+  get:         (id)    => httpClient.get(`/datasets/${id}`),
+  delete:      (id)    => httpClient.delete(`/datasets/${id}`),
+  bulkDelete:  (ids)   => httpClient.post('/datasets/bulk-delete', { ids }),
 
   upload: (file, name, description = '') => {
     const fd = new FormData()

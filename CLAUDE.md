@@ -90,6 +90,14 @@ services/server/project/
 - Log with `get_logger(__name__)` — never `print()`.
 - Return errors as `{"error": "message"}, status_code`. No stack traces to client.
 
+#### Python formatting (enforced by `ruff`)
+
+- **All imports at the top of the file** — never inside functions or conditionals, except when a deferred import is strictly required to avoid a circular import or a missing app context (document why with a comment).
+- Import order: stdlib → third-party → local (`project.*`), each group separated by one blank line.
+- Line length: 88 characters (ruff default).
+- Strings: double quotes throughout.
+- After any Python edit run: `ruff check . --exclude migrations --fix && ruff format . --exclude migrations` from `services/server/`. All checks must pass before the work is considered done.
+
 ### Vue / Frontend
 
 - Composition API with `<script setup>` everywhere. No Options API.
@@ -100,6 +108,14 @@ services/server/project/
 - Charts: apexcharts for time-series and bar/line, chart.js for simple pie/donut, plotly.js-dist for statistical residual plots.
 - Dark theme is default (`ey-dark`). Never use EY Yellow `#FFE600` as text on light surfaces.
 - Mock data pattern: put mock JSON in `src/views/<module>/mock/` and swap with real API calls in Phase 3.
+
+#### Vue / JS formatting (enforced by Vite's built-in ESLint + Prettier conventions)
+
+- **All imports at the top of `<script setup>`** — never inside functions.
+- Import order within `<script setup>`: Vue core (`vue`, `vue-router`, `pinia/vuex`) → third-party (PrimeVue, etc.) → local `@/api/`, `@/utils/`, relative components.
+- Single blank line between import groups.
+- Shared utilities (date formatting, number formatting, etc.) go in `src/utils/` and are imported — never duplicated inline across components.
+- Datetime formatting must use `fmtDate` / `fmtDateShort` from `@/utils/datetime.js`. Never call `toLocaleDateString` / `toLocaleTimeString` directly in a component.
 
 ### UI design principles
 

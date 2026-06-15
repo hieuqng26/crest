@@ -3,7 +3,7 @@ from project.db_models.base_model import DBBaseModel
 
 
 class Role(DBBaseModel):
-    __tablename__ = 'roles'
+    __tablename__ = "roles"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(512), nullable=False)
     module = db.Column(db.String(512), nullable=False)
@@ -15,4 +15,9 @@ class Role(DBBaseModel):
         self.permission_type = permission_type
 
     def to_dict(self):
-        return dict(id=self.id, name=self.name, module=self.module, permission_type=self.permission_type)
+        return dict(
+            id=self.id,
+            name=self.name,
+            module=self.module,
+            permission_type=self.permission_type,
+        )

@@ -1,8 +1,8 @@
 import re
-from uuid import uuid4
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from project import db, bcrypt
+from project import bcrypt, db
 from project.api.utils import valid_date
 
 
@@ -11,13 +11,15 @@ def get_uuid():
 
 
 class User(db.Model):
-    __tablename__ = 'users'
+    __tablename__ = "users"
 
     id = db.Column(db.String(64), primary_key=True, unique=True, default=get_uuid)
     email = db.Column(db.String(64), unique=True, nullable=False)
     password = db.Column(db.String(128), nullable=False)
     name = db.Column(db.String(32), nullable=False)
-    registered_on = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.now(timezone.utc))
+    registered_on = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=datetime.now(timezone.utc)
+    )
     status = db.Column(db.String(16), nullable=False)
     role = db.Column(db.String(32), nullable=False)
     last_login = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -25,10 +27,19 @@ class User(db.Model):
     last_session = db.Column(db.String(255), nullable=True)
     last_login_type = db.Column(db.String(16), nullable=True)
 
-    def __init__(self, email, password, role, name=None, status="active", registered_on=datetime.now(timezone.utc),
-                 last_login=None, last_logout=None):
+    def __init__(
+        self,
+        email,
+        password,
+        role,
+        name=None,
+        status="active",
+        registered_on=datetime.now(timezone.utc),
+        last_login=None,
+        last_logout=None,
+    ):
         self.email = email
-        self.password = bcrypt.generate_password_hash(password).decode('utf-8')
+        self.password = bcrypt.generate_password_hash(password).decode("utf-8")
         self.role = role
         self.name = name if name else email
         self.status = status
@@ -38,18 +49,27 @@ class User(db.Model):
 
     @classmethod
     def authenticate(cls, email, password):
-        if not email or not isinstance(email, str) or not password or not isinstance(password, str):
-            raise ValueError('User name or password is empty')
+        if (
+            not email
+            or not isinstance(email, str)
+            or not password
+            or not isinstance(password, str)
+        ):
+            raise ValueError("User name or password is empty")
 
         email = email.strip()
         password = password.strip()
 
         # validation on email - only alphanumeric, underscore, hyphen, and atmark
-        if (len(email) > 64) or not bool(re.match(r'^[a-zA-Z0-9_\-@]+$', email)):
-            raise ValueError('User name is not in a valid format')
+        if (len(email) > 64) or not bool(re.match(r"^[a-zA-Z0-9_\-@]+$", email)):
+            raise ValueError("User name is not in a valid format")
 
         user = cls.query.filter_by(email=email).first()
-        if not user or not bcrypt.check_password_hash(user.password, password) or user.status != 'active':
+        if (
+            not user
+            or not bcrypt.check_password_hash(user.password, password)
+            or user.status != "active"
+        ):
             return None
 
         # update user login time
@@ -72,5 +92,5 @@ class User(db.Model):
             last_login=self.last_login,
             last_logout=self.last_logout,
             last_session=self.last_session,
-            last_login_type=self.last_login_type
+            last_login_type=self.last_login_type,
         )

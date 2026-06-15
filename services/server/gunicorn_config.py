@@ -2,18 +2,18 @@
 Root WSGI config
 """
 
-import os
 import gc
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-bind = ['0.0.0.0:5000']
+bind = ["0.0.0.0:5000"]
 
 # Optimal number of workers based on CPU cores
 workers = 5  # Adjust based on (2 x CPUs) + 1
 
-worker_class = 'gthread'
+worker_class = "gthread"
 
 # Increase threads for concurrency
 threads = 4

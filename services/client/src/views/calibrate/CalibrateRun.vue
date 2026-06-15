@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import { getRun, statusSeverity, duration, isTimeSeries } from './runUtils'
+import { fmtDate } from '@/utils/datetime'
 import OverviewTab    from './runTabs/OverviewTab.vue'
 import ProgressTab    from './runTabs/ProgressTab.vue'
 import DiagnosticsTab from './runTabs/DiagnosticsTab.vue'
@@ -51,7 +52,7 @@ const activeKey = computed({
 })
 
 const diagnosticsDisabled = computed(() => run.value?.status !== 'success')
-const forecastDisabled    = computed(() => run.value?.status !== 'success' || !isTimeSeries(run.value?.algorithm))
+const forecastDisabled    = computed(() => run.value?.status !== 'success')
 const tabDisabled = (key) =>
   (key === 'diagnostics' && diagnosticsDisabled.value) ||
   (key === 'forecast' && forecastDisabled.value)
@@ -72,8 +73,10 @@ const cancel = async () => {
 const rerun = async () => {
   try {
     const { data } = await calibrationsAPI.recalibrate(runId.value, {})
+    run.value = data
     toast.add({ severity: 'info', summary: 'Re-run queued', detail: data.run_id, life: 2500 })
-    router.push({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
+    router.replace({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
+    startPolling()
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
@@ -130,7 +133,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
             <span class="separator">·</span>
             <span><i class="pi pi-user text-xs mr-1" />{{ run.triggered_by.split('@')[0] }}</span>
             <span class="separator">·</span>
-            <span><i class="pi pi-clock text-xs mr-1" />{{ run.started_at }}</span>
+            <span><i class="pi pi-clock text-xs mr-1" />{{ fmtDate(run.started_at) }}</span>
             <span class="separator">·</span>
             <button class="run-id-copy" @click="copyRunId" v-tooltip.top="'Copy run id'">
               <span class="font-mono">{{ run.run_id }}</span>

@@ -104,7 +104,7 @@ const goToConfigurations = () =>
   <div class="p-4 h-full flex flex-column">
     <div class="flex align-items-center justify-content-between mb-4">
       <div>
-        <h2 class="text-2xl font-semibold m-0">Algorithm Catalog</h2>
+        <h2 class="text-2xl font-semibold m-0">Model Catalog</h2>
         <p class="text-color-secondary text-sm m-0 mt-1">Browse available model families and their configurable parameters.</p>
       </div>
       <Button label="New Configuration" icon="pi pi-plus" size="small" @click="openDrawer" />
