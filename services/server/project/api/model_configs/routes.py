@@ -77,24 +77,24 @@ def get_config(config_id):
 @model_configs.patch("/<int:config_id>")
 @jwt_required()
 def update_config(config_id):
-    cfg = ModelConfig.query.filter_by(id=config_id).first()
-    if not cfg:
-        return jsonify({"error": "Not found"}), 404
-
     body = request.get_json(silent=True) or {}
-    algorithm = body.get("algorithm", cfg.algorithm)
-    if algorithm not in REGISTRY:
-        return jsonify({"error": f"Unknown algorithm '{algorithm}'"}), 400
-
-    raw_params = body.get("hyperparams", json.loads(cfg.hyperparams_json or "{}"))
-    plugin_cls = get_model_class(algorithm)
-    try:
-        plugin_cls.param_schema(**raw_params)
-    except ValidationError as e:
-        return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
 
     with app_session() as session:
         cfg = ModelConfig.query.filter_by(id=config_id).first()
+        if not cfg:
+            return jsonify({"error": "Not found"}), 404
+
+        algorithm = body.get("algorithm", cfg.algorithm)
+        if algorithm not in REGISTRY:
+            return jsonify({"error": f"Unknown algorithm '{algorithm}'"}), 400
+
+        raw_params = body.get("hyperparams", json.loads(cfg.hyperparams_json or "{}"))
+        plugin_cls = get_model_class(algorithm)
+        try:
+            plugin_cls.param_schema(**raw_params)
+        except ValidationError as e:
+            return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
+
         if "name" in body:
             cfg.name = body["name"]
         cfg.algorithm = algorithm
@@ -114,11 +114,11 @@ def update_config(config_id):
 @model_configs.delete("/<int:config_id>")
 @jwt_required()
 def delete_config(config_id):
-    cfg = ModelConfig.query.filter_by(id=config_id).first()
-    if not cfg:
-        return jsonify({"error": "Not found"}), 404
     with app_session() as session:
-        session.delete(ModelConfig.query.filter_by(id=config_id).first())
+        cfg = ModelConfig.query.filter_by(id=config_id).first()
+        if not cfg:
+            return jsonify({"error": "Not found"}), 404
+        session.delete(cfg)
     return "", 204
 
 
@@ -130,10 +130,10 @@ def bulk_delete_configs():
         return jsonify({"error": "ids is required"}), 400
     deleted = 0
     for cid in ids:
-        cfg = ModelConfig.query.filter_by(id=cid).first()
-        if not cfg:
-            continue
         with app_session() as session:
-            session.delete(ModelConfig.query.filter_by(id=cid).first())
+            cfg = ModelConfig.query.filter_by(id=cid).first()
+            if not cfg:
+                continue
+            session.delete(cfg)
         deleted += 1
     return jsonify({"deleted": deleted}), 200

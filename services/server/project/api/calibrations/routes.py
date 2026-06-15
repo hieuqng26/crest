@@ -91,13 +91,15 @@ def list_runs():
 @jwt_required()
 def create_run():
     body = request.get_json(silent=True) or {}
-    required = ("dataset_id", "model_config_id")
-    missing = [f for f in required if not body.get(f)]
-    if missing:
-        return jsonify({"error": f"Missing: {missing}"}), 400
+    dataset_id = body.get("dataset_id")
+    model_config_id = body.get("model_config_id")
+    if not dataset_id:
+        return jsonify({"error": "Missing: dataset_id"}), 400
+    if not model_config_id:
+        return jsonify({"error": "Missing: model_config_id"}), 400
 
-    ds = Dataset.query.get(body["dataset_id"])
-    cfg = ModelConfig.query.get(body["model_config_id"])
+    ds = Dataset.query.get(int(dataset_id))
+    cfg = ModelConfig.query.get(int(model_config_id))
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
     if not cfg:
@@ -195,13 +197,12 @@ def get_forecast(run_id):
 @calibrations.post("/<run_id>/cancel")
 @jwt_required()
 def cancel_run(run_id):
-    run = CalibrationRun.query.filter_by(run_id=run_id).first()
-    if not run:
-        return jsonify({"error": "Not found"}), 404
-    if run.status not in ("queued", "running"):
-        return jsonify({"error": f"Cannot cancel a run with status {run.status}"}), 409
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()
+        if not r:
+            return jsonify({"error": "Not found"}), 404
+        if r.status not in ("queued", "running"):
+            return jsonify({"error": f"Cannot cancel a run with status {r.status}"}), 409
         r.status = "failed"
         r.finished_at = datetime.now(timezone.utc)
         r.error_message = "Cancelled by user"
@@ -228,13 +229,13 @@ def get_logs(run_id):
 @calibrations.delete("/<run_id>")
 @jwt_required()
 def delete_run(run_id):
-    run = CalibrationRun.query.filter_by(run_id=run_id).first()
-    if not run:
-        return jsonify({"error": "Not found"}), 404
-    if run.status in ("queued", "running"):
-        return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
     with app_session() as s:
-        s.delete(CalibrationRun.query.filter_by(run_id=run_id).first())
+        r = CalibrationRun.query.filter_by(run_id=run_id).first()
+        if not r:
+            return jsonify({"error": "Not found"}), 404
+        if r.status in ("queued", "running"):
+            return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
+        s.delete(r)
     return "", 204
 
 
@@ -247,14 +248,14 @@ def bulk_delete_runs():
 
     deleted, skipped = [], []
     for rid in run_ids:
-        run = CalibrationRun.query.filter_by(run_id=rid).first()
-        if not run:
-            continue
-        if run.status in ("queued", "running"):
-            skipped.append(rid)
-            continue
         with app_session() as s:
-            s.delete(CalibrationRun.query.filter_by(run_id=rid).first())
+            run = CalibrationRun.query.filter_by(run_id=rid).first()
+            if not run:
+                continue
+            if run.status in ("queued", "running"):
+                skipped.append(rid)
+                continue
+            s.delete(run)
         deleted.append(rid)
 
     return jsonify({"deleted": len(deleted), "skipped": len(skipped)}), 200
@@ -263,15 +264,13 @@ def bulk_delete_runs():
 @calibrations.post("/<run_id>/recalibrate")
 @jwt_required()
 def recalibrate(run_id):
-    run = CalibrationRun.query.filter_by(run_id=run_id).first()
-    if not run:
-        return jsonify({"error": "Not found"}), 404
-    if run.status in ("queued", "running"):
-        return jsonify({"error": "Run is already active"}), 409
-
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()
-        # Clear previous results and reset to queued
+        if not r:
+            return jsonify({"error": "Not found"}), 404
+        if r.status in ("queued", "running"):
+            return jsonify({"error": "Run is already active"}), 409
+
         r.status = "queued"
         r.triggered_by = get_jwt_identity()
         r.started_at = None
@@ -284,7 +283,6 @@ def recalibrate(run_id):
         r.progress = 0
         r.progress_message = None
         s.add(r)
-        # Delete previous log lines so the progress tab starts fresh
         CalibrationRunLog.query.filter_by(run_id=run_id).delete()
         s.flush()
         result = r.to_dict()

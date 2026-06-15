@@ -11,16 +11,18 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
-const FAMILY_LABEL    = { classification: 'Classification', timeseries: 'Time Series', statistical: 'Statistical' }
-const FAMILY_SEVERITY = { classification: 'info', timeseries: 'warning', statistical: 'success' }
+const FAMILY_LABEL    = { classification: 'Classification', ensemble: 'Ensemble', regression: 'Regression', timeseries: 'Time Series', statistical: 'Statistical' }
+const FAMILY_SEVERITY = { classification: 'info', ensemble: 'warning', regression: 'secondary', timeseries: 'contrast', statistical: 'success' }
 
 const algorithmOptions = computed(() => [
   { label: 'All algorithms', value: null },
-  ...registry.value.map(a => ({ label: `${a.algorithm} (${FAMILY_LABEL[a.family]})`, value: a.algorithm }))
+  ...registry.value.map(a => ({ label: `${a.algorithm} (${FAMILY_LABEL[a.family] ?? a.family})`, value: a.algorithm }))
 ])
 const familyOptions = [
   { label: 'All',            value: null },
   { label: 'Classification', value: 'classification' },
+  { label: 'Ensemble',       value: 'ensemble' },
+  { label: 'Regression',     value: 'regression' },
   { label: 'Time Series',    value: 'timeseries' },
   { label: 'Statistical',    value: 'statistical' }
 ]
