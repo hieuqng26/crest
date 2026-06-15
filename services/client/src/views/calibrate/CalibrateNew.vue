@@ -28,38 +28,7 @@ const toggleExpand = (id) => {
   expandedDatasets.value = s
 }
 const selectedConfig = ref(route.query.config_id ? Number(route.query.config_id) : null)
-const trainSplit = ref(80)
-const scaler = ref('none')
-const cvSearch = ref({ mode: 'none', folds: 5, nIter: 20, scoring: 'roc_auc' })
-const paramGrid = ref({})
 const submitting = ref(false)
-
-const SCALER_OPTIONS = [
-  { label: 'None',           value: 'none' },
-  { label: 'Standard',       value: 'standard' },
-  { label: 'Min-Max',        value: 'minmax' },
-  { label: 'Robust',         value: 'robust' }
-]
-const SEARCH_OPTIONS = [
-  { label: 'None',         value: 'none' },
-  { label: 'Grid',         value: 'grid' },
-  { label: 'Randomized',   value: 'random' }
-]
-const SCORING_OPTIONS = [
-  { label: 'ROC AUC',  value: 'roc_auc' },
-  { label: 'Accuracy', value: 'accuracy' },
-  { label: 'F1',       value: 'f1' },
-  { label: 'Precision', value: 'precision' },
-  { label: 'Recall',   value: 'recall' },
-  { label: 'Neg. log loss', value: 'neg_log_loss' },
-  { label: 'RMSE',     value: 'neg_root_mean_squared_error' }
-]
-const NUMERIC_DIST = [
-  { label: 'Linear',  value: 'linspace' },
-  { label: 'Log',     value: 'logspace' },
-  { label: 'Values',  value: 'list' }
-]
-const SPLIT_PRESETS = [60, 70, 75, 80, 85, 90]
 
 const selectedConfigMeta = computed(() =>
   configs.value.find(c => c.id === selectedConfig.value) || null
@@ -68,68 +37,6 @@ const algorithmMeta = computed(() =>
   selectedConfigMeta.value
     ? registry.value.find(a => a.algorithm === selectedConfigMeta.value.algorithm) || null
     : null
-)
-const searchableParams = computed(() =>
-  algorithmMeta.value ? algorithmMeta.value.params : []
-)
-
-const expandValues = (def) => {
-  if (!def || !def.enabled) return []
-  if (def.kind === 'list') {
-    return def.values.split(',').map(s => s.trim()).filter(Boolean)
-  }
-  const n = Math.max(2, Math.min(50, Number(def.steps) || 5))
-  const lo = Number(def.min), hi = Number(def.max)
-  if (!isFinite(lo) || !isFinite(hi) || lo === hi) return []
-  if (def.kind === 'logspace') {
-    if (lo <= 0 || hi <= 0) return []
-    const a = Math.log10(lo), b = Math.log10(hi)
-    return Array.from({ length: n }, (_, i) => +Math.pow(10, a + (b - a) * i / (n - 1)).toPrecision(4))
-  }
-  return Array.from({ length: n }, (_, i) => +(lo + (hi - lo) * i / (n - 1)).toPrecision(6))
-}
-
-const buildDefaultGrid = (params) => {
-  const out = {}
-  for (const p of params || []) {
-    if (p.type === 'float') {
-      out[p.name] = { enabled: false, kind: 'logspace', min: Math.max(p.default * 0.1, 0.001), max: p.default * 10, steps: 5, values: '' }
-    } else if (p.type === 'int') {
-      const base = p.default ?? 1
-      out[p.name] = { enabled: false, kind: 'linspace', min: Math.max(1, Math.round(base / 2)), max: Math.max(base * 2, base + 4), steps: 5, values: '' }
-    } else if (p.type === 'bool') {
-      out[p.name] = { enabled: false, kind: 'list', values: 'true, false' }
-    } else {
-      out[p.name] = { enabled: false, kind: 'list', values: String(p.default ?? '') }
-    }
-  }
-  return out
-}
-
-watch(selectedConfig, () => { paramGrid.value = buildDefaultGrid(searchableParams.value) }, { immediate: true })
-
-const enabledParamCount = computed(() =>
-  Object.values(paramGrid.value).filter(v => v?.enabled).length
-)
-
-const combinationCount = computed(() => {
-  if (cvSearch.value.mode === 'none') return 0
-  const sizes = Object.values(paramGrid.value)
-    .filter(v => v.enabled)
-    .map(v => expandValues(v).length)
-    .filter(n => n > 0)
-  if (sizes.length === 0) return 0
-  const product = sizes.reduce((a, b) => a * b, 1)
-  return cvSearch.value.mode === 'random'
-    ? Math.min(product, cvSearch.value.nIter)
-    : product
-})
-
-const totalFits = computed(() => combinationCount.value * (cvSearch.value.folds || 0))
-
-const gridIncomplete = computed(() =>
-  cvSearch.value.mode !== 'none' && enabledParamCount.value > 0 &&
-  Object.values(paramGrid.value).some(v => v.enabled && expandValues(v).length === 0)
 )
 
 const datasetOptions = computed(() =>
@@ -185,12 +92,24 @@ const intersectionAt = (i) => intersectColumns(
 const unjoinable = computed(() => findUnjoinable(selectedDatasets.value, mergeSteps.value))
 const schema = computed(() => projectSchema(selectedDatasets.value, mergeSteps.value))
 
+const targetCol = ref(null)
+const featureCols = ref([])
+
+const columnOptions = computed(() => schema.value.columns ?? [])
+const featureOptions = computed(() =>
+  columnOptions.value.filter(c => c !== targetCol.value)
+)
+
+watch(schema, () => {
+  targetCol.value = null
+  featureCols.value = []
+})
+
 const canLaunch = computed(() =>
   selectedDatasetIds.value.length >= 1 &&
   selectedConfig.value &&
   unjoinable.value.length === 0 &&
-  !gridIncomplete.value &&
-  !(cvSearch.value.mode !== 'none' && enabledParamCount.value === 0)
+  !!targetCol.value
 )
 
 const addDataset = (id) => {
@@ -219,11 +138,9 @@ const launch = async () => {
     const { data } = await calibrationsAPI.create({
       dataset_id:      selectedDatasetIds.value[0],
       model_config_id: selectedConfig.value,
-      train_split:     trainSplit.value / 100,
-      scaler:          scaler.value,
-      cv_search:       cvSearch.value.mode !== 'none' ? cvSearch.value : null,
-      param_grid:      cvSearch.value.mode !== 'none' ? paramGrid.value : null,
-      merge_steps:     mergeSteps.value
+      merge_steps:     mergeSteps.value,
+      target_col:      targetCol.value,
+      feature_cols:    featureCols.value,
     })
     toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${data.run_id}`, life: 3000 })
     router.push({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
@@ -235,10 +152,7 @@ const launch = async () => {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    datasets.value.length === 0 ? fetchDatasets() : Promise.resolve(),
-    configs.value.length  === 0 ? fetchConfigs()  : Promise.resolve()
-  ])
+  await Promise.all([fetchDatasets(), fetchConfigs()])
 })
 </script>
 
@@ -371,10 +285,10 @@ onMounted(async () => {
       <!-- Header -->
       <div class="p-4 border-bottom-1 surface-border">
         <h3 class="text-base font-semibold m-0">Model Configuration</h3>
-        <p class="text-xs text-color-secondary m-0 mt-1">Pick a saved model config, then tune the training pipeline.</p>
+        <p class="text-xs text-color-secondary m-0 mt-1">Pick a saved model config. Training settings (split, scaler, hyperparameter search) are configured in the config itself.</p>
       </div>
 
-      <!-- Section 1 · Configuration picker -->
+      <!-- Configuration picker -->
       <section class="p-4 flex flex-column md:flex-row md:align-items-start gap-4">
         <div class="md:w-12rem flex-shrink-0">
           <div class="text-xs font-semibold uppercase text-color-secondary">Configuration</div>
@@ -395,260 +309,63 @@ onMounted(async () => {
               <span class="font-mono text-sm">{{ selectedConfigMeta.algorithm }}</span>
             </div>
             <div class="flex flex-column">
-              <span class="text-xs text-color-secondary uppercase">Target</span>
-              <span class="font-mono text-sm">{{ selectedConfigMeta.target_col }}</span>
+              <span class="text-xs text-color-secondary uppercase">Split</span>
+              <span class="font-mono text-sm">{{ Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }} / {{ 100 - Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }}</span>
             </div>
-            <Tag
-              v-if="algorithmMeta"
-              :value="algorithmMeta.family"
-              severity="secondary"
-              class="text-xs ml-auto"
-            />
+            <div v-if="selectedConfigMeta.scaler" class="flex flex-column">
+              <span class="text-xs text-color-secondary uppercase">Scaler</span>
+              <span class="font-mono text-sm">{{ selectedConfigMeta.scaler }}</span>
+            </div>
+            <Tag v-if="algorithmMeta" :value="algorithmMeta.family" severity="secondary" class="text-xs ml-auto" />
           </div>
           <span v-if="configOptions.length === 0" class="text-xs text-color-secondary">
             No configurations saved yet — create one in the Models module.
           </span>
         </div>
       </section>
+    </div>
 
-      <Divider class="m-0" />
-
-      <!-- Section 2 · Data split -->
-      <section class="p-4 flex flex-column md:flex-row md:align-items-start gap-4">
-        <div class="md:w-12rem flex-shrink-0">
-          <div class="text-xs font-semibold uppercase text-color-secondary">Data Split</div>
-          <div class="text-xs text-color-secondary mt-1">Holdout fraction used to validate the trained model.</div>
-        </div>
-        <div class="flex-1">
-          <!-- Visual proportion bar -->
-          <div class="flex w-full border-round overflow-hidden text-xs font-semibold text-white" style="height: 2.25rem">
-            <div
-              class="flex align-items-center justify-content-center transition-all transition-duration-200"
-              :style="{ width: trainSplit + '%', background: 'var(--primary-color)' }"
-            >
-              Train · {{ trainSplit }}%
-            </div>
-            <div
-              class="flex align-items-center justify-content-center transition-all transition-duration-200"
-              :style="{ width: (100 - trainSplit) + '%', background: 'var(--surface-400)' }"
-            >
-              Val · {{ 100 - trainSplit }}%
-            </div>
+    <!-- Variables -->
+    <div class="surface-card border-round shadow-1 mb-4 overflow-hidden">
+      <div class="p-4 border-bottom-1 surface-border">
+        <h3 class="text-base font-semibold m-0">Variables</h3>
+        <p class="text-xs text-color-secondary m-0 mt-1">Select the target to predict and which columns to use as features.</p>
+      </div>
+      <section class="p-4 flex flex-column gap-4">
+        <div class="flex flex-column md:flex-row md:align-items-start gap-4">
+          <div class="md:w-12rem flex-shrink-0">
+            <div class="text-xs font-semibold uppercase text-color-secondary">Target Column</div>
+            <div class="text-xs text-color-secondary mt-1">The variable to predict.</div>
           </div>
-
-          <!-- Preset chips + precise input -->
-          <div class="flex flex-wrap align-items-center gap-2 mt-3">
-            <SelectButton
-              v-model="trainSplit"
-              :options="SPLIT_PRESETS"
-              :allowEmpty="false"
-            >
-              <template #option="{ option }">{{ option }} / {{ 100 - option }}</template>
-            </SelectButton>
-            <div class="flex align-items-center gap-2 ml-auto">
-              <label class="text-xs text-color-secondary">Custom</label>
-              <InputNumber
-                v-model="trainSplit"
-                :min="50" :max="95" suffix="%"
-                showButtons buttonLayout="horizontal"
-                :step="1"
-                decrementButtonClass="p-button-secondary"
-                incrementButtonClass="p-button-secondary"
-                inputClass="w-4rem text-center"
-              />
-            </div>
+          <div class="flex-1">
+            <Dropdown
+              v-model="targetCol"
+              :options="columnOptions"
+              placeholder="Select target column"
+              :disabled="columnOptions.length === 0"
+              class="w-full"
+              filter
+            />
+            <span v-if="columnOptions.length === 0" class="text-xs text-color-secondary mt-1 block">
+              Select a dataset first.
+            </span>
           </div>
         </div>
-      </section>
-
-      <Divider class="m-0" />
-
-      <!-- Section 3 · Feature scaler -->
-      <section class="p-4 flex flex-column md:flex-row md:align-items-start gap-4">
-        <div class="md:w-12rem flex-shrink-0">
-          <div class="text-xs font-semibold uppercase text-color-secondary">Feature Scaler</div>
-          <div class="text-xs text-color-secondary mt-1">Applied to numeric features. Fit on the train fold only to avoid leakage.</div>
-        </div>
-        <div class="flex-1">
-          <SelectButton
-            v-model="scaler"
-            :options="SCALER_OPTIONS"
-            optionLabel="label"
-            optionValue="value"
-            :allowEmpty="false"
-          />
-        </div>
-      </section>
-
-      <Divider class="m-0" />
-
-      <!-- Section 4 · Hyperparameter search -->
-      <section class="p-4 flex flex-column md:flex-row md:align-items-start gap-4">
-        <div class="md:w-12rem flex-shrink-0">
-          <div class="text-xs font-semibold uppercase text-color-secondary">Hyperparameter Search</div>
-          <div class="text-xs text-color-secondary mt-1">Cross-validated tuning over chosen parameter ranges.</div>
-        </div>
-
-        <div class="flex-1 flex flex-column gap-3">
-          <SelectButton
-            v-model="cvSearch.mode"
-            :options="SEARCH_OPTIONS"
-            optionLabel="label"
-            optionValue="value"
-            :allowEmpty="false"
-          />
-
-          <div v-if="cvSearch.mode !== 'none'" class="flex flex-column gap-3">
-            <!-- CV controls row -->
-            <div class="grid m-0 gap-3" :class="cvSearch.mode === 'random' ? 'grid-cols-3' : 'grid-cols-2'">
-              <div class="flex flex-column gap-1">
-                <label class="font-medium text-xs uppercase text-color-secondary">CV folds</label>
-                <InputNumber v-model="cvSearch.folds" :min="2" :max="20" showButtons :useGrouping="false" />
-              </div>
-              <div v-if="cvSearch.mode === 'random'" class="flex flex-column gap-1">
-                <label class="font-medium text-xs uppercase text-color-secondary">n_iter</label>
-                <InputNumber v-model="cvSearch.nIter" :min="1" :max="500" showButtons :useGrouping="false" />
-              </div>
-              <div class="flex flex-column gap-1">
-                <label class="font-medium text-xs uppercase text-color-secondary">Scoring</label>
-                <Dropdown
-                  v-model="cvSearch.scoring"
-                  :options="SCORING_OPTIONS"
-                  optionLabel="label"
-                  optionValue="value"
-                  class="w-full"
-                />
-              </div>
-            </div>
-
-            <!-- Parameter grid editor -->
-            <div v-if="!selectedConfigMeta" class="surface-ground border-round p-3 text-xs text-color-secondary">
-              Select a model configuration to define search ranges.
-            </div>
-            <div v-else>
-              <div class="flex align-items-center justify-content-between mb-2">
-                <span class="text-xs font-semibold uppercase text-color-secondary">
-                  Parameter ranges
-                </span>
-                <span class="text-xs text-color-secondary">
-                  {{ enabledParamCount }} of {{ searchableParams.length }} enabled
-                </span>
-              </div>
-
-              <div class="surface-ground border-round overflow-hidden">
-                <table class="w-full text-sm" style="border-collapse: collapse">
-                  <thead>
-                    <tr class="text-xs uppercase text-color-secondary">
-                      <th class="text-left p-2" style="width: 3rem"></th>
-                      <th class="text-left p-2">Parameter</th>
-                      <th class="text-left p-2" style="width: 7rem">Mode</th>
-                      <th class="text-left p-2">Range</th>
-                      <th class="text-right p-2" style="width: 5rem">Values</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="p in searchableParams"
-                      :key="p.name"
-                      class="border-top-1 surface-border"
-                      :class="paramGrid[p.name]?.enabled ? '' : 'opacity-60'"
-                    >
-                      <td class="p-2 text-center">
-                        <Checkbox v-model="paramGrid[p.name].enabled" :binary="true" />
-                      </td>
-                      <td class="p-2">
-                        <div class="font-mono text-xs text-primary">{{ p.name }}</div>
-                        <div class="text-xs text-color-secondary">{{ p.type }} · default {{ p.default ?? 'null' }}</div>
-                      </td>
-                      <td class="p-2">
-                        <Dropdown
-                          v-if="p.type === 'float' || p.type === 'int'"
-                          v-model="paramGrid[p.name].kind"
-                          :options="NUMERIC_DIST"
-                          optionLabel="label"
-                          optionValue="value"
-                          :disabled="!paramGrid[p.name].enabled"
-                          class="w-full"
-                        />
-                        <Tag v-else value="values" severity="secondary" class="text-xs" />
-                      </td>
-                      <td class="p-2">
-                        <template v-if="(p.type === 'float' || p.type === 'int') && paramGrid[p.name].kind !== 'list'">
-                          <div class="flex align-items-center gap-2">
-                            <InputNumber
-                              v-model="paramGrid[p.name].min"
-                              :disabled="!paramGrid[p.name].enabled"
-                              :useGrouping="false"
-                              :minFractionDigits="p.type === 'float' ? 0 : 0"
-                              :maxFractionDigits="p.type === 'float' ? 6 : 0"
-                              placeholder="min"
-                              inputClass="text-xs"
-                              class="flex-1"
-                            />
-                            <span class="text-color-secondary text-xs">→</span>
-                            <InputNumber
-                              v-model="paramGrid[p.name].max"
-                              :disabled="!paramGrid[p.name].enabled"
-                              :useGrouping="false"
-                              :minFractionDigits="p.type === 'float' ? 0 : 0"
-                              :maxFractionDigits="p.type === 'float' ? 6 : 0"
-                              placeholder="max"
-                              inputClass="text-xs"
-                              class="flex-1"
-                            />
-                            <InputNumber
-                              v-model="paramGrid[p.name].steps"
-                              :disabled="!paramGrid[p.name].enabled"
-                              :min="2" :max="50" :useGrouping="false"
-                              showButtons buttonLayout="horizontal"
-                              decrementButtonClass="p-button-secondary p-button-text"
-                              incrementButtonClass="p-button-secondary p-button-text"
-                              inputClass="text-xs w-3rem text-center"
-                              v-tooltip.top="'steps'"
-                            />
-                          </div>
-                        </template>
-                        <InputText
-                          v-else
-                          v-model="paramGrid[p.name].values"
-                          :disabled="!paramGrid[p.name].enabled"
-                          class="w-full text-xs"
-                          placeholder="comma-separated, e.g. lbfgs, saga, liblinear"
-                        />
-                      </td>
-                      <td class="p-2 text-right text-xs text-color-secondary font-mono">
-                        {{ paramGrid[p.name].enabled ? expandValues(paramGrid[p.name]).length : '—' }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Search summary -->
-              <div class="flex flex-wrap align-items-center gap-2 mt-3">
-                <Tag
-                  v-if="enabledParamCount === 0"
-                  value="No parameters enabled"
-                  severity="warning"
-                  icon="pi pi-exclamation-triangle"
-                />
-                <template v-else>
-                  <Tag :value="`${combinationCount.toLocaleString()} combinations`" severity="info" />
-                  <Tag :value="`${totalFits.toLocaleString()} total fits`" severity="secondary" />
-                  <Tag
-                    v-if="cvSearch.mode === 'random'"
-                    :value="`sampling ${cvSearch.nIter} of search space`"
-                    severity="secondary"
-                  />
-                  <Tag
-                    v-if="gridIncomplete"
-                    value="Some ranges are invalid"
-                    severity="danger"
-                    icon="pi pi-times-circle"
-                  />
-                </template>
-              </div>
-            </div>
+        <div class="flex flex-column md:flex-row md:align-items-start gap-4">
+          <div class="md:w-12rem flex-shrink-0">
+            <div class="text-xs font-semibold uppercase text-color-secondary">Feature Columns</div>
+            <div class="text-xs text-color-secondary mt-1">Leave blank to use all non-target columns.</div>
+          </div>
+          <div class="flex-1">
+            <MultiSelect
+              v-model="featureCols"
+              :options="featureOptions"
+              placeholder="All non-target columns"
+              :disabled="!targetCol || featureOptions.length === 0"
+              display="chip"
+              class="w-full"
+              filter
+            />
           </div>
         </div>
       </section>

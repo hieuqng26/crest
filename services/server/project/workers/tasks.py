@@ -182,6 +182,7 @@ def run_calibration(self, run_id: str):
         from project.db_models.calibration_models import (
             CalibrationRun,
             Dataset,
+            Forecast,
             ModelConfig,
         )
 
@@ -193,6 +194,12 @@ def run_calibration(self, run_id: str):
         dataset_id = initial.dataset_id
         model_config_id = initial.model_config_id
         search_config_json = initial.search_config_json
+        train_split_ratio = (
+            initial.train_split if initial.train_split is not None else 0.8
+        )
+        scaler_name = initial.scaler
+        initial_target_col = initial.target_col
+        initial_feature_cols_json = initial.feature_cols_json
 
         try:
             # --- 1. Mark running ---
@@ -206,6 +213,7 @@ def run_calibration(self, run_id: str):
             # --- 2. Load dataset + config ---
             ds = Dataset.query.get(dataset_id)
             cfg = ModelConfig.query.get(model_config_id)
+            model_family = cfg.family  # extract before session can close
 
             if not ds.file_path:
                 raise ValueError(
@@ -224,10 +232,12 @@ def run_calibration(self, run_id: str):
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
 
-            target_col = cfg.target_col
+            target_col = initial_target_col or cfg.target_col
             algorithm = cfg.algorithm
             raw_params = json.loads(cfg.hyperparams_json or "{}")
-            feature_cols_json = json.loads(cfg.feature_cols_json or "[]")
+            feature_cols_json = json.loads(
+                initial_feature_cols_json or cfg.feature_cols_json or "[]"
+            )
             search_cfg = json.loads(search_config_json or "null")
 
             _write_progress(
@@ -242,10 +252,10 @@ def run_calibration(self, run_id: str):
             y = df[target_col].values
 
             X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=0.2, random_state=42
+                X, y, test_size=round(1.0 - train_split_ratio, 4), random_state=42
             )
 
-            scaler = _get_scaler(getattr(initial, "scaler", None))
+            scaler = _get_scaler(scaler_name)
             if scaler:
                 X_train = scaler.fit_transform(X_train)
                 X_val = scaler.transform(X_val)
@@ -269,7 +279,9 @@ def run_calibration(self, run_id: str):
                 _write_progress(
                     run_id,
                     50,
-                    f"CV search done · best score={search_result['best_score']:.4f}",
+                    f"CV search done · best score={search_result['best_score']:.4f}"
+                    if search_result["best_score"] is not None
+                    else "CV search done · no valid candidates found",
                 )
 
             params_obj = plugin_cls.param_schema(**raw_params)
@@ -289,8 +301,15 @@ def run_calibration(self, run_id: str):
                             entry["feature"] = feature_cols[i]
 
             y_train_pred = plugin.predict(X_train)
+            y_val_pred = plugin.predict(X_val)
             try:
-                train_metrics = {"auc_roc": float(roc_auc_score(y_train, y_train_pred))}
+                if model_family == "classification":
+                    train_metrics = {"auc_roc": float(roc_auc_score(y_train, y_train_pred))}
+                else:
+                    train_metrics = {
+                        "r2": float(r2_score(y_train, y_train_pred)),
+                        "rmse": float(np.sqrt(mean_squared_error(y_train, y_train_pred))),
+                    }
             except Exception:
                 train_metrics = {}
 
@@ -315,6 +334,24 @@ def run_calibration(self, run_id: str):
                 if cv_summary:
                     r.best_params_json = json.dumps(cv_summary)
                 s.add(r)
+                s.add(
+                    Forecast(
+                        calibration_run_id=r.id,
+                        forecast_horizon=len(y_val),
+                        forecast_json=json.dumps(
+                            {
+                                "actual": [
+                                    float(v) if v is not None else None
+                                    for v in y_val.tolist()
+                                ],
+                                "predicted": [
+                                    float(v) if v is not None else None
+                                    for v in y_val_pred.tolist()
+                                ],
+                            }
+                        ),
+                    )
+                )
             _write_progress(run_id, 100, "Run completed successfully")
 
         except Exception as exc:

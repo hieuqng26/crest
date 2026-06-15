@@ -126,20 +126,6 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
           </div>
 
           <h1 class="text-3xl font-semibold m-0 tracking-tight">{{ run.config_name }}</h1>
-          <div class="flex flex-wrap align-items-center gap-x-3 gap-y-1 text-sm text-color-secondary mt-2">
-            <span class="font-mono">{{ run.algorithm }}</span>
-            <span class="separator">·</span>
-            <span><i class="pi pi-database text-xs mr-1" />{{ run.dataset_name }}</span>
-            <span class="separator">·</span>
-            <span><i class="pi pi-user text-xs mr-1" />{{ run.triggered_by.split('@')[0] }}</span>
-            <span class="separator">·</span>
-            <span><i class="pi pi-clock text-xs mr-1" />{{ fmtDate(run.started_at) }}</span>
-            <span class="separator">·</span>
-            <button class="run-id-copy" @click="copyRunId" v-tooltip.top="'Copy run id'">
-              <span class="font-mono">{{ run.run_id }}</span>
-              <i class="pi pi-copy text-xs" />
-            </button>
-          </div>
         </div>
 
         <div class="flex gap-2 flex-shrink-0">

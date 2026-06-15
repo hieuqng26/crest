@@ -48,6 +48,9 @@ class ModelConfig(db.Model):
     hyperparams_json = db.Column(db.Text, nullable=True)
     feature_cols_json = db.Column(db.Text, nullable=True)
     target_col = db.Column(db.String(255), nullable=True)
+    train_split = db.Column(db.Float, nullable=False, default=0.8)
+    scaler = db.Column(db.String(32), nullable=True)
+    search_config_json = db.Column(db.Text, nullable=True)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
@@ -66,6 +69,9 @@ class ModelConfig(db.Model):
             hyperparams_json=self.hyperparams_json,
             feature_cols_json=self.feature_cols_json,
             target_col=self.target_col,
+            train_split=self.train_split,
+            scaler=self.scaler,
+            search_config_json=self.search_config_json,
             created_by=self.created_by,
             created_at=self.created_at.isoformat() if self.created_at else None,
         )
@@ -96,6 +102,10 @@ class CalibrationRun(db.Model):
     progress_message = db.Column(db.String(512), nullable=True)
     search_config_json = db.Column(db.Text, nullable=True)
     best_params_json = db.Column(db.Text, nullable=True)
+    train_split = db.Column(db.Float, nullable=False, default=0.8)
+    scaler = db.Column(db.String(32), nullable=True)
+    target_col = db.Column(db.String(255), nullable=True)
+    feature_cols_json = db.Column(db.Text, nullable=True)
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
@@ -122,6 +132,10 @@ class CalibrationRun(db.Model):
             progress_message=self.progress_message,
             search_config_json=self.search_config_json,
             best_params_json=self.best_params_json,
+            train_split=self.train_split,
+            scaler=self.scaler,
+            target_col=self.target_col,
+            feature_cols_json=self.feature_cols_json,
         )
 
 

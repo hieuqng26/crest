@@ -177,7 +177,10 @@ const toggleMenu = (event) => {
   <div class="layout-topbar">
     <router-link to="/" class="layout-topbar-logo">
       <img :src="logoUrl" alt="logo" />
-      <span class="text-lg ml-2">{{ appName }}</span>
+      <div class="flex flex-column ml-2" style="line-height: 1.2">
+        <span class="text-lg font-semibold">{{ appName }}</span>
+        <span class="text-xs text-color-secondary" style="letter-spacing: 0.02em">Credit Risk & Economic Stress Testing</span>
+      </div>
     </router-link>
 
     <button

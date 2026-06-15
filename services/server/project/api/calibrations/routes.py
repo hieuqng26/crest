@@ -1,4 +1,5 @@
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 
@@ -23,8 +24,6 @@ logger = get_logger(__name__)
 
 def _expand_param_values(defn: dict) -> list:
     """Expand a frontend param-grid definition into a flat list of candidate values."""
-    import math
-
     kind = defn.get("kind", "list")
     if kind == "list":
         raw = str(defn.get("values", ""))
@@ -80,6 +79,7 @@ def list_runs():
         d["config_name"] = r.model_config.name if r.model_config else None
         d["dataset_name"] = r.dataset.name if r.dataset else None
         d["algorithm"] = r.model_config.algorithm if r.model_config else None
+        d["model_family"] = r.model_config.family if r.model_config else None
         result.append(d)
 
     return jsonify(
@@ -105,13 +105,15 @@ def create_run():
     if not cfg:
         return jsonify({"error": "ModelConfig not found"}), 404
 
-    # Build CV search config if provided
-    cv_search = body.get("cv_search")
-    param_grid_raw = body.get("param_grid") or {}
+    target_col = body.get("target_col") or None
+    feature_cols = body.get("feature_cols") or []
+
+    # Build resolved CV search config from model config's saved search settings
     search_config_json = None
-    if cv_search and cv_search.get("mode", "none") != "none":
+    raw_search = json.loads(cfg.search_config_json or "null")
+    if raw_search and raw_search.get("mode", "none") != "none":
         param_grid = {}
-        for param_name, defn in param_grid_raw.items():
+        for param_name, defn in (raw_search.get("paramGrid") or {}).items():
             if not defn or not defn.get("enabled"):
                 continue
             values = _expand_param_values(defn)
@@ -120,11 +122,11 @@ def create_run():
         if param_grid:
             search_config_json = json.dumps(
                 {
-                    "type": cv_search.get("mode", "grid"),
+                    "type": raw_search.get("mode", "grid"),
                     "param_grid": param_grid,
-                    "cv": int(cv_search.get("folds", 5)),
-                    "scoring": cv_search.get("scoring", "roc_auc"),
-                    "n_iter": int(cv_search.get("nIter", 20)),
+                    "cv": int(raw_search.get("folds", 5)),
+                    "scoring": raw_search.get("scoring", "roc_auc"),
+                    "n_iter": int(raw_search.get("nIter", 20)),
                 }
             )
 
@@ -137,6 +139,10 @@ def create_run():
             status="queued",
             triggered_by=get_jwt_identity(),
             search_config_json=search_config_json,
+            train_split=cfg.train_split if cfg.train_split is not None else 0.8,
+            scaler=cfg.scaler,
+            target_col=target_col,
+            feature_cols_json=json.dumps(feature_cols),
         )
         session.add(run)
         session.flush()
@@ -156,6 +162,7 @@ def get_run(run_id):
     d["config_name"] = run.model_config.name if run.model_config else None
     d["dataset_name"] = run.dataset.name if run.dataset else None
     d["algorithm"] = run.model_config.algorithm if run.model_config else None
+    d["model_family"] = run.model_config.family if run.model_config else None
     return jsonify(d), 200
 
 
@@ -202,7 +209,9 @@ def cancel_run(run_id):
         if not r:
             return jsonify({"error": "Not found"}), 404
         if r.status not in ("queued", "running"):
-            return jsonify({"error": f"Cannot cancel a run with status {r.status}"}), 409
+            return jsonify(
+                {"error": f"Cannot cancel a run with status {r.status}"}
+            ), 409
         r.status = "failed"
         r.finished_at = datetime.now(timezone.utc)
         r.error_message = "Cancelled by user"
@@ -234,7 +243,9 @@ def delete_run(run_id):
         if not r:
             return jsonify({"error": "Not found"}), 404
         if r.status in ("queued", "running"):
-            return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
+            return jsonify(
+                {"error": "Cannot delete an active run — cancel it first"}
+            ), 409
         s.delete(r)
     return "", 204
 

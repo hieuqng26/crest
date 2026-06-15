@@ -79,6 +79,117 @@ const coefData = computed(() => {
   }
 })
 
+const isRegression = computed(() => !!diag.value?.residuals)
+
+const residVsFittedData = computed(() => {
+  const d = diag.value
+  if (!d?.residuals?.length || !d?.fitted?.length) return null
+  return {
+    datasets: [{
+      label: 'Residual',
+      data: d.fitted.map((f, i) => ({ x: f, y: d.residuals[i] })),
+      backgroundColor: 'rgba(96,165,250,0.5)',
+      pointRadius: d.fitted.length > 300 ? 2 : 4,
+      pointHoverRadius: 5,
+    }]
+  }
+})
+
+const residVsFittedOptions = {
+  maintainAspectRatio: false,
+  animation: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: { callbacks: { label: ctx => ` fitted=${ctx.parsed.x.toFixed(4)}, resid=${ctx.parsed.y.toFixed(4)}` } }
+  },
+  scales: {
+    x: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Fitted value', color: '#6b7280', font: { size: 11 } } },
+    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Residual', color: '#6b7280', font: { size: 11 } } }
+  }
+}
+
+const qqChartData = computed(() => {
+  const d = diag.value
+  if (!d?.qq_data) return null
+  return {
+    datasets: [
+      {
+        label: 'Residuals',
+        data: d.qq_data.theoretical.map((t, i) => ({ x: t, y: d.qq_data.sample[i] })),
+        backgroundColor: 'rgba(52,211,153,0.55)',
+        pointRadius: d.qq_data.theoretical.length > 300 ? 2 : 3,
+      },
+      {
+        label: 'Normal',
+        data: (() => {
+          const t = d.qq_data.theoretical
+          const s = d.qq_data.sample
+          const x0 = t[0], x1 = t[t.length - 1]
+          const y0 = s[0], y1 = s[s.length - 1]
+          return [{ x: x0, y: y0 }, { x: x1, y: y1 }]
+        })(),
+        type: 'line',
+        borderColor: '#f59e0b',
+        borderDash: [5, 4],
+        pointRadius: 0,
+        borderWidth: 1.5,
+        fill: false,
+      }
+    ]
+  }
+})
+
+const qqOptions = {
+  maintainAspectRatio: false,
+  animation: false,
+  plugins: {
+    legend: { labels: { color: '#9ca3af', boxWidth: 12 } },
+    tooltip: { callbacks: { label: ctx => ` theoretical=${ctx.parsed.x.toFixed(3)}, sample=${ctx.parsed.y.toFixed(4)}` } }
+  },
+  scales: {
+    x: { type: 'linear', ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Theoretical quantiles', color: '#6b7280', font: { size: 11 } } },
+    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Sample quantiles', color: '#6b7280', font: { size: 11 } } }
+  }
+}
+
+const residHistData = computed(() => {
+  const residuals = diag.value?.residuals
+  if (!residuals?.length) return null
+  const N_BINS = 20
+  const min = Math.min(...residuals)
+  const max = Math.max(...residuals)
+  const binWidth = (max - min) / N_BINS || 1
+  const counts = new Array(N_BINS).fill(0)
+  residuals.forEach(r => {
+    const i = Math.min(Math.floor((r - min) / binWidth), N_BINS - 1)
+    counts[i]++
+  })
+  const labels = counts.map((_, i) => (min + (i + 0.5) * binWidth).toFixed(3))
+  return {
+    labels,
+    datasets: [{
+      label: 'Count',
+      data: counts,
+      backgroundColor: 'rgba(167,139,250,0.7)',
+      borderColor: '#a78bfa',
+      borderWidth: 1,
+      borderRadius: 2,
+    }]
+  }
+})
+
+const residHistOptions = {
+  maintainAspectRatio: false,
+  animation: false,
+  plugins: {
+    legend: { display: false },
+  },
+  scales: {
+    x: { ticks: { color: '#9ca3af', maxTicksLimit: 8 }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Residual', color: '#6b7280', font: { size: 11 } } },
+    y: { ticks: { color: '#9ca3af' }, grid: { color: 'rgba(156,163,175,0.08)' }, title: { display: true, text: 'Count', color: '#6b7280', font: { size: 11 } } }
+  }
+}
+
 const cm = computed(() => diag.value?.confusion_matrix ?? null)
 
 const cmTotal = computed(() => {
@@ -179,6 +290,30 @@ const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%
         </div>
       </div>
     </div>
+
+    <!-- Regression-specific plots -->
+    <template v-if="isRegression">
+      <div class="charts-grid" style="grid-template-columns: repeat(2, 1fr)">
+        <div v-if="residVsFittedData" class="chart-card">
+          <div class="chart-title">Residuals vs Fitted</div>
+          <div class="chart-body">
+            <Chart type="scatter" :data="residVsFittedData" :options="residVsFittedOptions" style="height:100%;width:100%" />
+          </div>
+        </div>
+        <div v-if="residHistData" class="chart-card">
+          <div class="chart-title">Residuals Distribution</div>
+          <div class="chart-body">
+            <Chart type="bar" :data="residHistData" :options="residHistOptions" style="height:100%;width:100%" />
+          </div>
+        </div>
+      </div>
+      <div v-if="qqChartData" class="chart-card">
+        <div class="chart-title">Q-Q Plot <span style="font-weight:400;color:var(--text-color-secondary);font-size:0.72rem">(residuals vs normal distribution — points on the line indicate normality)</span></div>
+        <div class="chart-body">
+          <Chart type="scatter" :data="qqChartData" :options="qqOptions" style="height:100%;width:100%" />
+        </div>
+      </div>
+    </template>
 
   </div>
 

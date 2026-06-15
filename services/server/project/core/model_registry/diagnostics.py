@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import chi2
+from scipy.stats import chi2, norm as sp_norm
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
@@ -29,10 +29,11 @@ def regression_diagnostics(y, y_pred, coef, intercept) -> dict:
         else None
     )
 
-    coef_table = [
-        {"feature": f"f{i}", "coef": float(c)}
-        for i, c in enumerate(coef)
-    ]
+    coef_table = [{"feature": f"f{i}", "coef": float(c)} for i, c in enumerate(coef)]
+
+    n = len(resid)
+    sorted_resid = np.sort(resid)
+    theoretical_q = sp_norm.ppf((np.arange(1, n + 1) - 0.375) / (n + 0.25))
 
     return {
         "r2": r2,
@@ -41,7 +42,12 @@ def regression_diagnostics(y, y_pred, coef, intercept) -> dict:
         **({"mape": mape} if mape is not None else {}),
         "intercept": float(intercept),
         "coef_table": coef_table,
+        "fitted": [round(float(v), 6) for v in y_pred],
         "residuals": [round(float(r), 6) for r in resid],
+        "qq_data": {
+            "theoretical": [round(float(v), 4) for v in theoretical_q.tolist()],
+            "sample": [round(float(v), 4) for v in sorted_resid.tolist()],
+        },
     }
 
 
@@ -53,7 +59,7 @@ def classification_diagnostics(y, y_prob, model, X) -> dict:
     ks = float(np.max(tpr - fpr))
     gini = 2 * auc - 1
 
-    frac_pos, mean_pred = calibration_curve(y, y_prob, n_bins=10)
+    frac_pos, mean_pred = calibration_curve(y, y_prob, n_bins=10, strategy="quantile")
 
     # Hosmer-Lemeshow
     n_bins = 10

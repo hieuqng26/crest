@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
-import { statusSeverity, duration } from './runUtils'
+import { statusSeverity } from './runUtils'
 import { fmtDate } from '@/utils/datetime'
 
 const router = useRouter()
@@ -348,9 +348,29 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
               </span>
               <div class="line-height-3">
                 <div class="font-medium">{{ data.config_name }}</div>
-                <div class="text-xs text-color-secondary font-mono">{{ data.run_id }} · {{ data.algorithm }}</div>
+                <div class="text-xs text-color-secondary font-mono">{{ data.run_id }}</div>
               </div>
             </div>
+          </template>
+        </Column>
+
+        <Column header="Algorithm" sortable sortField="algorithm" style="width: 9rem">
+          <template #body="{ data }">
+            <span class="text-sm">{{ data.algorithm || '—' }}</span>
+          </template>
+        </Column>
+
+        <Column header="Target" sortable sortField="target_col" style="width: 9rem">
+          <template #body="{ data }">
+            <span class="text-sm font-mono">{{ data.target_col || '—' }}</span>
+          </template>
+        </Column>
+
+        <Column header="Features" style="width: 14rem">
+          <template #body="{ data }">
+            <span class="text-xs text-color-secondary font-mono">
+              {{ (() => { try { const c = JSON.parse(data.feature_cols_json || '[]'); return c.length ? c.join(', ') : '—' } catch { return '—' } })() }}
+            </span>
           </template>
         </Column>
 
@@ -379,10 +399,15 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
           </template>
         </Column>
 
-        <Column header="Duration" sortable sortField="started_at" style="width: 8rem">
+        <Column header="Started" sortable sortField="started_at" style="width: 9rem">
           <template #body="{ data }">
-            <div class="text-sm font-mono">{{ duration(data.started_at, data.finished_at, data.status) }}</div>
-            <div class="text-xs text-color-secondary">{{ fmtDate(data.started_at) }}</div>
+            <span class="text-sm">{{ data.started_at ? fmtDate(data.started_at) : '—' }}</span>
+          </template>
+        </Column>
+
+        <Column header="Finished" sortable sortField="finished_at" style="width: 9rem">
+          <template #body="{ data }">
+            <span class="text-sm">{{ data.finished_at ? fmtDate(data.finished_at) : '—' }}</span>
           </template>
         </Column>
 

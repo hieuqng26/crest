@@ -36,11 +36,23 @@ const hasFeatureImportance = computed(() => featureImportance.value.length > 0)
 const hasCoefTable = computed(() => coefTable.value.length > 0)
 
 const maxAbsCoef = computed(() => Math.max(...coefTable.value.map(f => Math.abs(f.coef)), 1))
+const logCoefWidth = (coef) =>
+  (Math.log1p(Math.abs(coef)) / Math.log1p(maxAbsCoef.value) * 50).toFixed(1) + '%'
+
+const featureCols = computed(() => {
+  try {
+    const cols = JSON.parse(props.run.feature_cols_json || '[]')
+    return cols.length ? cols.join(', ') : '—'
+  } catch { return '—' }
+})
 
 const metaRows = computed(() => [
+  { label: 'Run ID',         value: props.run.run_id       || '—', mono: true },
   { label: 'Configuration',  value: props.run.config_name  || '—' },
   { label: 'Algorithm',      value: props.run.algorithm    || '—' },
   { label: 'Dataset',        value: props.run.dataset_name || '—' },
+  { label: 'Target',         value: props.run.target_col   || '—' },
+  { label: 'Features',       value: featureCols.value },
   { label: 'Triggered by',   value: props.run.triggered_by || '—' },
   { label: 'Started',        value: fmtDate(props.run.started_at) },
   { label: 'Finished',       value: fmtDate(props.run.finished_at) },
@@ -59,10 +71,13 @@ const metaRows = computed(() => [
         <div
           v-for="m in metaRows" :key="m.label"
           class="flex flex-column p-4"
-          style="min-width: 12rem; flex: 1; border-top: 1px solid var(--surface-border)"
+          :style="[
+            'border-top: 1px solid var(--surface-border)',
+            m.label === 'Features' || m.label === 'Run ID' ? 'min-width: 100%; flex: 1 1 100%' : 'min-width: 12rem; flex: 1'
+          ]"
         >
           <span class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">{{ m.label }}</span>
-          <span class="font-medium text-sm">{{ m.value }}</span>
+          <span class="font-medium text-sm" :class="{ 'font-mono': m.mono }">{{ m.value }}</span>
         </div>
       </div>
     </div>
@@ -138,7 +153,10 @@ const metaRows = computed(() => [
 
     <!-- Coefficients (linear models: OLS, Lasso, ElasticNet, Ridge) -->
     <div v-if="hasCoefTable" class="surface-card border-round shadow-1 p-4">
-      <span class="text-xs font-semibold uppercase text-color-secondary block mb-3" style="letter-spacing: 0.06em">Coefficients</span>
+      <div class="flex align-items-center justify-content-between mb-3">
+        <span class="text-xs font-semibold uppercase text-color-secondary" style="letter-spacing: 0.06em">Coefficients</span>
+        <span class="text-xs text-color-secondary" style="font-style: italic">bar widths on log scale</span>
+      </div>
       <div class="flex flex-column gap-2">
         <div
           v-for="f in [...coefTable].sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef))"
@@ -152,7 +170,7 @@ const metaRows = computed(() => [
             <div
               style="position:absolute;height:100%;border-radius:2px;transition:width 400ms ease"
               :style="{
-                width: (Math.abs(f.coef) / maxAbsCoef * 50).toFixed(1) + '%',
+                width: logCoefWidth(f.coef),
                 left:  f.coef >= 0 ? '50%' : undefined,
                 right: f.coef <  0 ? '50%' : undefined,
                 background: f.coef >= 0 ? '#34d399' : '#f87171',

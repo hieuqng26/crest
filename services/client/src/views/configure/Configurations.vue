@@ -14,6 +14,71 @@ const toast = useToast()
 const FAMILY_LABEL    = { classification: 'Classification', ensemble: 'Ensemble', regression: 'Regression', timeseries: 'Time Series', statistical: 'Statistical' }
 const FAMILY_SEVERITY = { classification: 'info', ensemble: 'warning', regression: 'secondary', timeseries: 'contrast', statistical: 'success' }
 
+const SCALER_OPTIONS = [
+  { label: 'None',     value: 'none' },
+  { label: 'Standard', value: 'standard' },
+  { label: 'Min-Max',  value: 'minmax' },
+  { label: 'Robust',   value: 'robust' }
+]
+const SEARCH_OPTIONS = [
+  { label: 'None',       value: 'none' },
+  { label: 'Grid',       value: 'grid' },
+  { label: 'Randomized', value: 'random' }
+]
+const SCORING_OPTIONS = [
+  { label: 'ROC AUC', value: 'roc_auc' },
+  { label: 'Accuracy', value: 'accuracy' },
+  { label: 'F1',       value: 'f1' },
+  { label: 'Neg. MSE', value: 'neg_mean_squared_error' },
+  { label: 'R²',       value: 'r2' }
+]
+const NUMERIC_DIST = [
+  { label: 'Linear', value: 'linspace' },
+  { label: 'Log',    value: 'logspace' },
+  { label: 'Values', value: 'list' }
+]
+const SPLIT_PRESETS = [
+  { label: '60/40', value: 60 },
+  { label: '70/30', value: 70 },
+  { label: '75/25', value: 75 },
+  { label: '80/20', value: 80 },
+  { label: '85/15', value: 85 },
+  { label: '90/10', value: 90 },
+]
+
+const expandValues = (def) => {
+  if (!def || !def.enabled) return []
+  if (def.kind === 'list') {
+    return def.values.split(',').map(s => s.trim()).filter(Boolean)
+  }
+  const n = Math.max(2, Math.min(50, Number(def.steps) || 5))
+  const lo = Number(def.min), hi = Number(def.max)
+  if (!isFinite(lo) || !isFinite(hi) || lo === hi) return []
+  if (def.kind === 'logspace') {
+    if (lo <= 0 || hi <= 0) return []
+    const a = Math.log10(lo), b = Math.log10(hi)
+    return Array.from({ length: n }, (_, i) => +Math.pow(10, a + (b - a) * i / (n - 1)).toPrecision(4))
+  }
+  return Array.from({ length: n }, (_, i) => +(lo + (hi - lo) * i / (n - 1)).toPrecision(6))
+}
+
+const buildDefaultGrid = (params) => {
+  const out = {}
+  for (const p of params || []) {
+    if (p.type === 'float') {
+      out[p.name] = { enabled: false, kind: 'logspace', min: Math.max((p.default ?? 0.1) * 0.1, 0.001), max: Math.max((p.default ?? 1) * 10, 0.01), steps: 5, values: '' }
+    } else if (p.type === 'int') {
+      const base = p.default ?? 1
+      out[p.name] = { enabled: false, kind: 'linspace', min: Math.max(1, Math.round(base / 2)), max: Math.max(base * 2, base + 4), steps: 5, values: '' }
+    } else if (p.type === 'bool') {
+      out[p.name] = { enabled: false, kind: 'list', values: 'true, false' }
+    } else {
+      out[p.name] = { enabled: false, kind: 'list', values: String(p.default ?? '') }
+    }
+  }
+  return out
+}
+
 const algorithmOptions = computed(() => [
   { label: 'All algorithms', value: null },
   ...registry.value.map(a => ({ label: `${a.algorithm} (${FAMILY_LABEL[a.family] ?? a.family})`, value: a.algorithm }))
@@ -50,12 +115,45 @@ const filteredRows = computed(() =>
 // ---- Dialog (create + edit) ----
 const dialogVisible = ref(false)
 const editingId = ref(null)
-const form = ref({ name: '', algorithm: null, target: '', features: '', hyperparams: {} })
+const form = ref({
+  name: '',
+  algorithm: null,
+  hyperparams: {},
+  trainSplit: 80,
+  scaler: 'none',
+  cvSearch: { mode: 'none', folds: 5, nIter: 20, scoring: 'roc_auc' },
+  paramGrid: {}
+})
 const saving = ref(false)
 
 const selectedAlgoMeta = computed(() =>
   registry.value.find(a => a.algorithm === form.value.algorithm) || null
 )
+
+const formSearchableParams = computed(() => selectedAlgoMeta.value?.params ?? [])
+
+const enabledParamCount = computed(() =>
+  Object.values(form.value.paramGrid).filter(v => v?.enabled).length
+)
+
+const combinationCount = computed(() => {
+  if (form.value.cvSearch.mode === 'none') return 0
+  const sizes = Object.values(form.value.paramGrid)
+    .filter(v => v.enabled)
+    .map(v => expandValues(v).length)
+    .filter(n => n > 0)
+  if (!sizes.length) return 0
+  const product = sizes.reduce((a, b) => a * b, 1)
+  return form.value.cvSearch.mode === 'random' ? Math.min(product, form.value.cvSearch.nIter) : product
+})
+
+const gridIncomplete = computed(() =>
+  form.value.cvSearch.mode !== 'none' && enabledParamCount.value > 0 &&
+  Object.values(form.value.paramGrid).some(v => v.enabled && expandValues(v).length === 0)
+)
+
+const defaultScoringForFamily = (family) =>
+  family === 'classification' ? 'roc_auc' : 'r2'
 
 watch(() => form.value.algorithm, (algo, prev) => {
   if (algo === prev) return
@@ -63,16 +161,22 @@ watch(() => form.value.algorithm, (algo, prev) => {
   form.value.hyperparams = meta
     ? meta.params.reduce((acc, p) => (acc[p.name] = p.default, acc), {})
     : {}
+  form.value.paramGrid = buildDefaultGrid(meta?.params ?? [])
+  form.value.cvSearch.scoring = defaultScoringForFamily(meta?.family)
 })
 
 const openCreate = (presetAlgorithm = null) => {
   editingId.value = null
+  const algo = presetAlgorithm || algorithmFilter.value || null
+  const meta = registry.value.find(a => a.algorithm === algo)
   form.value = {
     name: '',
-    algorithm: presetAlgorithm || algorithmFilter.value || null,
-    target: '',
-    features: '',
-    hyperparams: {}
+    algorithm: algo,
+    hyperparams: {},
+    trainSplit: 80,
+    scaler: 'none',
+    cvSearch: { mode: 'none', folds: 5, nIter: 20, scoring: defaultScoringForFamily(meta?.family) },
+    paramGrid: {}
   }
   dialogVisible.value = true
 }
@@ -80,13 +184,22 @@ const openCreate = (presetAlgorithm = null) => {
 const openEdit = (cfg) => {
   editingId.value = cfg.id
   const params = cfg.hyperparams_json ? JSON.parse(cfg.hyperparams_json) : {}
-  const featureCols = cfg.feature_cols_json ? JSON.parse(cfg.feature_cols_json) : []
+  const searchCfg = cfg.search_config_json ? JSON.parse(cfg.search_config_json) : null
   form.value = {
     name: cfg.name,
     algorithm: cfg.algorithm,
-    target: cfg.target_col ?? '',
-    features: featureCols.join(', '),
-    hyperparams: params
+    hyperparams: params,
+    trainSplit: Math.round((cfg.train_split ?? 0.8) * 100),
+    scaler: cfg.scaler ?? 'none',
+    cvSearch: {
+      mode: searchCfg?.mode ?? 'none',
+      folds: searchCfg?.folds ?? 5,
+      nIter: searchCfg?.nIter ?? 20,
+      scoring: searchCfg?.scoring ?? 'roc_auc'
+    },
+    paramGrid: searchCfg?.paramGrid ?? buildDefaultGrid(
+      registry.value.find(a => a.algorithm === cfg.algorithm)?.params ?? []
+    )
   }
   dialogVisible.value = true
 }
@@ -102,9 +215,16 @@ const saveConfig = async () => {
   const body = {
     name: form.value.name,
     algorithm: form.value.algorithm,
-    target_col: form.value.target,
-    feature_cols: form.value.features ? form.value.features.split(',').map(s => s.trim()).filter(Boolean) : [],
-    hyperparams: form.value.hyperparams
+    hyperparams: form.value.hyperparams,
+    train_split: form.value.trainSplit / 100,
+    scaler: form.value.scaler === 'none' ? null : form.value.scaler,
+    search_config: form.value.cvSearch.mode !== 'none' ? {
+      mode: form.value.cvSearch.mode,
+      folds: form.value.cvSearch.folds,
+      nIter: form.value.cvSearch.nIter,
+      scoring: form.value.cvSearch.scoring,
+      paramGrid: form.value.paramGrid
+    } : null
   }
   try {
     if (editingId.value) {
@@ -274,12 +394,12 @@ onMounted(() => {
     </div>
 
     <!-- Create / Edit dialog -->
-    <Dialog v-model:visible="dialogVisible" modal :style="{ width: '32rem' }" :draggable="false">
+    <Dialog v-model:visible="dialogVisible" modal :style="{ width: 'min(56rem, 90vw)' }" :draggable="false">
       <template #header>
         <div class="text-lg font-semibold">{{ editingId ? 'Edit Configuration' : 'New Configuration' }}</div>
       </template>
 
-      <div class="flex flex-column gap-4">
+      <div class="flex flex-column gap-4" style="max-height: 70vh; overflow-y: auto; padding-right: 0.25rem">
         <div class="flex flex-column gap-1">
           <label class="font-medium text-sm">Config Name</label>
           <InputText v-model="form.name" placeholder="e.g. PD_LR_2024_Q4" class="w-full" />
@@ -297,16 +417,6 @@ onMounted(() => {
             :disabled="!!editingId"
           />
           <span v-if="selectedAlgoMeta" class="text-xs text-color-secondary mt-1">{{ selectedAlgoMeta.description }}</span>
-        </div>
-
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Target Column</label>
-          <InputText v-model="form.target" placeholder="e.g. default_flag" class="w-full" />
-        </div>
-
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Feature Columns <span class="text-color-secondary font-normal">(comma-separated)</span></label>
-          <Textarea v-model="form.features" rows="2" placeholder="e.g. pd_estimate, lgd, ead, rating, sector" class="w-full" />
         </div>
 
         <div v-if="selectedAlgoMeta" class="flex flex-column gap-2">
@@ -333,6 +443,172 @@ onMounted(() => {
             />
             <InputSwitch v-else-if="p.type === 'bool'" v-model="form.hyperparams[p.name]" />
             <span v-if="p.description" class="text-xs text-color-secondary">{{ p.description }}</span>
+          </div>
+        </div>
+
+        <Divider />
+
+        <!-- Data Split -->
+        <div class="flex flex-column gap-1">
+          <label class="font-medium text-sm">Data Split</label>
+          <div class="flex w-full border-round overflow-hidden text-xs font-semibold text-white" style="height: 2rem">
+            <div
+              class="flex align-items-center justify-content-center"
+              :style="{ width: form.trainSplit + '%', background: 'var(--primary-color)' }"
+            >Train · {{ form.trainSplit }}%</div>
+            <div
+              class="flex align-items-center justify-content-center"
+              :style="{ width: (100 - form.trainSplit) + '%', background: 'var(--surface-400)' }"
+            >Val · {{ 100 - form.trainSplit }}%</div>
+          </div>
+          <div class="flex flex-wrap align-items-center gap-2 mt-1">
+            <SelectButton v-model="form.trainSplit" :options="SPLIT_PRESETS" optionLabel="label" optionValue="value" :allowEmpty="false" />
+            <InputNumber
+              v-model="form.trainSplit"
+              :min="50"
+              :max="95"
+              suffix="%"
+              showButtons
+              buttonLayout="horizontal"
+              :step="1"
+              decrementButtonClass="p-button-secondary"
+              incrementButtonClass="p-button-secondary"
+              inputClass="w-3rem text-center"
+              class="ml-auto"
+            />
+          </div>
+        </div>
+
+        <Divider />
+
+        <!-- Feature Scaler -->
+        <div class="flex flex-column gap-1">
+          <label class="font-medium text-sm">Feature Scaler</label>
+          <SelectButton v-model="form.scaler" :options="SCALER_OPTIONS" optionLabel="label" optionValue="value" :allowEmpty="false" />
+        </div>
+
+        <Divider />
+
+        <!-- Hyperparameter Search -->
+        <div class="flex flex-column gap-2">
+          <label class="font-medium text-sm">Hyperparameter Search</label>
+          <SelectButton v-model="form.cvSearch.mode" :options="SEARCH_OPTIONS" optionLabel="label" optionValue="value" :allowEmpty="false" />
+          <div v-if="form.cvSearch.mode !== 'none'" class="flex flex-column gap-3">
+            <div class="flex gap-3">
+              <div class="flex flex-column gap-1 flex-1">
+                <label class="text-xs text-color-secondary uppercase">CV Folds</label>
+                <InputNumber v-model="form.cvSearch.folds" :min="2" :max="20" showButtons :useGrouping="false" />
+              </div>
+              <div v-if="form.cvSearch.mode === 'random'" class="flex flex-column gap-1 flex-1">
+                <label class="text-xs text-color-secondary uppercase">n_iter</label>
+                <InputNumber v-model="form.cvSearch.nIter" :min="1" :max="500" showButtons :useGrouping="false" />
+              </div>
+              <div class="flex flex-column gap-1 flex-1">
+                <label class="text-xs text-color-secondary uppercase">Scoring</label>
+                <Dropdown v-model="form.cvSearch.scoring" :options="SCORING_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+              </div>
+            </div>
+
+            <!-- Parameter grid table -->
+            <div v-if="!form.algorithm" class="text-xs text-color-secondary">Select an algorithm first.</div>
+            <div v-else>
+              <div class="flex align-items-center justify-content-between mb-1">
+                <span class="text-xs font-semibold uppercase text-color-secondary">Parameter Ranges</span>
+                <span class="text-xs text-color-secondary">{{ enabledParamCount }} of {{ formSearchableParams.length }} enabled · {{ combinationCount.toLocaleString() }} combos</span>
+              </div>
+              <div class="surface-ground border-round overflow-hidden">
+                <table class="w-full text-sm" style="border-collapse: collapse">
+                  <thead>
+                    <tr class="text-xs uppercase text-color-secondary">
+                      <th class="text-left p-2" style="width:2.5rem"></th>
+                      <th class="text-left p-2">Parameter</th>
+                      <th class="text-left p-2" style="width:6rem">Mode</th>
+                      <th class="text-left p-2">Range / Values</th>
+                      <th class="text-right p-2" style="width:4rem">#</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="p in formSearchableParams"
+                      :key="p.name"
+                      class="border-top-1 surface-border"
+                      :class="form.paramGrid[p.name]?.enabled ? '' : 'opacity-60'"
+                    >
+                      <td class="p-2 text-center">
+                        <Checkbox v-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].enabled" :binary="true" />
+                      </td>
+                      <td class="p-2">
+                        <div class="font-mono text-xs text-primary">{{ p.name }}</div>
+                        <div class="text-xs text-color-secondary">{{ p.type }} · {{ p.default ?? 'null' }}</div>
+                      </td>
+                      <td class="p-2">
+                        <Dropdown
+                          v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int')"
+                          v-model="form.paramGrid[p.name].kind"
+                          :options="NUMERIC_DIST"
+                          optionLabel="label"
+                          optionValue="value"
+                          :disabled="!form.paramGrid[p.name]?.enabled"
+                          class="w-full"
+                        />
+                        <Tag v-else value="values" severity="secondary" class="text-xs" />
+                      </td>
+                      <td class="p-2">
+                        <template v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int') && form.paramGrid[p.name].kind !== 'list'">
+                          <div class="flex align-items-center gap-1">
+                            <InputNumber
+                              v-model="form.paramGrid[p.name].min"
+                              :disabled="!form.paramGrid[p.name]?.enabled"
+                              :useGrouping="false"
+                              :maxFractionDigits="p.type === 'float' ? 6 : 0"
+                              placeholder="min"
+                              inputClass="text-xs"
+                              class="flex-1"
+                            />
+                            <span class="text-color-secondary">→</span>
+                            <InputNumber
+                              v-model="form.paramGrid[p.name].max"
+                              :disabled="!form.paramGrid[p.name]?.enabled"
+                              :useGrouping="false"
+                              :maxFractionDigits="p.type === 'float' ? 6 : 0"
+                              placeholder="max"
+                              inputClass="text-xs"
+                              class="flex-1"
+                            />
+                            <InputNumber
+                              v-model="form.paramGrid[p.name].steps"
+                              :disabled="!form.paramGrid[p.name]?.enabled"
+                              :min="2"
+                              :max="50"
+                              :useGrouping="false"
+                              showButtons
+                              buttonLayout="horizontal"
+                              decrementButtonClass="p-button-secondary p-button-text"
+                              incrementButtonClass="p-button-secondary p-button-text"
+                              inputClass="text-xs w-2rem text-center"
+                              v-tooltip.top="'steps'"
+                            />
+                          </div>
+                        </template>
+                        <InputText
+                          v-else-if="form.paramGrid[p.name]"
+                          v-model="form.paramGrid[p.name].values"
+                          :disabled="!form.paramGrid[p.name]?.enabled"
+                          class="w-full text-xs"
+                          placeholder="comma-separated"
+                        />
+                      </td>
+                      <td class="p-2 text-right text-xs font-mono text-color-secondary">
+                        {{ form.paramGrid[p.name]?.enabled ? expandValues(form.paramGrid[p.name]).length : '—' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-if="gridIncomplete" class="mt-2">
+                <Tag value="Some ranges are invalid" severity="danger" icon="pi pi-times-circle" />
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -48,6 +48,13 @@ def create_config():
     except ValidationError as e:
         return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
 
+    train_split = float(body.get("train_split", 0.8))
+    scaler = body.get("scaler") or None
+    search_config_raw = body.get("search_config")
+    search_config_json_val = (
+        json.dumps(search_config_raw) if search_config_raw else None
+    )
+
     with app_session() as session:
         cfg = ModelConfig(
             name=body["name"],
@@ -56,6 +63,9 @@ def create_config():
             hyperparams_json=json.dumps(raw_params),
             feature_cols_json=json.dumps(body.get("feature_cols", [])),
             target_col=body.get("target_col", ""),
+            train_split=train_split,
+            scaler=scaler,
+            search_config_json=search_config_json_val,
             created_by=get_jwt_identity(),
         )
         session.add(cfg)
@@ -93,7 +103,9 @@ def update_config(config_id):
         try:
             plugin_cls.param_schema(**raw_params)
         except ValidationError as e:
-            return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
+            return jsonify(
+                {"error": "Invalid hyperparameters", "detail": e.errors()}
+            ), 422
 
         if "name" in body:
             cfg.name = body["name"]
@@ -104,6 +116,14 @@ def update_config(config_id):
             cfg.feature_cols_json = json.dumps(body["feature_cols"])
         if "target_col" in body:
             cfg.target_col = body["target_col"]
+        if "train_split" in body:
+            cfg.train_split = float(body["train_split"])
+        if "scaler" in body:
+            cfg.scaler = body.get("scaler") or None
+        if "search_config" in body:
+            cfg.search_config_json = (
+                json.dumps(body["search_config"]) if body["search_config"] else None
+            )
         session.add(cfg)
         session.flush()
         result = cfg.to_dict()

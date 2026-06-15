@@ -1,3 +1,11 @@
+- [x] Target and features variables should be set during calibration, not as part of model configuration
+- [x] Add more plots for Diagnosis of regression model
+
+
+- [x] data split, scaler, hyperparameter search should be part of model configurations instead of being set in calibration
+- [x] Confirm if Forecast is currently static. If so, connect it to the workflow
+- [x] In All Jobs page, remove DURATION column, instead showing STARTED and FINISHED
+
 Datasets page
 - [x] "All", "Upload", "Live Query" filters should be grouped into a dropdown (default to "All")
 - [x] Redesign individual dataset's page when click "View": some components are not well aligned, the data's text size is too small
@@ -10,7 +18,7 @@ Algorithm Catalog
 
 Saved Configurations
 - [x] deleted configuration still exists
-- [x] add ability to edit each configuration
+- [x] add ability to edit each configuration (fix NULL model_config_id error on save)
 - [x] Bulk delete saved configurations
 - [x] Remove New Configuration button in Saved Configurations page
 
