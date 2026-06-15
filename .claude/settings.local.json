@@ -3,7 +3,8 @@
     "allow": [
       "Bash(docker compose *)",
       "Bash(docker run *)",
-      "Bash(ruff check *)"
+      "Bash(ruff check *)",
+      "Bash(ruff format *)"
     ]
   }
 }

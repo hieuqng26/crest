@@ -1,30 +1,33 @@
 import numpy as np
 from pydantic import BaseModel, Field
-from sklearn.ensemble import GradientBoostingClassifier as _GBC
+from sklearn.ensemble import RandomForestClassifier as _RFC
 
 from project.core.model_registry.base import BaseMLModel
 from project.core.model_registry.diagnostics import classification_diagnostics
 
 
-class GradientBoostingParams(BaseModel):
+class RandomForestParams(BaseModel):
     n_estimators: int = Field(default=100, ge=10)
-    learning_rate: float = Field(default=0.1, gt=0)
-    max_depth: int = Field(default=3, ge=1)
+    max_depth: int | None = Field(default=None)
+    min_samples_split: int = Field(default=2, ge=2)
+    max_features: str = Field(default="sqrt", description="sqrt | log2 | auto")
 
 
-class GradientBoostingPlugin(BaseMLModel):
+class RandomForestPlugin(BaseMLModel):
     family = "ensemble"
-    algorithm = "GradientBoosting"
-    param_schema = GradientBoostingParams
+    algorithm = "RandomForest"
+    param_schema = RandomForestParams
 
     def __init__(self):
-        self._model: _GBC | None = None
+        self._model: _RFC | None = None
 
-    def fit(self, X, y, params: GradientBoostingParams) -> None:
-        self._model = _GBC(
+    def fit(self, X, y, params: RandomForestParams) -> None:
+        self._model = _RFC(
             n_estimators=params.n_estimators,
-            learning_rate=params.learning_rate,
             max_depth=params.max_depth,
+            min_samples_split=params.min_samples_split,
+            max_features=params.max_features,
+            random_state=42,
         )
         self._model.fit(X, y)
 

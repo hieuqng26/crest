@@ -5,11 +5,44 @@ from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
     f1_score,
+    mean_absolute_error,
+    mean_squared_error,
     precision_score,
+    r2_score,
     recall_score,
     roc_auc_score,
     roc_curve,
 )
+
+
+def regression_diagnostics(y, y_pred, coef, intercept) -> dict:
+    """Shared diagnostics for all regression plugins (OLS, Lasso, ElasticNet, Ridge)."""
+    resid = y - y_pred
+    r2 = float(r2_score(y, y_pred))
+    mae = float(mean_absolute_error(y, y_pred))
+    rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
+
+    nonzero = y != 0
+    mape = (
+        float(np.mean(np.abs(resid[nonzero] / y[nonzero])) * 100)
+        if nonzero.any()
+        else None
+    )
+
+    coef_table = [
+        {"feature": f"f{i}", "coef": float(c)}
+        for i, c in enumerate(coef)
+    ]
+
+    return {
+        "r2": r2,
+        "mae": mae,
+        "rmse": rmse,
+        **({"mape": mape} if mape is not None else {}),
+        "intercept": float(intercept),
+        "coef_table": coef_table,
+        "residuals": [round(float(r), 6) for r in resid],
+    }
 
 
 def classification_diagnostics(y, y_prob, model, X) -> dict:

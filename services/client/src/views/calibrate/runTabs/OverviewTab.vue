@@ -31,7 +31,11 @@ const scalarMetrics = computed(() => {
 })
 
 const featureImportance = computed(() => valMetrics.value?.feature_importance ?? [])
+const coefTable = computed(() => valMetrics.value?.coef_table ?? [])
 const hasFeatureImportance = computed(() => featureImportance.value.length > 0)
+const hasCoefTable = computed(() => coefTable.value.length > 0)
+
+const maxAbsCoef = computed(() => Math.max(...coefTable.value.map(f => Math.abs(f.coef)), 1))
 
 const metaRows = computed(() => [
   { label: 'Configuration',  value: props.run.config_name  || '—' },
@@ -114,11 +118,9 @@ const metaRows = computed(() => [
       </div>
     </div>
 
-    <!-- Feature importance / coefficients -->
+    <!-- Feature importance (tree/ensemble models) -->
     <div v-if="hasFeatureImportance" class="surface-card border-round shadow-1 p-4">
-      <span class="text-xs font-semibold uppercase text-color-secondary block mb-3" style="letter-spacing: 0.06em">
-        Feature importance / coefficients
-      </span>
+      <span class="text-xs font-semibold uppercase text-color-secondary block mb-3" style="letter-spacing: 0.06em">Feature Importance</span>
       <div class="flex flex-column gap-2">
         <div
           v-for="f in [...featureImportance].sort((a, b) => b.importance - a.importance)"
@@ -127,13 +129,41 @@ const metaRows = computed(() => [
         >
           <span class="font-mono text-xs text-color-secondary" style="min-width: 10rem; text-align: right">{{ f.feature }}</span>
           <div class="flex-1 surface-ground border-round overflow-hidden" style="height: 8px">
-            <div
-              class="h-full border-round"
-              style="background: var(--primary-color); transition: width 400ms ease"
-              :style="{ width: (f.importance * 100).toFixed(1) + '%' }"
-            />
+            <div class="h-full border-round" style="background: #60a5fa; transition: width 400ms ease" :style="{ width: (f.importance * 100).toFixed(1) + '%' }" />
           </div>
           <span class="font-mono text-xs" style="min-width: 4rem">{{ f.importance.toFixed(4) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coefficients (linear models: OLS, Lasso, ElasticNet, Ridge) -->
+    <div v-if="hasCoefTable" class="surface-card border-round shadow-1 p-4">
+      <span class="text-xs font-semibold uppercase text-color-secondary block mb-3" style="letter-spacing: 0.06em">Coefficients</span>
+      <div class="flex flex-column gap-2">
+        <div
+          v-for="f in [...coefTable].sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef))"
+          :key="f.feature"
+          class="flex align-items-center gap-3"
+        >
+          <span class="font-mono text-xs text-color-secondary" style="min-width: 10rem; text-align: right">{{ f.feature }}</span>
+          <!-- centre-anchored bar: negative goes left, positive goes right -->
+          <div class="flex-1 flex align-items-center" style="height: 8px; position: relative">
+            <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--surface-400)" />
+            <div
+              style="position:absolute;height:100%;border-radius:2px;transition:width 400ms ease"
+              :style="{
+                width: (Math.abs(f.coef) / maxAbsCoef * 50).toFixed(1) + '%',
+                left:  f.coef >= 0 ? '50%' : undefined,
+                right: f.coef <  0 ? '50%' : undefined,
+                background: f.coef >= 0 ? '#34d399' : '#f87171',
+              }"
+            />
+          </div>
+          <span
+            class="font-mono text-xs"
+            style="min-width: 5rem; text-align: right"
+            :style="{ color: f.coef >= 0 ? '#34d399' : '#f87171' }"
+          >{{ f.coef >= 0 ? '+' : '' }}{{ f.coef.toFixed(4) }}</span>
         </div>
       </div>
     </div>

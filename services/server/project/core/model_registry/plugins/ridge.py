@@ -10,7 +10,7 @@ class RidgeParams(BaseModel):
 
 
 class RidgePlugin(BaseMLModel):
-    family = "timeseries"
+    family = "regression"
     algorithm = "Ridge"
     param_schema = RidgeParams
 

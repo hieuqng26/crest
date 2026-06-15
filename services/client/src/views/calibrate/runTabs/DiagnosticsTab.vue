@@ -62,6 +62,23 @@ const fiData = computed(() => {
   }
 })
 
+const coefData = computed(() => {
+  const ct = diag.value?.coef_table
+  if (!ct?.length) return null
+  const sorted = [...ct].sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef)).slice(0, 20)
+  return {
+    labels: sorted.map(f => f.feature),
+    datasets: [{
+      label: 'Coefficient',
+      data: sorted.map(f => f.coef),
+      backgroundColor: sorted.map(f => f.coef >= 0 ? 'rgba(52,211,153,0.75)' : 'rgba(248,113,113,0.75)'),
+      borderColor:     sorted.map(f => f.coef >= 0 ? '#34d399' : '#f87171'),
+      borderWidth: 1,
+      borderRadius: 3,
+    }]
+  }
+})
+
 const cm = computed(() => diag.value?.confusion_matrix ?? null)
 
 const cmTotal = computed(() => {
@@ -109,12 +126,18 @@ const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%
       </div>
     </div>
 
-    <!-- Feature importance + Confusion matrix -->
+    <!-- Feature importance / Coefficients + Confusion matrix -->
     <div class="charts-grid">
       <div v-if="fiData" class="chart-card">
         <div class="chart-title">Feature Importance</div>
         <div class="chart-body">
           <Chart type="bar" :data="fiData" :options="{ ...chartBase, indexAxis: 'y' }" style="height:100%;width:100%" />
+        </div>
+      </div>
+      <div v-else-if="coefData" class="chart-card">
+        <div class="chart-title">Coefficients <span style="font-weight:400;color:var(--text-color-secondary);font-size:0.72rem">(sorted by magnitude · green = positive · red = negative)</span></div>
+        <div class="chart-body">
+          <Chart type="bar" :data="coefData" :options="{ ...chartBase, indexAxis: 'y', plugins: { ...chartBase.plugins, legend: { display: false } } }" style="height:100%;width:100%" />
         </div>
       </div>
 

@@ -282,10 +282,11 @@ def run_calibration(self, run_id: str):
             # --- 6. Diagnostics ---
             diag = plugin.diagnostics(X_val, y_val)
             # Patch placeholder feature names (f0, f1…) with actual column names
-            if "feature_importance" in diag and feature_cols:
-                for i, entry in enumerate(diag["feature_importance"]):
-                    if i < len(feature_cols):
-                        entry["feature"] = feature_cols[i]
+            for key in ("feature_importance", "coef_table"):
+                if key in diag and feature_cols:
+                    for i, entry in enumerate(diag[key]):
+                        if i < len(feature_cols):
+                            entry["feature"] = feature_cols[i]
 
             y_train_pred = plugin.predict(X_train)
             try:

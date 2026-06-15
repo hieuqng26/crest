@@ -1,18 +1,32 @@
 from project.core.model_registry.base import BaseMLModel
 from project.core.model_registry.plugins.arima import ARIMAPlugin
+from project.core.model_registry.plugins.elastic_net import ElasticNetPlugin
 from project.core.model_registry.plugins.glm_binomial import GLMBinomialPlugin
 from project.core.model_registry.plugins.gradient_boosting import GradientBoostingPlugin
+from project.core.model_registry.plugins.lasso import LassoPlugin
+from project.core.model_registry.plugins.linear_regression import LinearRegressionPlugin
 from project.core.model_registry.plugins.logistic_regression import (
     LogisticRegressionPlugin,
 )
+from project.core.model_registry.plugins.random_forest import RandomForestPlugin
 from project.core.model_registry.plugins.ridge import RidgePlugin
+from project.core.model_registry.plugins.svm import SVMPlugin
 
 REGISTRY: dict[str, type[BaseMLModel]] = {
+    # Classification
     "LogisticRegression": LogisticRegressionPlugin,
-    "GradientBoosting": GradientBoostingPlugin,
-    "ARIMA": ARIMAPlugin,
-    "Ridge": RidgePlugin,
     "GLM_Binomial": GLMBinomialPlugin,
+    "SVM": SVMPlugin,
+    # Ensemble
+    "GradientBoosting": GradientBoostingPlugin,
+    "RandomForest": RandomForestPlugin,
+    # Regression
+    "LinearRegression": LinearRegressionPlugin,
+    "Ridge": RidgePlugin,
+    "Lasso": LassoPlugin,
+    "ElasticNet": ElasticNetPlugin,
+    # Time Series
+    "ARIMA": ARIMAPlugin,
 }
 
 

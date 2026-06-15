@@ -1,4 +1,3 @@
-
 import numpy as np
 from pydantic import BaseModel, Field
 from sklearn.linear_model import LogisticRegression as _LR

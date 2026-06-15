@@ -5,7 +5,8 @@ Datasets page
 
 Algorithm Catalog
 - [x] Rename to Model Catalog
-- Add regression models
+- [x] Reclassify some models in the catalog: GradientBoosting should be Ensemble, Ridge should be Regression
+- [x] Add a few more commonly used models: Lasso, ElasticNet, SVM, RandomForest, etc
 
 Saved Configurations
 - [x] deleted configuration still exists
