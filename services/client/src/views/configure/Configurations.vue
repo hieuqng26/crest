@@ -451,14 +451,14 @@ onMounted(() => {
         <!-- Data Split -->
         <div class="flex flex-column gap-1">
           <label class="font-medium text-sm">Data Split</label>
-          <div class="flex w-full border-round overflow-hidden text-xs font-semibold text-white" style="height: 2rem">
+          <div class="flex w-full border-round overflow-hidden text-xs font-semibold" style="height: 2rem">
             <div
               class="flex align-items-center justify-content-center"
-              :style="{ width: form.trainSplit + '%', background: 'var(--primary-color)' }"
+              :style="{ width: form.trainSplit + '%', background: 'var(--primary-color)', color: 'var(--primary-color-text)' }"
             >Train · {{ form.trainSplit }}%</div>
             <div
               class="flex align-items-center justify-content-center"
-              :style="{ width: (100 - form.trainSplit) + '%', background: 'var(--surface-400)' }"
+              :style="{ width: (100 - form.trainSplit) + '%', background: 'var(--surface-400)', color: 'var(--text-color)' }"
             >Val · {{ 100 - form.trainSplit }}%</div>
           </div>
           <div class="flex flex-wrap align-items-center gap-2 mt-1">

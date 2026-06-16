@@ -1,17 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import router from '@/router'
 import { useToast } from 'primevue/usetoast'
 import { useStore } from 'vuex'
 import { useRoute } from 'vue-router'
-import { useLayout } from '@/layout/composables/layout'
 
-const { layoutConfig } = useLayout()
-const logoUrl = computed(() =>
-  layoutConfig.darkTheme.value
-    ? '/layout/images/logo-ey.svg'
-    : '/layout/images/logo-ey-dark.svg'
-)
+const logoUrl = '/layout/images/logo-ey.svg'
 const appName = import.meta.env.VITE_APP_NAME
 const store = useStore()
 const toast = useToast()

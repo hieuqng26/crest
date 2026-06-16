@@ -1,13 +1,5 @@
 <script setup>
-import { computed } from 'vue'
-import { useLayout } from '@/layout/composables/layout'
-
-const { layoutConfig } = useLayout()
-const logoUrl = computed(() =>
-  layoutConfig.darkTheme.value
-    ? '/layout/images/logo-ey.svg'
-    : '/layout/images/logo-ey-dark.svg'
-)
+const logoUrl = '/layout/images/logo-ey.svg'
 </script>
 <script setup></script>
 

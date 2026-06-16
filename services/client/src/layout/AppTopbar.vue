@@ -1,6 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { usePrimeVue } from 'primevue/config'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useLayout } from '@/layout/composables/layout'
 import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
@@ -17,21 +16,12 @@ const store = useStore()
 const toast = useToast()
 const currentUser = store.getters.getCurrentUser
 const user = ref(currentUser)
-const $primevue = usePrimeVue()
 
 const appName = import.meta.env.VITE_APP_NAME
 
-const op = ref()
+const { onMenuToggle } = useLayout()
 
-// Theme
-const { layoutConfig, onMenuToggle } = useLayout()
-
-// Logo flips with dark mode: white EY mark on dark backgrounds.
-const logoUrl = computed(() =>
-  layoutConfig.darkTheme.value
-    ? '/layout/images/logo-ey.svg'
-    : '/layout/images/logo-ey-dark.svg'
-)
+const logoUrl = '/layout/images/logo-ey.svg'
 const outsideClickListener = ref(null)
 const topbarMenuActive = ref(false)
 
@@ -82,22 +72,6 @@ const isOutsideClicked = (event) => {
     !topbarEl.isSameNode(event.target) &&
     !topbarEl.contains(event.target)
   )
-}
-
-const onChangeTheme = (theme, mode) => {
-  $primevue.changeTheme(layoutConfig.theme.value, theme, 'theme-css', () => {
-    layoutConfig.theme.value = theme
-    layoutConfig.darkTheme.value = mode
-  })
-}
-
-const toggleDarkModeChange = () => {
-  layoutConfig.darkTheme.value = !layoutConfig.darkTheme.value
-  const newThemeName = layoutConfig.darkTheme.value
-    ? layoutConfig.theme.value.replace('light', 'dark')
-    : layoutConfig.theme.value.replace('dark', 'light')
-
-  onChangeTheme(newThemeName, layoutConfig.darkTheme.value)
 }
 
 const logout = () => {
@@ -177,9 +151,9 @@ const toggleMenu = (event) => {
   <div class="layout-topbar">
     <router-link to="/" class="layout-topbar-logo">
       <img :src="logoUrl" alt="logo" />
-      <div class="flex flex-column ml-2" style="line-height: 1.2">
-        <span class="text-lg font-semibold">{{ appName }}</span>
-        <span class="text-xs text-color-secondary" style="letter-spacing: 0.02em">Credit Risk & Economic Stress Testing</span>
+      <div class="brand-text">
+        <span class="brand-name">{{ appName }}</span>
+        <span class="brand-tagline">Credit Risk &amp; Economic Stress Testing</span>
       </div>
     </router-link>
 
@@ -197,21 +171,6 @@ const toggleMenu = (event) => {
       <i class="pi pi-ellipsis-v"></i>
     </button>
     <div class="layout-topbar-menu" :class="topbarMenuClasses">
-      <button
-        class="p-link layout-topbar-button"
-        :class="
-          layoutConfig.darkTheme.value
-            ? 'text-white bg-gray-900 hover:bg-gray-700'
-            : ''
-        "
-        type="button"
-        @click="toggleDarkModeChange()"
-      >
-        <i
-          class="pi"
-          :class="layoutConfig.darkTheme.value ? 'pi-moon' : 'pi-sun'"
-        ></i>
-      </button>
       <router-link
         v-if="!store.getters.isAuthenticated"
         to="/auth/login"
@@ -276,6 +235,24 @@ const toggleMenu = (event) => {
 </template>
 
 <style lang="scss" scoped>
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  margin-left: 0.625rem;
+  line-height: 1.15;
+}
+.brand-name {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-color);
+}
+.brand-tagline {
+  font-size: 0.6875rem;
+  color: var(--text-color-secondary);
+  letter-spacing: 0.02em;
+}
+
 .notification-button {
   display: inline-flex;
   justify-content: center;
