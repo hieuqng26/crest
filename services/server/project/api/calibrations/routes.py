@@ -91,20 +91,29 @@ def list_runs():
 @jwt_required()
 def create_run():
     body = request.get_json(silent=True) or {}
-    dataset_id = body.get("dataset_id")
+    # Accept either dataset_ids (list) or the legacy dataset_id scalar
+    dataset_ids = body.get("dataset_ids") or []
+    if not dataset_ids:
+        primary_id = body.get("dataset_id")
+        if primary_id:
+            dataset_ids = [int(primary_id)]
+    dataset_ids = [int(i) for i in dataset_ids]
+    if not dataset_ids:
+        return jsonify({"error": "Missing: dataset_ids"}), 400
+
     model_config_id = body.get("model_config_id")
-    if not dataset_id:
-        return jsonify({"error": "Missing: dataset_id"}), 400
     if not model_config_id:
         return jsonify({"error": "Missing: model_config_id"}), 400
 
-    ds = Dataset.query.get(int(dataset_id))
+    ds = Dataset.query.get(dataset_ids[0])
     cfg = ModelConfig.query.get(int(model_config_id))
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
     if not cfg:
         return jsonify({"error": "ModelConfig not found"}), 404
 
+    secondary_ids = dataset_ids[1:]
+    merge_steps = body.get("merge_steps") or []
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
 
@@ -143,6 +152,8 @@ def create_run():
             scaler=cfg.scaler,
             target_col=target_col,
             feature_cols_json=json.dumps(feature_cols),
+            secondary_dataset_ids_json=json.dumps(secondary_ids) if secondary_ids else None,
+            merge_steps_json=json.dumps(merge_steps) if merge_steps else None,
         )
         session.add(run)
         session.flush()

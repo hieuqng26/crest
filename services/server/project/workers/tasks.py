@@ -200,6 +200,8 @@ def run_calibration(self, run_id: str):
         scaler_name = initial.scaler
         initial_target_col = initial.target_col
         initial_feature_cols_json = initial.feature_cols_json
+        secondary_dataset_ids = json.loads(initial.secondary_dataset_ids_json or "[]")
+        merge_steps = json.loads(initial.merge_steps_json or "[]")
 
         try:
             # --- 1. Mark running ---
@@ -244,6 +246,45 @@ def run_calibration(self, run_id: str):
                 run_id, 20, f"Loaded {len(df):,} rows · {len(df.columns)} columns"
             )
 
+            # --- 2b. Merge secondary datasets ---
+            if secondary_dataset_ids and merge_steps:
+                for step_idx, sec_id in enumerate(secondary_dataset_ids):
+                    sec_ds = Dataset.query.get(sec_id)
+                    if not sec_ds or not sec_ds.file_path:
+                        raise ValueError(f"Secondary dataset {sec_id} not found or has no file")
+                    sec_bytes = storage.download_bytes(sec_ds.file_path.split("/", 1)[-1])
+                    sec_ext = sec_ds.file_path.rsplit(".", 1)[-1].lower()
+                    sec_buf = io.BytesIO(sec_bytes)
+                    if sec_ext == "csv":
+                        sec_df = pd.read_csv(sec_buf)
+                    elif sec_ext == "xlsx":
+                        sec_df = pd.read_excel(sec_buf)
+                    elif sec_ext == "parquet":
+                        sec_df = pd.read_parquet(sec_buf)
+                    else:
+                        raise ValueError(f"Unsupported file type for secondary dataset: {sec_ext}")
+
+                    step = merge_steps[step_idx] if step_idx < len(merge_steps) else {}
+                    merge_type = step.get("type", "inner")
+                    join_keys = step.get("on") or []
+
+                    if merge_type == "union":
+                        shared_cols = [c for c in df.columns if c in sec_df.columns]
+                        df = pd.concat([df[shared_cols], sec_df[shared_cols]], ignore_index=True)
+                    else:
+                        how = merge_type if merge_type in ("inner", "left", "outer", "right") else "inner"
+                        if not join_keys:
+                            raise ValueError(
+                                f"Merge step {step_idx + 1}: no join keys specified for {how} join"
+                            )
+                        df = df.merge(sec_df, on=join_keys, how=how)
+
+                    _write_progress(
+                        run_id,
+                        20 + step_idx + 1,
+                        f"Merged dataset {sec_ds.name} ({merge_type}) → {len(df):,} rows · {len(df.columns)} cols",
+                    )
+
             # --- 3. Feature prep ---
             feature_cols = feature_cols_json or [
                 c for c in df.columns if c != target_col
@@ -251,9 +292,17 @@ def run_calibration(self, run_id: str):
             X = df[feature_cols].select_dtypes(include=[np.number]).values
             y = df[target_col].values
 
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=round(1.0 - train_split_ratio, 4), random_state=42
+            # Split by index so metadata rows stay aligned with val predictions
+            idx = np.arange(len(df))
+            idx_train, idx_val = train_test_split(
+                idx, test_size=round(1.0 - train_split_ratio, 4), random_state=42
             )
+            X_train, X_val = X[idx_train], X[idx_val]
+            y_train, y_val = y[idx_train], y[idx_val]
+
+            # Metadata = every column that isn't a feature and isn't the target
+            meta_cols = [c for c in df.columns if c not in feature_cols and c != target_col]
+            df_val_meta = df.iloc[idx_val][meta_cols].reset_index(drop=True)
 
             scaler = _get_scaler(scaler_name)
             if scaler:
@@ -348,6 +397,16 @@ def run_calibration(self, run_id: str):
                                     float(v) if v is not None else None
                                     for v in y_val_pred.tolist()
                                 ],
+                                "meta": {
+                                    col: [
+                                        v if (v is None or isinstance(v, (str, bool))) else (
+                                            float(v) if isinstance(v, float) else
+                                            int(v) if isinstance(v, (int, np.integer)) else str(v)
+                                        )
+                                        for v in df_val_meta[col].tolist()
+                                    ]
+                                    for col in meta_cols
+                                },
                             }
                         ),
                     )

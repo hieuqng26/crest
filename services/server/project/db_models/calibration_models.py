@@ -106,6 +106,8 @@ class CalibrationRun(db.Model):
     scaler = db.Column(db.String(32), nullable=True)
     target_col = db.Column(db.String(255), nullable=True)
     feature_cols_json = db.Column(db.Text, nullable=True)
+    secondary_dataset_ids_json = db.Column(db.Text, nullable=True)  # JSON list of int IDs
+    merge_steps_json = db.Column(db.Text, nullable=True)  # JSON list of {type, on}
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True

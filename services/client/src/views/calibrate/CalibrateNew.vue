@@ -136,7 +136,7 @@ const launch = async () => {
   submitting.value = true
   try {
     const { data } = await calibrationsAPI.create({
-      dataset_id:      selectedDatasetIds.value[0],
+      dataset_ids:     selectedDatasetIds.value,
       model_config_id: selectedConfig.value,
       merge_steps:     mergeSteps.value,
       target_col:      targetCol.value,
