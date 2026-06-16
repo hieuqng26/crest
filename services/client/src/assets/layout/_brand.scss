@@ -154,8 +154,11 @@ code, kbd, pre, .font-mono {
 }
 .layout-menu ul a.active-route {
   color: var(--text-color) !important;
-  background-color: rgba(255, 230, 0, 0.06);
+  background-color: rgba(255, 230, 0, 0.06) !important;
   font-weight: 600 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border: none !important;
 }
 .layout-menu ul a.active-route::before {
   content: '';
@@ -164,6 +167,13 @@ code, kbd, pre, .font-mono {
   width: 3px; height: 50%;
   background: var(--primary-color);
   border-radius: 999px;
+}
+/* Kill PrimeVue focus ring on all menu links */
+.layout-menu ul a:focus,
+.layout-menu ul a:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
