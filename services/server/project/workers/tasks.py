@@ -286,11 +286,21 @@ def run_calibration(self, run_id: str):
                     )
 
             # --- 3. Feature prep ---
-            feature_cols = feature_cols_json or [
+            candidate_cols = feature_cols_json or [
                 c for c in df.columns if c != target_col
             ]
-            X = df[feature_cols].select_dtypes(include=[np.number]).values
+            X_df = df[candidate_cols].select_dtypes(include=[np.number])
+            # Update feature_cols to only the columns that actually went into X
+            # (non-numeric columns are silently dropped by select_dtypes)
+            feature_cols = list(X_df.columns)
+            X = X_df.values
             y = df[target_col].values
+
+            # Metadata = every column not actually used as a feature and not the target
+            # This captures client_id, date, sector, country, and any merged identifier columns
+            meta_col_set = set(feature_cols) | {target_col}
+            meta_cols = [c for c in df.columns if c not in meta_col_set]
+            df_val_meta = df[meta_cols]  # sliced to idx_val below after split
 
             # Split by index so metadata rows stay aligned with val predictions
             idx = np.arange(len(df))
@@ -299,10 +309,7 @@ def run_calibration(self, run_id: str):
             )
             X_train, X_val = X[idx_train], X[idx_val]
             y_train, y_val = y[idx_train], y[idx_val]
-
-            # Metadata = every column that isn't a feature and isn't the target
-            meta_cols = [c for c in df.columns if c not in feature_cols and c != target_col]
-            df_val_meta = df.iloc[idx_val][meta_cols].reset_index(drop=True)
+            df_val_meta = df_val_meta.iloc[idx_val].reset_index(drop=True)
 
             scaler = _get_scaler(scaler_name)
             if scaler:
