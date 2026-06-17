@@ -61,8 +61,6 @@ def create_config():
             family=REGISTRY[algorithm].family,
             algorithm=algorithm,
             hyperparams_json=json.dumps(raw_params),
-            feature_cols_json=json.dumps(body.get("feature_cols", [])),
-            target_col=body.get("target_col", ""),
             train_split=train_split,
             scaler=scaler,
             search_config_json=search_config_json_val,
@@ -112,10 +110,6 @@ def update_config(config_id):
         cfg.algorithm = algorithm
         cfg.family = REGISTRY[algorithm].family
         cfg.hyperparams_json = json.dumps(raw_params)
-        if "feature_cols" in body:
-            cfg.feature_cols_json = json.dumps(body["feature_cols"])
-        if "target_col" in body:
-            cfg.target_col = body["target_col"]
         if "train_split" in body:
             cfg.train_split = float(body["train_split"])
         if "scaler" in body:

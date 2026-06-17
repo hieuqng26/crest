@@ -38,9 +38,13 @@ const router = createRouter({
         { path: '/forecast/:run_id', name: 'forecast_run', component: () => import('@/views/forecast/ForecastRedirect.vue'), meta: { requiresAuth: true } },
 
         // Credit Risk
+        { path: '/credit-risk/new',       name: 'credit_risk_new',  component: () => import('@/views/credit_risk/CreditRiskNew.vue'),     meta: { requiresAuth: true } },
+        { path: '/credit-risk/jobs',      name: 'credit_risk_jobs', component: () => import('@/views/credit_risk/CreditRiskJobs.vue'),    meta: { requiresAuth: true } },
+        { path: '/credit-risk/runs/:run_id', name: 'credit_risk_run', component: () => import('@/views/credit_risk/CreditRiskRunView.vue'), meta: { requiresAuth: true } },
         { path: '/credit-risk/ecl',         name: 'credit_risk_ecl',         component: () => import('@/views/credit_risk/CreditRiskECL.vue'),         meta: { requiresAuth: true } },
         { path: '/credit-risk/pd-lgd',      name: 'credit_risk_pd_lgd',      component: () => import('@/views/credit_risk/CreditRiskPdLgd.vue'),        meta: { requiresAuth: true } },
         { path: '/credit-risk/transitions', name: 'credit_risk_transitions',  component: () => import('@/views/credit_risk/CreditRiskTransitions.vue'),  meta: { requiresAuth: true } },
+        { path: '/credit-risk/data',        name: 'credit_risk_data',         component: () => import('@/views/credit_risk/CreditRiskData.vue'),          meta: { requiresAuth: true } },
 
         // System
         { path: '/uam', name: 'uam', component: () => import('@/views/users/UAM.vue'), meta: { requiresAuth: true } },

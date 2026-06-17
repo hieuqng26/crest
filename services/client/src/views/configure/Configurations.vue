@@ -105,7 +105,7 @@ const filteredRows = computed(() =>
     (!algorithmFilter.value || c.algorithm === algorithmFilter.value) &&
     (!familyFilter.value || algoFamily(c.algorithm) === familyFilter.value) &&
     (!filters.value.global.value ||
-      ['name', 'algorithm', 'target_col', 'created_by'].some(f =>
+      ['name', 'algorithm', 'created_by'].some(f =>
         String(c[f] ?? '').toLowerCase().includes(filters.value.global.value.toLowerCase())
       )
     )
@@ -364,18 +364,19 @@ onMounted(() => {
         <Column field="name" header="Name" sortable />
         <Column header="Algorithm" sortable sortField="algorithm">
           <template #body="{ data }">
-            <div class="flex align-items-center gap-2">
-              <span class="font-mono text-xs">{{ data.algorithm }}</span>
-              <Tag
-                v-if="algoFamily(data.algorithm)"
-                :value="FAMILY_LABEL[algoFamily(data.algorithm)]"
-                :severity="FAMILY_SEVERITY[algoFamily(data.algorithm)]"
-                class="text-xs"
-              />
-            </div>
+            <span class="font-mono text-sm">{{ data.algorithm }}</span>
           </template>
         </Column>
-        <Column field="target_col" header="Target" sortable />
+        <Column header="Family" sortable :sortField="(d) => algoFamily(d.algorithm)">
+          <template #body="{ data }">
+            <Tag
+              v-if="algoFamily(data.algorithm)"
+              :value="FAMILY_LABEL[algoFamily(data.algorithm)]"
+              :severity="FAMILY_SEVERITY[algoFamily(data.algorithm)]"
+              class="text-xs"
+            />
+          </template>
+        </Column>
         <Column field="created_by" header="Created By" sortable />
         <Column field="created_at" header="Date" sortable style="width:12rem">
           <template #body="{ data }">{{ fmtDate(data.created_at) }}</template>
@@ -442,69 +443,82 @@ onMounted(() => {
               fluid
             />
             <InputSwitch v-else-if="p.type === 'bool'" v-model="form.hyperparams[p.name]" />
-            <span v-if="p.description" class="text-xs text-color-secondary">{{ p.description }}</span>
+            <span v-if="p.description && p.description !== p.name" class="text-xs text-color-secondary">{{ p.description }}</span>
           </div>
         </div>
 
         <Divider />
 
         <!-- Data Split -->
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Data Split</label>
-          <div class="flex w-full border-round overflow-hidden text-xs font-semibold" style="height: 2rem">
-            <div
-              class="flex align-items-center justify-content-center"
-              :style="{ width: form.trainSplit + '%', background: 'var(--primary-color)', color: 'var(--primary-color-text)' }"
-            >Train · {{ form.trainSplit }}%</div>
-            <div
-              class="flex align-items-center justify-content-center"
-              :style="{ width: (100 - form.trainSplit) + '%', background: 'var(--surface-400)', color: 'var(--text-color)' }"
-            >Val · {{ 100 - form.trainSplit }}%</div>
+        <div class="flex flex-column gap-2">
+          <label class="section-label">Data Split</label>
+          <Slider
+            v-model="form.trainSplit"
+            :min="50" :max="95" :step="1"
+            class="split-slider"
+          />
+          <div class="flex align-items-center justify-content-between text-xs text-color-secondary mt-1">
+            <span><span class="dot dot-train" /> Train · <span class="font-semibold text-color">{{ form.trainSplit }}%</span></span>
+            <span><span class="dot dot-val" /> Val · <span class="font-semibold text-color">{{ 100 - form.trainSplit }}%</span></span>
           </div>
-          <div class="flex flex-wrap align-items-center gap-2 mt-1">
-            <SelectButton v-model="form.trainSplit" :options="SPLIT_PRESETS" optionLabel="label" optionValue="value" :allowEmpty="false" />
-            <InputNumber
-              v-model="form.trainSplit"
-              :min="50"
-              :max="95"
-              suffix="%"
-              showButtons
-              buttonLayout="horizontal"
-              :step="1"
-              decrementButtonClass="p-button-secondary"
-              incrementButtonClass="p-button-secondary"
-              inputClass="w-3rem text-center"
-              class="ml-auto"
-            />
+          <div class="seg-group mt-1">
+            <button
+              v-for="o in SPLIT_PRESETS"
+              :key="o.value"
+              type="button"
+              class="seg-pill"
+              :class="{ 'is-active': form.trainSplit === o.value }"
+              @click="form.trainSplit = o.value"
+            >{{ o.label }}</button>
           </div>
         </div>
 
         <Divider />
 
         <!-- Feature Scaler -->
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Feature Scaler</label>
-          <SelectButton v-model="form.scaler" :options="SCALER_OPTIONS" optionLabel="label" optionValue="value" :allowEmpty="false" />
+        <div class="flex flex-column gap-2">
+          <label class="section-label">Feature Scaler</label>
+          <div class="seg-group">
+            <button
+              v-for="o in SCALER_OPTIONS"
+              :key="o.value"
+              type="button"
+              class="seg-pill"
+              :class="{ 'is-active': form.scaler === o.value }"
+              @click="form.scaler = o.value"
+            >{{ o.label }}</button>
+          </div>
         </div>
 
         <Divider />
 
         <!-- Hyperparameter Search -->
-        <div class="flex flex-column gap-2">
-          <label class="font-medium text-sm">Hyperparameter Search</label>
-          <SelectButton v-model="form.cvSearch.mode" :options="SEARCH_OPTIONS" optionLabel="label" optionValue="value" :allowEmpty="false" />
+        <div class="flex flex-column gap-3">
+          <label class="section-label">Hyperparameter Search</label>
+          <div class="seg-group">
+            <button
+              v-for="o in SEARCH_OPTIONS"
+              :key="o.value"
+              type="button"
+              class="seg-pill"
+              :class="{ 'is-active': form.cvSearch.mode === o.value }"
+              @click="form.cvSearch.mode = o.value"
+            >{{ o.label }}</button>
+          </div>
           <div v-if="form.cvSearch.mode !== 'none'" class="flex flex-column gap-3">
             <div class="flex gap-3">
               <div class="flex flex-column gap-1 flex-1">
-                <label class="text-xs text-color-secondary uppercase">CV Folds</label>
-                <InputNumber v-model="form.cvSearch.folds" :min="2" :max="20" showButtons :useGrouping="false" />
+                <label class="text-xs text-color-secondary uppercase tracking-wide">CV Folds</label>
+                <InputNumber v-model="form.cvSearch.folds" :min="2" :max="20" showButtons buttonLayout="stacked" :useGrouping="false"
+                  decrementButtonClass="num-btn" incrementButtonClass="num-btn" inputClass="num-input" />
               </div>
               <div v-if="form.cvSearch.mode === 'random'" class="flex flex-column gap-1 flex-1">
-                <label class="text-xs text-color-secondary uppercase">n_iter</label>
-                <InputNumber v-model="form.cvSearch.nIter" :min="1" :max="500" showButtons :useGrouping="false" />
+                <label class="text-xs text-color-secondary uppercase tracking-wide">n_iter</label>
+                <InputNumber v-model="form.cvSearch.nIter" :min="1" :max="500" showButtons buttonLayout="stacked" :useGrouping="false"
+                  decrementButtonClass="num-btn" incrementButtonClass="num-btn" inputClass="num-input" />
               </div>
               <div class="flex flex-column gap-1 flex-1">
-                <label class="text-xs text-color-secondary uppercase">Scoring</label>
+                <label class="text-xs text-color-secondary uppercase tracking-wide">Scoring</label>
                 <Dropdown v-model="form.cvSearch.scoring" :options="SCORING_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
               </div>
             </div>
@@ -555,39 +569,37 @@ onMounted(() => {
                       </td>
                       <td class="p-2">
                         <template v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int') && form.paramGrid[p.name].kind !== 'list'">
-                          <div class="flex align-items-center gap-1">
+                          <div class="flex align-items-center gap-2">
                             <InputNumber
                               v-model="form.paramGrid[p.name].min"
                               :disabled="!form.paramGrid[p.name]?.enabled"
                               :useGrouping="false"
                               :maxFractionDigits="p.type === 'float' ? 6 : 0"
                               placeholder="min"
-                              inputClass="text-xs"
+                              inputClass="range-input"
                               class="flex-1"
                             />
-                            <span class="text-color-secondary">→</span>
+                            <span class="text-color-secondary text-xs">→</span>
                             <InputNumber
                               v-model="form.paramGrid[p.name].max"
                               :disabled="!form.paramGrid[p.name]?.enabled"
                               :useGrouping="false"
                               :maxFractionDigits="p.type === 'float' ? 6 : 0"
                               placeholder="max"
-                              inputClass="text-xs"
+                              inputClass="range-input"
                               class="flex-1"
                             />
+                            <span class="text-xs text-color-secondary">in</span>
                             <InputNumber
                               v-model="form.paramGrid[p.name].steps"
                               :disabled="!form.paramGrid[p.name]?.enabled"
                               :min="2"
                               :max="50"
                               :useGrouping="false"
-                              showButtons
-                              buttonLayout="horizontal"
-                              decrementButtonClass="p-button-secondary p-button-text"
-                              incrementButtonClass="p-button-secondary p-button-text"
-                              inputClass="text-xs w-2rem text-center"
-                              v-tooltip.top="'steps'"
+                              inputClass="step-input"
+                              v-tooltip.top="'Steps'"
                             />
+                            <span class="text-xs text-color-secondary">steps</span>
                           </div>
                         </template>
                         <InputText
@@ -625,3 +637,115 @@ onMounted(() => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-color-secondary);
+}
+
+/* Segmented pill control */
+.seg-group {
+  display: inline-flex;
+  align-self: flex-start;
+  width: fit-content;
+  background: var(--surface-ground);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.seg-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--text-color-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  font-variant-numeric: tabular-nums;
+}
+.seg-pill:hover { color: var(--text-color); }
+.seg-pill.is-active {
+  background: var(--surface-card);
+  color: var(--text-color);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.dot-train { background: var(--primary-color); }
+.dot-val { background: var(--surface-400); }
+
+/* Data split slider — slim flat look */
+.split-slider :deep(.p-slider) {
+  background: var(--surface-ground);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  height: 6px;
+}
+.split-slider :deep(.p-slider-range) {
+  background: var(--primary-color);
+  border-radius: 999px;
+}
+.split-slider :deep(.p-slider-handle) {
+  width: 16px;
+  height: 16px;
+  background: var(--primary-color);
+  border: 2px solid var(--surface-card);
+  margin-top: -7px;
+  margin-left: -8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 120ms ease;
+}
+.split-slider :deep(.p-slider-handle:hover) {
+  transform: scale(1.15);
+}
+.split-slider :deep(.p-slider-handle:focus) { box-shadow: 0 0 0 3px rgba(255, 230, 0, 0.25); }
+
+/* Parameter range row inputs */
+:deep(.range-input) {
+  font-size: 0.8125rem;
+  padding: 6px 8px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+:deep(.step-input) {
+  width: 3.25rem;
+  font-size: 0.875rem;
+  padding: 6px 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tone down InputNumber spinner buttons (num-btn class) */
+:deep(.num-btn) {
+  background: var(--surface-ground) !important;
+  color: var(--text-color-secondary) !important;
+  border: 1px solid var(--surface-border) !important;
+  border-left: 0 !important;
+  width: 1.8rem !important;
+  box-shadow: none !important;
+}
+:deep(.num-btn:hover) {
+  background: var(--surface-border) !important;
+  color: var(--text-color) !important;
+}
+:deep(.num-btn:focus) { box-shadow: none !important; outline: none !important; }
+:deep(.num-input) {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+</style>

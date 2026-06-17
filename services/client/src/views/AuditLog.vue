@@ -1,338 +1,166 @@
 <template>
-  <div>
-    <Card>
-      <template #title>Search Criteria</template>
-      <template #content>
-        <div class="flex justify-content-center gap-5 mt-2">
-          <div class="w-full">
-            <label for="dateFromSelect" class="font-bold block mb-2"
-              >Date From</label
-            >
-            <Calendar
-              inputID="dateFromSelect"
-              v-model="dateFrom"
-              showIcon
-              iconDisplay="input"
-              class="w-full"
-            />
-          </div>
+  <div class="p-5 mx-auto" style="max-width: 1400px">
+    <!-- Header -->
+    <header class="mb-5">
+      <h1 class="text-3xl font-semibold m-0 tracking-tight">Audit Logs</h1>
+      <p class="text-color-secondary text-sm m-0 mt-1">Search and export system activity records.</p>
+    </header>
 
-          <div class="w-full">
-            <label for="dateToSelect" class="font-bold block mb-2"
-              >Date To</label
-            >
-            <Calendar
-              inputID="dateToSelect"
-              v-model="dateTo"
-              showIcon
-              iconDisplay="input"
-              class="w-full"
-            />
-          </div>
+    <!-- Filters panel -->
+    <div class="panel mb-4">
+      <div class="panel-section-label mb-3">Search Criteria</div>
 
-          <div class="w-full">
-            <label for="userEmailInput" class="font-bold block mb-2"
-              >User ID</label
-            >
-            <InputText
-              type="text"
-              inputID="userEmailInput"
-              v-model="userEmailInput"
-              class="w-full"
-            />
-          </div>
+      <div class="grid-filters mb-4">
+        <div class="filter-field">
+          <label class="field-label">Date From</label>
+          <Calendar v-model="dateFrom" showIcon iconDisplay="input" class="w-full" />
         </div>
-        <div class="flex justify-content-center gap-5 mt-5">
-          <div class="w-full">
-            <label for="moduleSelect" class="font-bold block mb-2"
-              >Module</label
-            >
-            <MultiSelect
-              inputID="moduleSelect"
-              v-model="selectedModules"
-              :loading="loadingDD"
-              :options="moduleOptions"
-              :filter="moduleOptions.length >= 5"
-              placeholder="Please Select"
-              :maxSelectedLabels="3"
-              class="w-full"
-            />
-          </div>
-
-          <div class="w-full">
-            <label for="submoduleSelect" class="font-bold block mb-2"
-              >Sub-Module</label
-            >
-            <MultiSelect
-              inputID="submoduleSelect"
-              v-model="selectedSubmodules"
-              :loading="loadingDD"
-              :options="submoduleOptions"
-              :filter="submoduleOptions.length >= 5"
-              placeholder="Please Select"
-              :maxSelectedLabels="3"
-              class="w-full"
-            />
-          </div>
-
-          <div class="w-full">
-            <label for="actionSelect" class="font-bold block mb-2"
-              >Action</label
-            >
-            <MultiSelect
-              inputID="actionSelect"
-              v-model="selectedActions"
-              :loading="loadingDD"
-              :options="actionOptions"
-              :filter="actionOptions.length >= 5"
-              placeholder="Please Select"
-              :maxSelectedLabels="3"
-              class="w-full"
-            />
-          </div>
+        <div class="filter-field">
+          <label class="field-label">Date To</label>
+          <Calendar v-model="dateTo" showIcon iconDisplay="input" class="w-full" />
         </div>
-        <div class="w-6 flex justify-content-start mt-5">
-          <div class="w-full">
-            <label for="sortDD" class="font-bold block mb-2">Sort By</label>
-            <div inputID="sortDD">
-              <Dropdown
-                v-model="selectedSortColumn"
-                :options="searchColumns"
-                :loading="loadingTable && searchColumns.length === 0"
-                :filter="true"
-                showClear
-                class="w-3"
-              />
-              <ToggleButton
-                v-model="selectedSortOrder"
-                :onLabel="''"
-                :offLabel="''"
-                onIcon="pi pi-sort-amount-up"
-                offIcon="pi pi-sort-amount-down"
-                class="w-1 ml-2"
-              />
-            </div>
-          </div>
+        <div class="filter-field">
+          <label class="field-label">User ID</label>
+          <InputText v-model="userEmailInput" class="w-full" />
         </div>
-        <div class="flex justify-content-begin mt-5">
-          <Button
-            label="Apply filters"
-            aria-label="confirm"
-            @click="onConfirmSelect"
+        <div class="filter-field">
+          <label class="field-label">Module</label>
+          <MultiSelect
+            v-model="selectedModules"
+            :loading="loadingDD"
+            :options="moduleOptions"
+            :filter="moduleOptions.length >= 5"
+            placeholder="All"
+            :maxSelectedLabels="3"
+            class="w-full"
           />
         </div>
-      </template>
-    </Card>
-    <div class="card mt-4">
-      <Skeleton v-if="loadingTable" width="100%" height="150px"></Skeleton>
-      <DataTable
-        v-else
-        v-if="filteredLogs.length"
-        ref="dt"
-        :value="filteredLogs"
-        dataKey="log_id"
-        :sortField="sortColumn ? null : 'timestamp'"
-        :sortOrder="-1"
-        removableSort
-        :rowHover="true"
-      >
-        <!-- Header -->
-        <template #header>
-          <div
-            class="flex flex-wrap gap-2 align-items-center justify-content-between"
+        <div class="filter-field">
+          <label class="field-label">Sub-Module</label>
+          <MultiSelect
+            v-model="selectedSubmodules"
+            :loading="loadingDD"
+            :options="submoduleOptions"
+            :filter="submoduleOptions.length >= 5"
+            placeholder="All"
+            :maxSelectedLabels="3"
+            class="w-full"
+          />
+        </div>
+        <div class="filter-field">
+          <label class="field-label">Action</label>
+          <MultiSelect
+            v-model="selectedActions"
+            :loading="loadingDD"
+            :options="actionOptions"
+            :filter="actionOptions.length >= 5"
+            placeholder="All"
+            :maxSelectedLabels="3"
+            class="w-full"
+          />
+        </div>
+      </div>
+
+      <div class="flex align-items-end gap-3">
+        <div class="filter-field" style="min-width: 16rem">
+          <label class="field-label">Sort By</label>
+          <div class="flex align-items-center gap-2">
+            <Dropdown
+              v-model="selectedSortColumn"
+              :options="searchColumns"
+              :loading="loadingTable && searchColumns.length === 0"
+              :filter="true"
+              showClear
+              class="flex-1"
+            />
+            <button
+              class="sort-dir-btn"
+              :title="selectedSortOrder ? 'Ascending' : 'Descending'"
+              @click="selectedSortOrder = !selectedSortOrder"
+            >
+              <i :class="selectedSortOrder ? 'pi pi-sort-amount-up' : 'pi pi-sort-amount-down'" />
+            </button>
+          </div>
+        </div>
+        <Button label="Apply filters" icon="pi pi-filter" severity="secondary" outlined @click="onConfirmSelect" />
+      </div>
+    </div>
+
+    <!-- Results panel -->
+    <div class="panel">
+      <Skeleton v-if="loadingTable" width="100%" height="150px" />
+
+      <template v-else-if="filteredLogs.length">
+        <div class="bare-table">
+          <DataTable
+            ref="dt"
+            :value="filteredLogs"
+            dataKey="log_id"
+            :sortField="sortColumn ? null : 'timestamp'"
+            :sortOrder="-1"
+            :rowHover="true"
+            class="bare-table-inner"
           >
-            <h5 class="m-0 p-0 text-color-secondary">
-              Search Result (showing {{ currentPage * pageSize + 1 }} to
-              {{ currentPage * pageSize + filteredLogs.length }} out of
-              {{ totalSize }} entries)
-            </h5>
-          </div>
-        </template>
+            <template #header>
+              <div class="flex align-items-center justify-content-between pb-2">
+                <span class="text-xs text-color-secondary">
+                  Showing {{ currentPage * pageSize + 1 }}–{{ currentPage * pageSize + filteredLogs.length }} of {{ totalSize }} entries
+                </span>
+                <Button
+                  icon="pi pi-download"
+                  label="Export"
+                  size="small"
+                  text
+                  class="export-btn"
+                  @click="exportMenu.toggle($event)"
+                />
+                <Menu ref="exportMenu" :model="downloadOptions" popup />
+              </div>
+            </template>
 
-        <!-- Main Columns -->
-        <!-- Main Columns -->
-        <Column
-          field="timestamp"
-          header="Last Update"
-          :sortable="false"
-          style="min-width: 18rem"
-        >
-          <template #body="slotProps">
-            {{ formatDate(slotProps.data.timestamp, true) }}
-          </template>
-        </Column>
-        <Column
-          field="user_email"
-          header="User ID"
-          :sortable="false"
-          style="min-width: 12rem"
-        ></Column>
-        <Column
-          field="role"
-          header="Role"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="action"
-          header="Action"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="log_id"
-          header="Identifier"
-          :sortable="false"
-          style="min-width: 14rem"
-        ></Column>
-        <Column
-          field="module"
-          header="Module"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="submodule"
-          header="Submodule"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="status"
-          header="Status"
-          :sortable="false"
-          style="min-width: 8rem"
-        >
-          <template #body="slotProps">
-            <Tag
-              :value="slotProps.data.status"
-              :severity="getStatusLabel(slotProps.data.status)"
-            />
-          </template>
-        </Column>
-        <Column
-          field="ip_address"
-          header="IP Address"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="ip_address2"
-          header="IP Address2"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="ip_address3"
-          header="IP Address3"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="description"
-          header="Description"
-          :sortable="false"
-          style="min-width: 20rem"
-        ></Column>
-        <Column
-          field="device_info"
-          header="Device Info"
-          :sortable="false"
-          style="min-width: 20rem"
-        ></Column>
-        <Column
-          field="session_id"
-          header="Session ID"
-          :sortable="false"
-          style="min-width: 20rem"
-        ></Column>
-        <Column
-          field="login_time"
-          header="Last Login"
-          :sortable="false"
-          style="min-width: 18rem"
-        >
-          <template #body="slotProps">
-            {{ formatDate(slotProps.data.login_time, true) }}
-          </template>
-        </Column>
-        <Column
-          field="logout_time"
-          header="Last Logout"
-          :sortable="false"
-          style="min-width: 18rem"
-        >
-          <template #body="slotProps">
-            {{ formatDate(slotProps.data.logout_time, true) }}
-          </template>
-        </Column>
-        <Column
-          field="login_type"
-          header="Login Type"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="api_endpoints"
-          header="API Endpoint"
-          :sortable="false"
-          style="min-width: 20rem"
-        ></Column>
-        <Column
-          field="database_involved"
-          header="Database Involved"
-          :sortable="false"
-          style="min-width: 12rem"
-        ></Column>
-        <Column
-          field="application_version"
-          header="Application Version"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="error_codes"
-          header="Error Code"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="job_id"
-          header="Job ID"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="job_judged_by"
-          header="Approver/Rejector"
-          :sortable="false"
-          style="min-width: 8rem"
-        ></Column>
-      </DataTable>
-
-      <div
-        v-if="totalSize"
-        class="flex justify-content-between align-items-center mt-4"
-      >
-        <div>
-          <SplitButton
-            label="Save"
-            icon="pi pi-check"
-            menuButtonIcon="pi pi-download"
-            outlined
-            :model="downloadOptions"
-            @click="download"
-          />
+            <Column field="timestamp"    header="Last Update"         :sortable="false" style="min-width: 14rem">
+              <template #body="{ data }">{{ formatDate(data.timestamp, true) }}</template>
+            </Column>
+            <Column field="user_email"   header="User ID"             :sortable="false" style="min-width: 12rem" />
+            <Column field="role"         header="Role"                :sortable="false" style="min-width: 7rem" />
+            <Column field="action"       header="Action"              :sortable="false" style="min-width: 8rem" />
+            <Column field="log_id"       header="Identifier"          :sortable="false" style="min-width: 13rem" />
+            <Column field="module"       header="Module"              :sortable="false" style="min-width: 7rem" />
+            <Column field="submodule"    header="Submodule"           :sortable="false" style="min-width: 8rem" />
+            <Column field="status"       header="Status"              :sortable="false" style="min-width: 7rem">
+              <template #body="{ data }">
+                <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
+              </template>
+            </Column>
+            <Column field="ip_address"   header="IP Address"          :sortable="false" style="min-width: 8rem" />
+            <Column field="ip_address2"  header="IP Address 2"        :sortable="false" style="min-width: 8rem" />
+            <Column field="ip_address3"  header="IP Address 3"        :sortable="false" style="min-width: 8rem" />
+            <Column field="description"  header="Description"         :sortable="false" style="min-width: 18rem" />
+            <Column field="device_info"  header="Device Info"         :sortable="false" style="min-width: 16rem" />
+            <Column field="session_id"   header="Session ID"          :sortable="false" style="min-width: 16rem" />
+            <Column field="login_time"   header="Last Login"          :sortable="false" style="min-width: 14rem">
+              <template #body="{ data }">{{ formatDate(data.login_time, true) }}</template>
+            </Column>
+            <Column field="logout_time"  header="Last Logout"         :sortable="false" style="min-width: 14rem">
+              <template #body="{ data }">{{ formatDate(data.logout_time, true) }}</template>
+            </Column>
+            <Column field="login_type"          header="Login Type"          :sortable="false" style="min-width: 8rem" />
+            <Column field="api_endpoints"       header="API Endpoint"        :sortable="false" style="min-width: 18rem" />
+            <Column field="database_involved"   header="Database Involved"   :sortable="false" style="min-width: 11rem" />
+            <Column field="application_version" header="App Version"         :sortable="false" style="min-width: 8rem" />
+            <Column field="error_codes"         header="Error Code"          :sortable="false" style="min-width: 8rem" />
+            <Column field="job_id"              header="Job ID"              :sortable="false" style="min-width: 8rem" />
+            <Column field="job_judged_by"       header="Approver/Rejector"   :sortable="false" style="min-width: 10rem" />
+          </DataTable>
         </div>
-        <h6 class="text-500">
-          Showing {{ currentPage * pageSize + 1 }} to
-          {{ currentPage * pageSize + filteredLogs.length }} out of
-          {{ totalSize }}
-        </h6>
 
-        <div class="flex gap-2">
-          <Dropdown v-model="selectedPerPage" :options="[20, 50, 80, 100]" />
-          <div>
+        <div class="flex justify-content-between align-items-center mt-4 pt-3" style="border-top: 1px solid var(--surface-border)">
+          <span class="text-xs text-color-secondary">
+            Showing {{ currentPage * pageSize + 1 }}–{{ currentPage * pageSize + filteredLogs.length }} of {{ totalSize }}
+          </span>
+          <div class="flex align-items-center gap-2">
+            <span class="text-xs text-color-secondary">Rows per page</span>
+            <Dropdown v-model="selectedPerPage" :options="[20, 50, 80, 100]" class="w-7rem" />
             <Paginator
               :totalRecords="totalSize"
               :perPage="pageSize"
@@ -341,6 +169,11 @@
             />
           </div>
         </div>
+      </template>
+
+      <div v-else-if="!loadingTable" class="flex flex-column align-items-center justify-content-center gap-2 py-6 text-color-secondary">
+        <i class="pi pi-list text-3xl opacity-40" />
+        <span class="text-sm">No logs found. Adjust filters and apply.</span>
       </div>
     </div>
   </div>
@@ -386,6 +219,7 @@ const COLUMN_MAP = {
 
 // refs
 const dt = ref()
+const exportMenu = ref()
 const logs = ref([])
 const filteredLogs = ref([])
 
@@ -699,3 +533,74 @@ const toDate = (date) => {
   return date ? new Date(date) : null
 }
 </script>
+
+<style scoped>
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+.panel-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-color-secondary);
+}
+
+.grid-filters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+.filter-field { display: flex; flex-direction: column; gap: 0.4rem; }
+.field-label  { font-size: 0.75rem; font-weight: 500; color: var(--text-color-secondary); }
+
+.export-btn { color: var(--text-color-secondary) !important; font-size: 0.8rem; }
+.export-btn:hover { color: var(--text-color) !important; background: var(--surface-hover) !important; }
+
+.sort-dir-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  background: var(--surface-ground);
+  color: var(--text-color-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.sort-dir-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--text-color);
+}
+
+.bare-table { margin: 0 -1.25rem; }
+:deep(.bare-table-inner .p-datatable-thead > tr > th) {
+  background: transparent;
+  color: var(--text-color-secondary);
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 0;
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0.6rem 1.25rem;
+}
+:deep(.bare-table-inner .p-datatable-tbody > tr > td) {
+  border: 0;
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0.75rem 1.25rem;
+  font-size: 0.875rem;
+}
+:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
+:deep(.bare-table-inner .p-datatable-header) {
+  background: transparent;
+  border: 0;
+  padding: 0 1.25rem 0.75rem;
+}
+</style>

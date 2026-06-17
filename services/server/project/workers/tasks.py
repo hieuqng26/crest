@@ -234,12 +234,10 @@ def run_calibration(self, run_id: str):
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
 
-            target_col = initial_target_col or cfg.target_col
+            target_col = initial_target_col or ""
             algorithm = cfg.algorithm
             raw_params = json.loads(cfg.hyperparams_json or "{}")
-            feature_cols_json = json.loads(
-                initial_feature_cols_json or cfg.feature_cols_json or "[]"
-            )
+            feature_cols_json = json.loads(initial_feature_cols_json or "[]")
             search_cfg = json.loads(search_config_json or "null")
 
             _write_progress(
@@ -251,8 +249,12 @@ def run_calibration(self, run_id: str):
                 for step_idx, sec_id in enumerate(secondary_dataset_ids):
                     sec_ds = Dataset.query.get(sec_id)
                     if not sec_ds or not sec_ds.file_path:
-                        raise ValueError(f"Secondary dataset {sec_id} not found or has no file")
-                    sec_bytes = storage.download_bytes(sec_ds.file_path.split("/", 1)[-1])
+                        raise ValueError(
+                            f"Secondary dataset {sec_id} not found or has no file"
+                        )
+                    sec_bytes = storage.download_bytes(
+                        sec_ds.file_path.split("/", 1)[-1]
+                    )
                     sec_ext = sec_ds.file_path.rsplit(".", 1)[-1].lower()
                     sec_buf = io.BytesIO(sec_bytes)
                     if sec_ext == "csv":
@@ -262,7 +264,9 @@ def run_calibration(self, run_id: str):
                     elif sec_ext == "parquet":
                         sec_df = pd.read_parquet(sec_buf)
                     else:
-                        raise ValueError(f"Unsupported file type for secondary dataset: {sec_ext}")
+                        raise ValueError(
+                            f"Unsupported file type for secondary dataset: {sec_ext}"
+                        )
 
                     step = merge_steps[step_idx] if step_idx < len(merge_steps) else {}
                     merge_type = step.get("type", "inner")
@@ -270,9 +274,15 @@ def run_calibration(self, run_id: str):
 
                     if merge_type == "union":
                         shared_cols = [c for c in df.columns if c in sec_df.columns]
-                        df = pd.concat([df[shared_cols], sec_df[shared_cols]], ignore_index=True)
+                        df = pd.concat(
+                            [df[shared_cols], sec_df[shared_cols]], ignore_index=True
+                        )
                     else:
-                        how = merge_type if merge_type in ("inner", "left", "outer", "right") else "inner"
+                        how = (
+                            merge_type
+                            if merge_type in ("inner", "left", "outer", "right")
+                            else "inner"
+                        )
                         if not join_keys:
                             raise ValueError(
                                 f"Merge step {step_idx + 1}: no join keys specified for {how} join"
@@ -360,11 +370,15 @@ def run_calibration(self, run_id: str):
             y_val_pred = plugin.predict(X_val)
             try:
                 if model_family == "classification":
-                    train_metrics = {"auc_roc": float(roc_auc_score(y_train, y_train_pred))}
+                    train_metrics = {
+                        "auc_roc": float(roc_auc_score(y_train, y_train_pred))
+                    }
                 else:
                     train_metrics = {
                         "r2": float(r2_score(y_train, y_train_pred)),
-                        "rmse": float(np.sqrt(mean_squared_error(y_train, y_train_pred))),
+                        "rmse": float(
+                            np.sqrt(mean_squared_error(y_train, y_train_pred))
+                        ),
                     }
             except Exception:
                 train_metrics = {}
@@ -406,9 +420,14 @@ def run_calibration(self, run_id: str):
                                 ],
                                 "meta": {
                                     col: [
-                                        v if (v is None or isinstance(v, (str, bool))) else (
-                                            float(v) if isinstance(v, float) else
-                                            int(v) if isinstance(v, (int, np.integer)) else str(v)
+                                        v
+                                        if (v is None or isinstance(v, (str, bool)))
+                                        else (
+                                            float(v)
+                                            if isinstance(v, float)
+                                            else int(v)
+                                            if isinstance(v, (int, np.integer))
+                                            else str(v)
                                         )
                                         for v in df_val_meta[col].tolist()
                                     ]
@@ -430,4 +449,308 @@ def run_calibration(self, run_id: str):
                     r.error_message = str(exc)
                     s.add(r)
             _write_progress(run_id, -1, f"Failed: {exc}")
+            raise
+
+
+def _cr_log(
+    cr_run_id: str, message: str, level: str = "info", progress: int | None = None
+):
+    """Write a log line for a credit risk run. Silent-fails so the task is never blocked."""
+    try:
+        from project import app_session
+        from project.db_models.credit_models import CreditRiskRun, CreditRiskRunLog
+
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        with app_session() as s:
+            s.add(
+                CreditRiskRunLog(run_id=cr_run_id, t=now, level=level, message=message)
+            )
+            if progress is not None:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                if r:
+                    r.progress = progress
+                    s.add(r)
+    except Exception as _e:
+        logger.warning(f"_cr_log failed: {_e}")
+
+
+@celery_app.task(bind=True, name="run_credit_analysis")
+def run_credit_analysis(self, cr_run_id: str):
+    app = _make_flask_app()
+    with app.app_context():
+        from project import app_session
+        from project.api.credit_risk.routes import _pd_rating_df
+        from project.core.credit_risk.ecl import compute_ecl
+        from project.core.credit_risk.kmv import run_kmv
+        from project.core.credit_risk.mock_credit import mock_kmv_forecast
+        from project.db_models.calibration_models import (
+            CalibrationRun,
+            Dataset,
+            Forecast,
+        )
+        from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
+
+        cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        if not cr:
+            logger.error(f"CreditRiskRun {cr_run_id} not found")
+            return
+
+        dataset_id = cr.dataset_id
+        cal_run_ids = json.loads(cr.cal_run_ids_json or "[]")
+        exposure = cr.exposure
+        discount_rate = cr.discount_rate
+        lifetime_horizon = cr.lifetime_horizon
+        curve = cr.curve
+
+        try:
+            # 1. Mark running
+            with app_session() as s:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                r.status = "running"
+                r.started_at = datetime.now(timezone.utc)
+                s.add(r)
+            _cr_log(cr_run_id, "Analysis started")
+
+            # 2. Load credit dataset from MinIO
+            ds = Dataset.query.get(dataset_id)
+            if not ds or not ds.file_path:
+                raise ValueError(f"Dataset {dataset_id} not found or has no file")
+            # Extract scalars before any app_session() call closes the default session
+            ds_name = ds.name
+            ds_file_path = ds.file_path
+
+            _cr_log(cr_run_id, f"Loading dataset: {ds_name}")
+            file_bytes = storage.download_bytes(ds_file_path.split("/", 1)[-1])
+            ext = ds_file_path.rsplit(".", 1)[-1].lower()
+            buf = io.BytesIO(file_bytes)
+            if ext == "csv":
+                credit_df = pd.read_csv(buf)
+            elif ext == "xlsx":
+                credit_df = pd.read_excel(buf)
+            elif ext == "parquet":
+                credit_df = pd.read_parquet(buf)
+            else:
+                raise ValueError(f"Unsupported file type: {ext}")
+
+            required = {
+                "client_id",
+                "market_cap",
+                "vol_equity",
+                "risk_free_rate",
+                "rating",
+            }
+            missing = required - set(credit_df.columns)
+            if missing:
+                raise ValueError(f"Credit dataset missing required columns: {missing}")
+
+            n_clients = len(credit_df)
+            _cr_log(cr_run_id, f"Loaded {n_clients} clients from dataset", progress=2)
+
+            # 3. Build balance sheet forecast index from all provided calibration runs.
+            #    Each recognized cal run contributes its predicted values; later entries
+            #    overwrite earlier ones for the same (client_id, year) tuple.
+            recognized = {"total_asset", "assets", "asset", "total_assets"}
+            cal_forecast_index: dict | None = None
+
+            if cal_run_ids:
+                _cr_log(
+                    cr_run_id, f"Processing {len(cal_run_ids)} calibration input(s)"
+                )
+            else:
+                _cr_log(cr_run_id, "No calibration inputs — using synthetic scenarios")
+
+            for cal_run_id in cal_run_ids:
+                cal_run = CalibrationRun.query.filter_by(run_id=cal_run_id).first()
+                if not cal_run or cal_run.status != "success":
+                    _cr_log(
+                        cr_run_id,
+                        f"Skipping cal run {cal_run_id[:8]}… (not found or not successful)",
+                        level="warn",
+                    )
+                    continue
+                # Extract all needed scalars before any _cr_log call closes the session
+                cal_run_db_id = cal_run.id
+                target_col = cal_run.target_col or ""
+                if target_col.lower() not in recognized:
+                    _cr_log(
+                        cr_run_id,
+                        f"Skipping cal run {cal_run_id[:8]}… (target_col={target_col!r} not a balance sheet variable)",
+                        level="warn",
+                    )
+                    continue
+                _cr_log(
+                    cr_run_id,
+                    f"Using cal run {cal_run_id[:8]}… (target_col={target_col})",
+                )
+                cal_forecasts = Forecast.query.filter_by(
+                    calibration_run_id=cal_run_db_id
+                ).all()
+                if not cal_forecasts:
+                    continue
+                # Extract forecast_json before the loop's _cr_log calls close the session
+                forecast_json_str = cal_forecasts[0].forecast_json or "{}"
+                try:
+                    fdata = json.loads(forecast_json_str)
+                    predicted = fdata.get("predicted", [])
+                    meta = fdata.get("meta", {})
+                    dates = meta.get("date", [])
+                    cids = meta.get("client_id", [])
+                    cl_vals = meta.get("CL", [])
+                    noncl_vals = meta.get("NonCL", [])
+
+                    if cal_forecast_index is None:
+                        cal_forecast_index = {}
+
+                    for i, cid in enumerate(cids):
+                        if cid not in cal_forecast_index:
+                            cal_forecast_index[cid] = []
+                        try:
+                            yr = int(pd.to_datetime(str(dates[i])).year)
+                        except Exception:
+                            yr = int(str(dates[i])[:4]) if dates else 2024
+                        ta = float(predicted[i]) if i < len(predicted) else None
+                        cl = (
+                            float(cl_vals[i])
+                            if i < len(cl_vals) and cl_vals[i] is not None
+                            else None
+                        )
+                        nc = (
+                            float(noncl_vals[i])
+                            if i < len(noncl_vals) and noncl_vals[i] is not None
+                            else None
+                        )
+                        if ta is not None:
+                            # Overwrite any existing entry for this (cid, yr)
+                            cal_forecast_index[cid] = [
+                                e for e in cal_forecast_index[cid] if e[0] != yr
+                            ]
+                            cal_forecast_index[cid].append((yr, ta, cl, nc))
+                except Exception as fe:
+                    logger.warning(
+                        f"Could not parse calibration forecast {cal_run_id} for {cr_run_id}: {fe}"
+                    )
+
+            # 4. Load PD ratings
+            pd_rating_df = _pd_rating_df(curve)
+            if pd_rating_df.empty:
+                raise ValueError("No PD ratings found — run flask db upgrade first")
+            _cr_log(
+                cr_run_id,
+                f"Loaded PD rating table ({len(pd_rating_df)} rows, curve={curve})",
+                progress=5,
+            )
+
+            # 5. Process each client
+            clients_list = credit_df.to_dict(orient="records")
+            n_clients = len(clients_list)
+            result_batch: list[CreditRiskResult] = []
+            failed_clients = 0
+
+            for idx, row in enumerate(clients_list):
+                client_id = str(row["client_id"])
+                com_info = {
+                    "E0": float(row["market_cap"]),
+                    "volE": float(row["vol_equity"]),
+                    "r": float(row["risk_free_rate"]),
+                    "rating": str(row["rating"]),
+                }
+
+                # Build forecast DataFrame — from calibration data or mock
+                if cal_forecast_index is not None and client_id in cal_forecast_index:
+                    entries = sorted(cal_forecast_index[client_id], key=lambda x: x[0])
+                    years = [e[0] for e in entries]
+                    baseline_ta = [e[1] for e in entries]
+                    baseline_cl = [
+                        e[2] if e[2] is not None else e[1] * 0.20 for e in entries
+                    ]
+                    baseline_nc = [
+                        e[3] if e[3] is not None else e[1] * 0.30 for e in entries
+                    ]
+                    rows_fc = []
+                    for scen, growth in [
+                        ("Baseline", 1.0),
+                        ("Upside", 1.02),
+                        ("Downside", 0.98),
+                    ]:
+                        for j, yr in enumerate(years):
+                            factor = growth**j
+                            ta = baseline_ta[j] * factor
+                            ratio = ta / baseline_ta[j] if baseline_ta[j] else 1.0
+                            rows_fc.append(
+                                {
+                                    "YEAR": yr,
+                                    "SCENARIO": scen,
+                                    "Total_Asset": ta,
+                                    "CL": baseline_cl[j] * ratio,
+                                    "NonCL": baseline_nc[j] * ratio,
+                                }
+                            )
+                    forecast = pd.DataFrame(rows_fc)
+                else:
+                    forecast = mock_kmv_forecast(client_id, base_year=2024, n_years=10)
+
+                try:
+                    kmv_df = run_kmv(com_info, forecast, pd_rating_df)
+                    ecl_df = compute_ecl(
+                        kmv_df, exposure, discount_rate, lifetime_horizon
+                    )
+                    kmv_records = kmv_df.where(pd.notnull(kmv_df), None).to_dict(
+                        orient="records"
+                    )
+                    ecl_records = ecl_df.where(pd.notnull(ecl_df), None).to_dict(
+                        orient="records"
+                    )
+                    result_batch.append(
+                        CreditRiskResult(
+                            run_id=cr_run_id,
+                            client_id=client_id,
+                            kmv_json=json.dumps(kmv_records),
+                            ecl_json=json.dumps(ecl_records),
+                        )
+                    )
+                except Exception as client_err:
+                    failed_clients += 1
+                    _cr_log(
+                        cr_run_id,
+                        f"Client {client_id} failed: {client_err}",
+                        level="warn",
+                    )
+
+                # Flush batch and update progress every 10 clients or at end
+                if (idx + 1) % 10 == 0 or idx == n_clients - 1:
+                    with app_session() as s:
+                        for res in result_batch:
+                            s.add(res)
+                        result_batch = []
+                    progress = round((idx + 1) / n_clients * 100)
+                    _cr_log(
+                        cr_run_id,
+                        f"Processed {idx + 1}/{n_clients} clients",
+                        progress=progress,
+                    )
+
+            # 6. Mark success
+            summary = (
+                f"Completed: {n_clients - failed_clients}/{n_clients} clients succeeded"
+            )
+            if failed_clients:
+                summary += f" ({failed_clients} failed)"
+            _cr_log(cr_run_id, summary, progress=100)
+            with app_session() as s:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                r.status = "success"
+                r.finished_at = datetime.now(timezone.utc)
+                r.progress = 100
+                s.add(r)
+
+        except Exception as exc:
+            logger.error(f"Credit risk run {cr_run_id} failed: {exc}", exc_info=True)
+            _cr_log(cr_run_id, f"Analysis failed: {exc}", level="error")
+            with app_session() as s:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                if r:
+                    r.status = "failed"
+                    r.finished_at = datetime.now(timezone.utc)
+                    r.error_message = str(exc)
+                    s.add(r)
             raise

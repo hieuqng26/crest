@@ -114,6 +114,12 @@ def create_app():
         Forecast,
         ModelConfig,
     )
+    from project.db_models.credit_models import (
+        CreditRiskResult,  # noqa: F401
+        CreditRiskRun,  # noqa: F401
+        CreditRiskRunLog,  # noqa: F401
+        PdRating,  # noqa: F401
+    )
 
     app.register_blueprint(auth, url_prefix="/api/auth")
     app.register_blueprint(user, url_prefix="/api/user")

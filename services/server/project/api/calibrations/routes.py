@@ -152,7 +152,9 @@ def create_run():
             scaler=cfg.scaler,
             target_col=target_col,
             feature_cols_json=json.dumps(feature_cols),
-            secondary_dataset_ids_json=json.dumps(secondary_ids) if secondary_ids else None,
+            secondary_dataset_ids_json=json.dumps(secondary_ids)
+            if secondary_ids
+            else None,
             merge_steps_json=json.dumps(merge_steps) if merge_steps else None,
         )
         session.add(run)

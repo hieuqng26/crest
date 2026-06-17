@@ -64,8 +64,6 @@ const form = ref({ name: '', target: '', features: '', hyperparams: {} })
 const openDrawer = () => {
   form.value = {
     name: '',
-    target: '',
-    features: '',
     hyperparams: selectedAlgorithm.value.params.reduce((acc, p) => (acc[p.name] = p.default, acc), {})
   }
   drawerVisible.value = true
@@ -82,8 +80,6 @@ const saveConfig = async () => {
     const { data } = await modelConfigsAPI.create({
       name: form.value.name,
       algorithm: selectedAlgorithm.value.algorithm,
-      target_col: form.value.target,
-      feature_cols: form.value.features ? form.value.features.split(',').map(s => s.trim()).filter(Boolean) : [],
       hyperparams: form.value.hyperparams
     })
     addConfig(data)
@@ -206,16 +202,6 @@ const goToConfigurations = () =>
           <InputText v-model="form.name" placeholder="e.g. PD_LR_2024_Q4" class="w-full" />
         </div>
 
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Target Column</label>
-          <InputText v-model="form.target" placeholder="e.g. default_flag" class="w-full" />
-        </div>
-
-        <div class="flex flex-column gap-1">
-          <label class="font-medium text-sm">Feature Columns <span class="text-color-secondary font-normal">(comma-separated)</span></label>
-          <Textarea v-model="form.features" rows="2" placeholder="e.g. pd_estimate, lgd, ead, rating, sector" class="w-full" />
-        </div>
-
         <div class="flex flex-column gap-2">
           <label class="font-medium text-sm">Hyperparameters</label>
           <div v-for="p in selectedAlgorithm.params" :key="p.name" class="flex flex-column gap-1">
@@ -239,7 +225,7 @@ const goToConfigurations = () =>
               fluid
             />
             <InputSwitch v-else-if="p.type === 'bool'" v-model="form.hyperparams[p.name]" />
-            <span v-if="p.description" class="text-xs text-color-secondary">{{ p.description }}</span>
+            <span v-if="p.description && p.description !== p.name" class="text-xs text-color-secondary">{{ p.description }}</span>
           </div>
         </div>
       </div>

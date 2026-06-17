@@ -1,122 +1,67 @@
 <template>
-  <div>
-    <div class="card">
-      <Toolbar class="mb-4">
-        <template #start>
-          <div class="flex gap-2">
-            <FileUpload
-              mode="basic"
-              name="users_upload"
-              accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-              :auto="true"
-              :custom-upload="true"
-              :choose-label="fileName ? fileName : 'Upload'"
-              @uploader="onUpload"
-            />
-            <DownloadButton :data="downloadData" :filename="'users'" />
-          </div>
-        </template>
-        <!-- <template #end>
-          <Button
-            label="New"
-            icon="pi pi-plus"
-            severity="success"
-            class="mr-2"
-            @click="onAddUser"
-          />
-        </template> -->
-      </Toolbar>
+  <div class="p-5 mx-auto" style="max-width: 1400px">
+    <!-- Page header -->
+    <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
+      <div>
+        <h1 class="text-3xl font-semibold m-0 tracking-tight">User Access Management</h1>
+        <p class="text-color-secondary text-sm m-0 mt-1">Manage platform users and their roles.</p>
+      </div>
+      <div class="flex align-items-center gap-2">
+        <input ref="fileInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" @change="onFileChange" />
+        <Button icon="pi pi-upload" label="Import" text class="action-btn" @click="fileInput.click()" />
+        <Button icon="pi pi-download" label="Export" text class="action-btn" @click="exportMenu.toggle($event)" />
+        <Menu ref="exportMenu" :model="exportOptions" popup :pt="{ label: { style: 'font-size:0.7rem' }, icon: { style: 'font-size:0.7rem' } }" />
+      </div>
+    </header>
 
-      <DataTable
-        ref="dt"
-        :value="users"
-        dataKey="id"
-        :paginator="true"
-        :rows="20"
-        :filters="filters"
-        removableSort
-        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
-        :rowsPerPageOptions="[10, 20, 50]"
-        currentPageReportTemplate="Showing {first} to {last} of {totalRecords} users"
-      >
-        <!-- Header -->
-        <template #header>
-          <div
-            class="flex flex-wrap gap-2 align-items-center justify-content-between"
-          >
-            <h4 class="m-0">Users List</h4>
-            <IconField iconPosition="left">
-              <InputIcon>
-                <i class="pi pi-search" />
-              </InputIcon>
-              <InputText
-                v-model="filters['global'].value"
-                placeholder="Search all columns"
-              />
-            </IconField>
-          </div>
-        </template>
-
-        <!-- Main Columns -->
-        <Column
-          field="email"
-          header="Email"
-          sortable
-          style="min-width: 12rem"
-        ></Column>
-        <Column
-          field="name"
-          header="Name"
-          sortable
-          style="min-width: 12rem"
-        ></Column>
-        <Column
-          field="role"
-          header="Role"
-          sortable
-          style="min-width: 8rem"
-        ></Column>
-        <Column
-          field="registered_on"
-          header="Registered Date"
-          sortable
-          style="min-width: 10rem"
+    <!-- Users table -->
+    <div class="panel">
+      <div class="bare-table">
+        <DataTable
+          ref="dt"
+          :value="users"
+          dataKey="id"
+          :paginator="true"
+          :rows="20"
+          :filters="filters"
+          removableSort
+          paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
+          :rowsPerPageOptions="[10, 20, 50]"
+          currentPageReportTemplate="Showing {first} to {last} of {totalRecords} users"
+          class="bare-table-inner"
         >
-          <template #body="slotProps">
-            {{ formatDate(slotProps.data.registered_on) }}
+          <template #header>
+            <div class="flex align-items-center justify-content-between pb-2">
+              <span class="panel-section-label">Users</span>
+              <IconField iconPosition="left">
+                <InputIcon><i class="pi pi-search" /></InputIcon>
+                <InputText v-model="filters['global'].value" placeholder="Search…" />
+              </IconField>
+            </div>
           </template>
-        </Column>
-        <Column field="status" header="Status" sortable style="min-width: 8rem">
-          <template #body="slotProps">
-            <Tag
-              :value="slotProps.data.status"
-              :severity="getStatusLabel(slotProps.data.status)"
-            />
-          </template>
-        </Column>
 
-        <!-- Actions Column -->
-        <Column :exportable="false" style="min-width: 8rem">
-          <template #body="slotProps">
-            <Button
-              icon="pi pi-pencil"
-              outlined
-              rounded
-              class="mr-2"
-              severity="info"
-              @click="onUpdateUser(slotProps.data)"
-            />
-            <Button
-              icon="pi pi-trash"
-              outlined
-              rounded
-              severity="danger"
-              @click="onDeleteUser(slotProps.data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-    </div>
+          <Column field="email"         header="Email"           sortable style="min-width: 14rem" />
+          <Column field="name"          header="Name"            sortable style="min-width: 12rem" />
+          <Column field="role"          header="Role"            sortable style="min-width: 8rem" />
+          <Column field="registered_on" header="Registered"      sortable style="min-width: 10rem">
+            <template #body="{ data }">{{ formatDate(data.registered_on) }}</template>
+          </Column>
+          <Column field="status"        header="Status"          sortable style="min-width: 8rem">
+            <template #body="{ data }">
+              <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
+            </template>
+          </Column>
+          <Column :exportable="false" style="width: 7rem">
+            <template #body="{ data }">
+              <div class="flex gap-1 justify-content-end">
+                <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" @click="onUpdateUser(data)" />
+                <Button icon="pi pi-trash"  text rounded size="small" severity="danger"    @click="onDeleteUser(data)" />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </div>
+  </div>
 
     <Dialog
       v-model:visible="showAddDialog"
@@ -322,18 +267,18 @@ import { FilterMatchMode } from 'primevue/api'
 import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
 import { formatDate } from '@/utils'
-import DownloadButton from '@/components/Button/DownloadButton.vue'
+import { saveFile } from '@/views/composables/views.js'
 
 const store = useStore()
 const toast = useToast()
 
 // refs
-const roles = ref(null)
-const dt = ref()
-const users = ref()
-
-const fileName = ref(null)
-const loading = ref(false)
+const roles    = ref(null)
+const dt       = ref()
+const users    = ref()
+const fileInput = ref()
+const exportMenu = ref()
+const loading  = ref(false)
 
 const showAddDialog = ref(false)
 const showUpdateDialog = ref(false)
@@ -367,44 +312,33 @@ onMounted(() => {
     })
 })
 
-const onUpload = (event) => {
-  const fileUp = event.files[0]
+const onFileChange = (event) => {
+  const fileUp = event.target.files[0]
+  if (!fileUp) return
+  fileInput.value.value = ''
 
   const formData = new FormData()
   formData.append('file', fileUp)
-
   loading.value = true
 
   store
     .dispatch('uploadInputData', { formData: formData, id: 'users_upload' })
     .then(async (res) => {
-      fileName.value = fileUp.name
-
       await store.dispatch('addMultiUsers', JSON.parse(res.data))
-
-      store.dispatch('getAllUsers').then((res) => {
-        users.value = res.data
-      })
-
+      store.dispatch('getAllUsers').then((res) => { users.value = res.data })
       loading.value = false
-      toast.add({
-        severity: 'success',
-        summary: 'Success',
-        detail: 'File Uploaded',
-        life: 2000
-      })
+      toast.add({ severity: 'success', summary: 'Imported', detail: `${fileUp.name} uploaded.`, life: 2000 })
     })
     .catch((err) => {
-      const msg = err.response?.data?.message || err.message
       loading.value = false
-      toast.add({
-        severity: 'error',
-        summary: 'Error',
-        detail: 'File not uploaded. ' + msg,
-        life: 5000
-      })
+      toast.add({ severity: 'error', summary: 'Error', detail: 'File not uploaded. ' + (err.response?.data?.message || err.message), life: 5000 })
     })
 }
+
+const exportOptions = [
+  { label: 'CSV',  icon: 'pi pi-file',       command: () => saveFile(downloadData.value, 'csv',  'users') },
+  { label: 'XLSX', icon: 'pi pi-file-excel',  command: () => saveFile(downloadData.value, 'xlsx', 'users') },
+]
 
 const hideAddDialog = () => {
   user.value = {}
@@ -606,3 +540,53 @@ const downloadData = computed(() => {
   }
 })
 </script>
+
+<style scoped>
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 1.25rem 1.25rem 0;
+}
+.panel-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-color-secondary);
+}
+
+.action-btn { color: var(--text-color-secondary) !important; font-size: 0.85rem; }
+.action-btn:hover { color: var(--text-color) !important; background: var(--surface-hover) !important; }
+
+.bare-table { margin: 0 -1.25rem; }
+:deep(.bare-table-inner .p-datatable-thead > tr > th) {
+  background: transparent;
+  color: var(--text-color-secondary);
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 0;
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0.6rem 1.25rem;
+}
+:deep(.bare-table-inner .p-datatable-tbody > tr > td) {
+  border: 0;
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0.75rem 1.25rem;
+  font-size: 0.875rem;
+}
+:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
+:deep(.bare-table-inner .p-datatable-header) {
+  background: transparent;
+  border: 0;
+  padding: 0 1.25rem 0.75rem;
+}
+:deep(.bare-table-inner .p-paginator) {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--surface-border);
+  padding: 0.6rem 1.25rem;
+}
+</style>

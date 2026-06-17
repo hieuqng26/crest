@@ -1,56 +1,86 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
 
-const portfolio = ref('Corporate')
-const portfolioOptions = ['Corporate', 'Retail', 'SME']
+import creditRiskAPI from '@/api/creditRiskAPI'
 
-const kpis = [
-  { label: 'Total ECL',       value: 'USD 153.6M', delta: '+2.3%', deltaTone: 'down', sub: 'vs prev. quarter' },
-  { label: 'Total EAD',       value: '6.88B',      delta: '+1.1%', deltaTone: 'up',   sub: 'across all stages' },
-  { label: 'Coverage ratio',  value: '2.23%',      delta: '+0.04 pp', deltaTone: 'down', sub: 'ECL / EAD' }
-]
+const router = useRouter()
+const toast  = useToast()
 
-const stageData = computed(() => ({
-  labels: ['Stage 1', 'Stage 2', 'Stage 3'],
-  datasets: [{
-    data: [12.4, 28.7, 58.9],
-    backgroundColor: ['#34d399', '#facc15', '#f87171'],
-    borderWidth: 0,
-    hoverOffset: 6
-  }]
-}))
+// ── active run ────────────────────────────────────────────────────────────────
+const runData        = ref(null)   // active run object (includes client_ids, exposure)
+const loadingRun     = ref(false)
+const noActiveRun    = ref(false)
 
-const stageLegend = [
-  { label: 'Stage 1', sub: '12-month ECL',  color: '#34d399', value: '12.4M' },
-  { label: 'Stage 2', sub: 'Lifetime ECL',  color: '#facc15', value: '28.7M' },
-  { label: 'Stage 3', sub: 'Lifetime ECL · credit-impaired', color: '#f87171', value: '58.9M' }
-]
+// ── client selector ───────────────────────────────────────────────────────────
+const clients          = ref([])
+const selectedClient   = ref(null)
+const selectedScenario = ref(null)
+const loadingECL       = ref(false)
 
-const trend = {
-  labels: ['2022-Q1','2022-Q2','2022-Q3','2022-Q4','2023-Q1','2023-Q2','2023-Q3','2023-Q4','2024-Q1','2024-Q2'],
-  datasets: [{
-    label: 'ECL (USD M)',
-    data: [142, 138, 151, 163, 158, 171, 165, 178, 182, 191],
-    borderColor: '#60a5fa',
-    backgroundColor: 'rgba(96,165,250,0.08)',
-    borderWidth: 2,
-    fill: true,
-    tension: 0.35,
-    pointRadius: 0,
-    pointHoverRadius: 5
-  }]
+const scenarioOptions = computed(() =>
+  [...new Set((eclRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
+)
+
+// ── ECL data ──────────────────────────────────────────────────────────────────
+const eclRows = ref([])
+
+const filteredRows = computed(() => {
+  if (!selectedScenario.value) return eclRows.value
+  return eclRows.value.filter(r => r.SCENARIO === selectedScenario.value)
+})
+
+// ── KPI strip ─────────────────────────────────────────────────────────────────
+const kpis = computed(() => {
+  const rows = filteredRows.value
+  if (!rows.length) return []
+  const maxEcl12   = Math.max(...rows.map(r => r.ECL_12M || 0))
+  const maxEclLife = Math.max(...rows.map(r => r.ECL_Lifetime || 0))
+  const ead        = runData.value?.exposure ?? 0
+  const coverage   = ead > 0 ? (maxEclLife / ead * 100).toFixed(2) + '%' : '—'
+  return [
+    { label: '12-Month ECL',   value: fmt(maxEcl12),   sub: 'peak single-year' },
+    { label: 'Lifetime ECL',   value: fmt(maxEclLife), sub: 'peak cumulative' },
+    { label: 'Coverage Ratio', value: coverage,        sub: 'ECL / EAD' },
+  ]
+})
+
+function fmt(v) {
+  if (v == null || !isFinite(v)) return '—'
+  if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1) + 'M'
+  if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1) + 'K'
+  return v.toFixed(2)
 }
 
-const eclTable = ref([
-  { segment: 'Large Corporate', ead: '2,140M', pd: '1.2%', lgd: '42%', ecl: '10.8M', stage: 1 },
-  { segment: 'Mid-Market',      ead: '890M',   pd: '2.8%', lgd: '48%', ecl: '12.0M', stage: 2 },
-  { segment: 'SME',             ead: '430M',   pd: '4.1%', lgd: '55%', ecl: '9.7M',  stage: 2 },
-  { segment: 'Retail Mortgage', ead: '3,200M', pd: '0.9%', lgd: '35%', ecl: '10.1M', stage: 1 },
-  { segment: 'Non-Performing',  ead: '220M',   pd: '78%',  lgd: '65%', ecl: '111M',  stage: 3 }
-])
+// ── chart data ────────────────────────────────────────────────────────────────
+const CHART_COLORS = ['#60A5FA', '#FFE600', '#34D399', '#F472B6', '#A78BFA', '#FB923C']
 
-const STAGE_COLOR = { 1: '#34d399', 2: '#facc15', 3: '#f87171' }
-const stageDot   = (s) => STAGE_COLOR[s] || 'var(--surface-400)'
+function buildEclChart(field) {
+  const scenarios = [...new Set((eclRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
+  const allYears  = [...new Set((eclRows.value || []).map(r => r.YEAR))].sort()
+  return {
+    labels: allYears,
+    datasets: scenarios.map((scen, i) => {
+      const rows   = eclRows.value.filter(r => r.SCENARIO === scen)
+      const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
+      return {
+        label: scen,
+        data: allYears.map(y => byYear[y]?.[field] ?? null),
+        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      }
+    }),
+  }
+}
+
+const eclChartData   = computed(() => buildEclChart('ECL_Lifetime'))
+const ecl12ChartData = computed(() => buildEclChart('ECL_12M'))
 
 const lineOptions = {
   maintainAspectRatio: false,
@@ -58,13 +88,51 @@ const lineOptions = {
   interaction: { mode: 'nearest', axis: 'x', intersect: false },
   scales: {
     x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } },
-    y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(156,163,175,0.08)' }, border: { display: false } }
-  }
+    y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(156,163,175,0.08)' }, border: { display: false } },
+  },
 }
-const doughnutOptions = {
-  maintainAspectRatio: false,
-  cutout: '70%',
-  plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${ctx.parsed}M` } } }
+
+const legendItems = computed(() =>
+  (eclChartData.value.datasets || []).map((d, i) => ({ label: d.label, color: CHART_COLORS[i % CHART_COLORS.length] }))
+)
+
+// ── data loading ──────────────────────────────────────────────────────────────
+onMounted(async () => {
+  loadingRun.value = true
+  try {
+    const { data } = await creditRiskAPI.getActiveRun()
+    runData.value = data
+    clients.value = data.client_ids ?? []
+    if (clients.value.length) selectedClient.value = clients.value[0]
+    noActiveRun.value = false
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      noActiveRun.value = true
+    } else {
+      toast.add({ severity: 'error', summary: 'Failed to load active run', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    }
+  } finally {
+    loadingRun.value = false
+  }
+})
+
+watch(selectedClient, (v) => {
+  if (v && runData.value) fetchECL()
+})
+
+async function fetchECL() {
+  if (!runData.value?.run_id || !selectedClient.value) return
+  loadingECL.value = true
+  eclRows.value    = []
+  selectedScenario.value = null
+  try {
+    const { data } = await creditRiskAPI.getClientResult(runData.value.run_id, selectedClient.value)
+    eclRows.value = data.ecl ?? []
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Failed to load results', detail: e?.response?.data?.error ?? e.message, life: 5000 })
+  } finally {
+    loadingECL.value = false
+  }
 }
 </script>
 
@@ -74,129 +142,135 @@ const doughnutOptions = {
     <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
       <div>
         <h1 class="text-3xl font-semibold m-0 tracking-tight">IFRS 9 ECL</h1>
-        <p class="text-color-secondary text-sm m-0 mt-1">Expected credit losses by stage and segment.</p>
+        <p class="text-color-secondary text-sm m-0 mt-1">Expected credit losses by scenario and horizon.</p>
       </div>
-      <div class="seg-pills">
-        <button
-          v-for="p in portfolioOptions"
-          :key="p"
-          type="button"
-          class="seg-pill"
-          :class="{ 'is-active': portfolio === p }"
-          @click="portfolio = p"
-        >{{ p }}</button>
+      <div class="flex align-items-center gap-3 flex-wrap">
+        <div class="flex flex-column gap-1">
+          <span class="text-xs text-color-secondary uppercase tracking-wide">Client</span>
+          <Dropdown
+            v-model="selectedClient"
+            :options="clients"
+            :loading="loadingRun"
+            :disabled="!clients.length"
+            placeholder="Select client"
+            class="w-12rem"
+          />
+        </div>
+        <div class="flex flex-column gap-1">
+          <span class="text-xs text-color-secondary uppercase tracking-wide">Scenario</span>
+          <Dropdown
+            v-model="selectedScenario"
+            :options="[null, ...scenarioOptions]"
+            :optionLabel="v => v ?? 'All scenarios'"
+            placeholder="All scenarios"
+            :disabled="!eclRows.length"
+            class="w-12rem"
+          />
+        </div>
       </div>
     </header>
 
-    <!-- KPI strip -->
-    <div class="stat-strip mb-5">
-      <div v-for="k in kpis" :key="k.label" class="stat-cell">
-        <div class="text-color-secondary text-xs uppercase tracking-wide mb-1">{{ k.label }}</div>
-        <div class="flex align-items-baseline gap-2">
-          <span class="text-2xl font-semibold tracking-tight">{{ k.value }}</span>
-          <span class="text-xs" :class="k.deltaTone === 'up' ? 'text-green-400' : 'text-red-400'">
-            <i :class="k.deltaTone === 'up' ? 'pi pi-arrow-up' : 'pi pi-arrow-down'" class="text-xs" />
-            {{ k.delta }}
-          </span>
-        </div>
-        <div class="text-xs text-color-secondary mt-1">{{ k.sub }}</div>
+    <!-- No active run -->
+    <div v-if="noActiveRun && !loadingRun" class="panel flex flex-column align-items-center justify-content-center gap-3" style="height: 22rem">
+      <i class="pi pi-chart-bar text-4xl text-color-secondary opacity-50" />
+      <div class="text-center">
+        <div class="text-sm font-medium mb-1">No active analysis run</div>
+        <div class="text-xs text-color-secondary">Set an active run in Analysis Jobs to view ECL results.</div>
       </div>
+      <Button label="Analysis Jobs" icon="pi pi-list" size="small" @click="router.push({ name: 'credit_risk_jobs' })" />
     </div>
 
-    <!-- Charts row -->
-    <div class="grid m-0 gap-4 mb-4 grid-cols-1 lg:grid-cols-2">
-      <!-- Stage breakdown -->
-      <div class="panel">
-        <div class="panel-head">
-          <span class="panel-title">ECL by IFRS 9 stage</span>
+    <!-- Loading -->
+    <div v-else-if="loadingRun || loadingECL" class="flex justify-content-center align-items-center" style="height: 12rem">
+      <i class="pi pi-spin pi-spinner text-3xl text-color-secondary" />
+    </div>
+
+    <template v-else-if="eclRows.length">
+      <!-- KPI strip -->
+      <div class="stat-strip mb-4">
+        <div v-for="k in kpis" :key="k.label" class="stat-cell">
+          <div class="text-color-secondary text-xs uppercase tracking-wide mb-1">{{ k.label }}</div>
+          <div class="text-2xl font-semibold tracking-tight">{{ k.value }}</div>
+          <div class="text-xs text-color-secondary mt-1">{{ k.sub }}</div>
         </div>
-        <div class="grid m-0 align-items-center" style="grid-template-columns: 180px 1fr">
-          <div style="height: 180px">
-            <Chart type="doughnut" :data="stageData" :options="doughnutOptions" class="h-full" />
-          </div>
-          <div class="flex flex-column gap-3">
-            <div v-for="s in stageLegend" :key="s.label" class="flex align-items-center gap-3">
-              <span class="legend-dot" :style="{ background: s.color }" />
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium">{{ s.label }}</div>
-                <div class="text-xs text-color-secondary">{{ s.sub }}</div>
-              </div>
-              <div class="text-sm font-mono">{{ s.value }}</div>
+      </div>
+
+      <!-- Charts row -->
+      <div class="flex flex-column gap-4 mb-4">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Lifetime ECL</div>
+              <div class="text-xs text-color-secondary mt-1">Per year · all scenarios</div>
+            </div>
+            <div class="legend-row">
+              <span v-for="l in legendItems" :key="l.label" class="legend-pill">
+                <span class="legend-dot" :style="{ background: l.color }" />
+                {{ l.label }}
+              </span>
             </div>
           </div>
+          <div style="height: 240px">
+            <Chart type="line" :data="eclChartData" :options="lineOptions" class="h-full" />
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">12-Month ECL</div>
+              <div class="text-xs text-color-secondary mt-1">Per year · all scenarios</div>
+            </div>
+            <div class="legend-row">
+              <span v-for="l in legendItems" :key="l.label" class="legend-pill">
+                <span class="legend-dot" :style="{ background: l.color }" />
+                {{ l.label }}
+              </span>
+            </div>
+          </div>
+          <div style="height: 240px">
+            <Chart type="line" :data="ecl12ChartData" :options="lineOptions" class="h-full" />
+          </div>
         </div>
       </div>
 
-      <!-- Trend -->
+      <!-- Detail table -->
       <div class="panel">
         <div class="panel-head">
-          <span class="panel-title">ECL trend</span>
-          <span class="text-xs text-color-secondary">Last 10 quarters · USD M</span>
+          <span class="panel-title">ECL detail</span>
+          <span class="text-xs text-color-secondary">{{ filteredRows.length }} rows · client {{ selectedClient }}</span>
         </div>
-        <div style="height: 220px">
-          <Chart type="line" :data="trend" :options="lineOptions" class="h-full" />
+        <div class="bare-table">
+          <DataTable :value="filteredRows" size="small" class="bare-table-inner" :paginator="filteredRows.length > 20" :rows="20">
+            <template #empty>
+              <div class="text-center p-4 text-color-secondary">No rows for the selected scenario.</div>
+            </template>
+            <Column field="YEAR"     header="Year"     sortable />
+            <Column field="SCENARIO" header="Scenario" sortable />
+            <Column header="12M ECL">
+              <template #body="{ data }">{{ fmt(data.ECL_12M) }}</template>
+            </Column>
+            <Column header="Lifetime ECL">
+              <template #body="{ data }">{{ fmt(data.ECL_Lifetime) }}</template>
+            </Column>
+          </DataTable>
         </div>
+      </div>
+    </template>
+
+    <div v-else-if="!loadingECL && selectedClient" class="panel flex align-items-center justify-content-center gap-3" style="height: 12rem">
+      <i class="pi pi-chart-line text-3xl text-color-secondary" />
+      <div>
+        <div class="text-sm font-medium">No ECL data</div>
+        <div class="text-xs text-color-secondary">Select a client to load results.</div>
       </div>
     </div>
 
-    <!-- Segment breakdown table -->
-    <div class="panel">
-      <div class="panel-head">
-        <span class="panel-title">Segment breakdown</span>
-        <span class="text-xs text-color-secondary">{{ eclTable.length }} segments</span>
-      </div>
-      <div class="bare-table">
-        <DataTable :value="eclTable" size="small" class="bare-table-inner">
-          <Column field="segment" header="Segment" />
-          <Column field="ead"     header="EAD" />
-          <Column field="pd"      header="PD" />
-          <Column field="lgd"     header="LGD" />
-          <Column field="ecl"     header="ECL" />
-          <Column header="Stage" style="width: 8rem">
-            <template #body="{ data }">
-              <div class="flex align-items-center gap-2">
-                <span class="legend-dot" :style="{ background: stageDot(data.stage) }" />
-                <span class="text-sm">Stage {{ data.stage }}</span>
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </div>
-    </div>
+    <Toast />
   </div>
 </template>
 
 <style scoped>
-/* Segmented pills (matches Jobs / Run pages) */
-.seg-pills {
-  display: inline-flex;
-  background: var(--surface-card);
-  border: 1px solid var(--surface-border);
-  border-radius: 10px;
-  padding: 4px;
-  gap: 2px;
-}
-.seg-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 14px;
-  border: 0;
-  background: transparent;
-  border-radius: 8px;
-  color: var(--text-color-secondary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
-}
-.seg-pill:hover { color: var(--text-color); }
-.seg-pill.is-active {
-  background: var(--surface-100, var(--surface-ground));
-  color: var(--text-color);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-/* Flat KPI strip */
 .stat-strip {
   display: flex;
   background: var(--surface-card);
@@ -208,11 +282,8 @@ const doughnutOptions = {
   flex: 1;
   padding: 1rem 1.25rem;
 }
-.stat-cell + .stat-cell {
-  border-left: 1px solid var(--surface-border);
-}
+.stat-cell + .stat-cell { border-left: 1px solid var(--surface-border); }
 
-/* Panel — flat card replacement */
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
@@ -221,8 +292,9 @@ const doughnutOptions = {
 }
 .panel-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 1rem;
 }
 .panel-title {
@@ -233,15 +305,19 @@ const doughnutOptions = {
   color: var(--text-color-secondary);
 }
 
-/* Dot used for stage / legend */
-.legend-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: inline-block;
+.legend-row  { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-ground);
+  font-size: 0.75rem;
+  color: var(--text-color-secondary);
 }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
-/* Flat table */
 .bare-table { margin: 0 -1.25rem -1rem; }
 :deep(.bare-table-inner .p-datatable-thead > tr > th) {
   background: transparent;
@@ -260,7 +336,5 @@ const doughnutOptions = {
   padding: 0.85rem 1.25rem;
   font-size: 0.875rem;
 }
-:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) {
-  border-bottom: 0;
-}
+:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 </style>

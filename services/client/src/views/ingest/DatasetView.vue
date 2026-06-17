@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { FilterMatchMode } from 'primevue/api'
 import datasetsAPI from '@/api/datasetsAPI'
@@ -9,7 +9,10 @@ import { fmtDate as formatDate } from '@/utils/datetime'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const router = useRouter()
-const toast = useToast()
+const route  = useRoute()
+const toast  = useToast()
+
+const backRoute = computed(() => route.query.back ? { name: route.query.back } : { name: 'datasets' })
 
 const dataset = computed(() => getDataset(props.id))
 
@@ -81,7 +84,7 @@ const downloadCsv = () => {
 
     <!-- Header -->
     <div class="flex align-items-center gap-3 mb-4">
-      <Button icon="pi pi-arrow-left" text rounded @click="router.push({ name: 'datasets' })" />
+      <Button icon="pi pi-arrow-left" text rounded @click="router.push(backRoute)" />
       <div class="flex-1 min-w-0">
         <div class="text-xs text-color-secondary uppercase" style="letter-spacing: 0.06em">Dataset</div>
         <h2 class="text-2xl font-semibold m-0 white-space-nowrap overflow-hidden text-overflow-ellipsis">

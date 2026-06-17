@@ -37,11 +37,11 @@ def _read_dataframe(file_bytes: bytes, ext: str) -> pd.DataFrame:
 @datasets.get("/")
 @jwt_required()
 def list_datasets():
-    rows = (
-        Dataset.query.filter(Dataset.status != "deleted")
-        .order_by(Dataset.created_at.desc())
-        .all()
-    )
+    kind = request.args.get("kind")
+    q = Dataset.query.filter(Dataset.status != "deleted")
+    if kind:
+        q = q.filter(Dataset.kind == kind)
+    rows = q.order_by(Dataset.created_at.desc()).all()
     return jsonify([r.to_dict() for r in rows]), 200
 
 
@@ -58,6 +58,7 @@ def upload_dataset():
 
     name = request.form.get("name", f.filename)
     description = request.form.get("description", "")
+    kind = request.form.get("kind", "calibration")
 
     file_bytes = f.read()
     try:
@@ -89,6 +90,7 @@ def upload_dataset():
             row_count=len(df),
             created_by=get_jwt_identity(),
             status="ready",
+            kind=kind,
         )
         session.add(ds)
         session.flush()

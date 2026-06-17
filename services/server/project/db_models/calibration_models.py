@@ -18,6 +18,7 @@ class Dataset(db.Model):
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
     )
     status = db.Column(db.String(32), nullable=False, default="ready")
+    kind = db.Column(db.String(16), nullable=False, default="calibration")
 
     calibration_runs = db.relationship("CalibrationRun", backref="dataset", lazy=True)
 
@@ -33,6 +34,7 @@ class Dataset(db.Model):
             created_by=self.created_by,
             created_at=self.created_at.isoformat() if self.created_at else None,
             status=self.status,
+            kind=self.kind,
         )
 
 
@@ -46,8 +48,6 @@ class ModelConfig(db.Model):
     )  # 'classification' | 'timeseries' | 'statistical'
     algorithm = db.Column(db.String(128), nullable=False)
     hyperparams_json = db.Column(db.Text, nullable=True)
-    feature_cols_json = db.Column(db.Text, nullable=True)
-    target_col = db.Column(db.String(255), nullable=True)
     train_split = db.Column(db.Float, nullable=False, default=0.8)
     scaler = db.Column(db.String(32), nullable=True)
     search_config_json = db.Column(db.Text, nullable=True)
@@ -67,8 +67,6 @@ class ModelConfig(db.Model):
             family=self.family,
             algorithm=self.algorithm,
             hyperparams_json=self.hyperparams_json,
-            feature_cols_json=self.feature_cols_json,
-            target_col=self.target_col,
             train_split=self.train_split,
             scaler=self.scaler,
             search_config_json=self.search_config_json,
@@ -106,7 +104,9 @@ class CalibrationRun(db.Model):
     scaler = db.Column(db.String(32), nullable=True)
     target_col = db.Column(db.String(255), nullable=True)
     feature_cols_json = db.Column(db.Text, nullable=True)
-    secondary_dataset_ids_json = db.Column(db.Text, nullable=True)  # JSON list of int IDs
+    secondary_dataset_ids_json = db.Column(
+        db.Text, nullable=True
+    )  # JSON list of int IDs
     merge_steps_json = db.Column(db.Text, nullable=True)  # JSON list of {type, on}
 
     forecasts = db.relationship(

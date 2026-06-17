@@ -9,3 +9,12 @@ export function isValidJwt(jwt) {
 }
 
 export { fmtDate, fmtDateShort, DATETIME_CONFIG } from './datetime'
+import { fmtDate, fmtDateShort } from './datetime'
+
+// Accepts both ISO strings and Date objects (some views pre-convert to Date for
+// client-side sorting) — normalise to ISO before the canonical formatters.
+export function formatDate(date, showTime = false) {
+  if (!date) return '—'
+  const iso = date instanceof Date ? date.toISOString() : date
+  return showTime ? fmtDate(iso) : fmtDateShort(iso)
+}

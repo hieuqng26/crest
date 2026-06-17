@@ -4,7 +4,8 @@
       "Bash(docker compose *)",
       "Bash(docker run *)",
       "Bash(ruff check *)",
-      "Bash(ruff format *)"
+      "Bash(ruff format *)",
+      "Bash(python *)"
     ]
   }
 }

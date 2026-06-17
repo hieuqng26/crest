@@ -26,9 +26,12 @@ const model = [
   {
     label: 'Credit Risk',
     items: [
-      { label: 'IFRS 9 ECL',    to: { name: 'credit_risk_ecl' },         module: 'credit_risk' },
-      { label: 'PD / LGD',      to: { name: 'credit_risk_pd_lgd' },      module: 'credit_risk' },
-      { label: 'Transitions',   to: { name: 'credit_risk_transitions' },  module: 'credit_risk' }
+      { label: 'Credit Data',   to: { name: 'credit_risk_data' },        module: 'credit_risk' },
+      { label: 'New Analysis',  to: { name: 'credit_risk_new' },         module: 'credit_risk' },
+      { label: 'Analysis Jobs', to: { name: 'credit_risk_jobs' },        module: 'credit_risk' },
+      { label: 'IFRS 9 ECL',   to: { name: 'credit_risk_ecl' },         module: 'credit_risk' },
+      { label: 'PD / LGD',     to: { name: 'credit_risk_pd_lgd' },      module: 'credit_risk' },
+      { label: 'Transitions',  to: { name: 'credit_risk_transitions' },  module: 'credit_risk' }
     ]
   },
   {

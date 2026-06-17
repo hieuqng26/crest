@@ -1,11 +1,23 @@
 import json
+import uuid
+from datetime import datetime, timezone
 
+import pandas as pd
 from flask import jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from project.db_models.calibration_models import CalibrationRun
+from project.db_models.calibration_models import CalibrationRun, Dataset
+from project.db_models.credit_models import (
+    CreditRiskResult,
+    CreditRiskRun,
+    CreditRiskRunLog,
+    PdRating,
+)
 
 from . import credit_risk
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def _load_metrics(run_id: str) -> dict | None:
@@ -15,9 +27,374 @@ def _load_metrics(run_id: str) -> dict | None:
     return json.loads(run.val_metrics_json or "{}")
 
 
+def _pd_rating_df(curve: str = "moodys") -> pd.DataFrame:
+    rows = PdRating.query.filter_by(curve_name=curve).order_by(PdRating.category).all()
+    return pd.DataFrame(
+        [{"Category": r.category, "Rating": r.rating, "PD": r.pd} for r in rows]
+    )
+
+
+# ── v2 endpoints ──────────────────────────────────────────────────────────────
+
+
+@credit_risk.get("/pd-ratings")
+@jwt_required()
+def get_pd_ratings():
+    curve = request.args.get("curve", "moodys")
+    rows = PdRating.query.filter_by(curve_name=curve).order_by(PdRating.category).all()
+    return jsonify([r.to_dict() for r in rows]), 200
+
+
+@credit_risk.get("/clients")
+@jwt_required()
+def get_clients():
+    from project.db_models.calibration_models import Dataset
+    from project import DATA_STORE
+    import os
+
+    mock = request.args.get("mock", "false").lower() == "true"
+    if mock:
+        from project.core.credit_risk.mock_credit import mock_credit_data
+
+        df = mock_credit_data()
+        return jsonify(df["client_id"].tolist()), 200
+
+    dataset_id = request.args.get("dataset_id")
+    if not dataset_id:
+        return jsonify({"error": "dataset_id or mock=true is required"}), 400
+
+    dataset = Dataset.query.get(int(dataset_id))
+    if not dataset or not dataset.file_path:
+        return jsonify({"error": "Dataset not found"}), 404
+
+    path = (
+        dataset.file_path
+        if os.path.isabs(dataset.file_path)
+        else os.path.join(DATA_STORE, dataset.file_path)
+    )
+    try:
+        df = _read_dataset(path)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if "client_id" not in df.columns:
+        return jsonify({"error": "Dataset has no client_id column"}), 400
+
+    return jsonify(sorted(df["client_id"].unique().tolist())), 200
+
+
+@credit_risk.post("/kmv")
+@jwt_required()
+def compute_kmv():
+    from project.core.credit_risk.kmv import run_kmv
+
+    body = request.get_json(silent=True) or {}
+    mock = body.get("mock", False)
+    client_id = body.get("client_id")
+    scenarios = body.get("scenarios")
+
+    if not client_id:
+        return jsonify({"error": "client_id is required"}), 400
+
+    try:
+        pd_df = _pd_rating_df(body.get("curve", "moodys"))
+        if pd_df.empty:
+            return jsonify(
+                {"error": "No PD ratings found. Run flask db upgrade first."}
+            ), 500
+
+        if mock:
+            from project.core.credit_risk.mock_credit import (
+                mock_credit_data,
+                mock_kmv_forecast,
+            )
+
+            clients_df = mock_credit_data()
+            client_row = clients_df[clients_df["client_id"] == client_id]
+            if client_row.empty:
+                return jsonify(
+                    {"error": f"Client '{client_id}' not found in mock data"}
+                ), 404
+            c = client_row.iloc[0]
+            com_info = {
+                "E0": float(c["market_cap"]),
+                "volE": float(c["vol_equity"]),
+                "r": float(c["risk_free_rate"]),
+                "rating": str(c["rating"]),
+            }
+            forecast = mock_kmv_forecast(client_id, scenarios=scenarios)
+        else:
+            dataset_id = body.get("dataset_id")
+            if not dataset_id:
+                return jsonify({"error": "dataset_id or mock=true is required"}), 400
+            com_info, forecast = _load_client_data(int(dataset_id), client_id)
+
+        result_df = run_kmv(com_info, forecast, pd_df)
+        records = result_df.where(pd.notnull(result_df), None).to_dict(orient="records")
+        return jsonify({"client_id": client_id, "rows": records}), 200
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {e}"}), 500
+
+
 @credit_risk.post("/ecl")
 @jwt_required()
-def compute_ecl():
+def compute_ecl_v2():
+    from project.core.credit_risk.ecl import compute_ecl
+    from project.core.credit_risk.kmv import run_kmv
+
+    body = request.get_json(silent=True) or {}
+
+    # Accept either pre-computed KMV rows or re-run from scratch
+    kmv_rows = body.get("kmv_result")
+    exposure = body.get("exposure")
+    discount_rate = body.get("discount_rate", 0.05)
+    lifetime_horizon = int(body.get("lifetime_horizon", 5))
+
+    if exposure is None:
+        return jsonify({"error": "exposure is required"}), 400
+
+    try:
+        if kmv_rows:
+            kmv_df = pd.DataFrame(kmv_rows)
+        else:
+            # Re-run KMV inline
+            mock = body.get("mock", False)
+            client_id = body.get("client_id")
+            if not client_id:
+                return jsonify({"error": "client_id or kmv_result is required"}), 400
+
+            pd_df = _pd_rating_df(body.get("curve", "moodys"))
+            if mock:
+                from project.core.credit_risk.mock_credit import (
+                    mock_credit_data,
+                    mock_kmv_forecast,
+                )
+
+                clients_df = mock_credit_data()
+                client_row = clients_df[clients_df["client_id"] == client_id]
+                if client_row.empty:
+                    return jsonify(
+                        {"error": f"Client '{client_id}' not found in mock data"}
+                    ), 404
+                c = client_row.iloc[0]
+                com_info = {
+                    "E0": float(c["market_cap"]),
+                    "volE": float(c["vol_equity"]),
+                    "r": float(c["risk_free_rate"]),
+                    "rating": str(c["rating"]),
+                }
+                forecast = mock_kmv_forecast(client_id)
+            else:
+                dataset_id = body.get("dataset_id")
+                if not dataset_id:
+                    return jsonify(
+                        {"error": "dataset_id or mock=true is required"}
+                    ), 400
+                com_info, forecast = _load_client_data(int(dataset_id), client_id)
+            kmv_df = run_kmv(com_info, forecast, pd_df)
+
+        ecl_df = compute_ecl(
+            kmv_df, float(exposure), float(discount_rate), lifetime_horizon
+        )
+        records = ecl_df.where(pd.notnull(ecl_df), None).to_dict(orient="records")
+        return jsonify({"rows": records}), 200
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {e}"}), 500
+
+
+# ── analysis run management ───────────────────────────────────────────────────
+
+
+@credit_risk.get("/runs")
+@jwt_required()
+def list_runs():
+    runs = CreditRiskRun.query.order_by(CreditRiskRun.created_at.desc()).all()
+    result = []
+    for r in runs:
+        d = r.to_dict()
+        ds = Dataset.query.get(r.dataset_id)
+        d["dataset_name"] = ds.name if ds else None
+        result.append(d)
+    return jsonify(result), 200
+
+
+@credit_risk.post("/runs")
+@jwt_required()
+def create_run():
+    from project import app_session
+    from project.workers.tasks import run_credit_analysis
+
+    body = request.get_json(silent=True) or {}
+    dataset_id = body.get("dataset_id")
+    if not dataset_id:
+        return jsonify({"error": "dataset_id is required"}), 400
+
+    ds = Dataset.query.get(int(dataset_id))
+    if not ds:
+        return jsonify({"error": "Dataset not found"}), 404
+
+    # Resolve cal_run_ids → target_cols
+    cal_run_ids = body.get("cal_run_ids") or []
+    target_cols = []
+    for crid in cal_run_ids:
+        cal = CalibrationRun.query.filter_by(run_id=crid).first()
+        target_cols.append(cal.target_col if cal else None)
+
+    cr_run_id = str(uuid.uuid4())
+    identity = get_jwt_identity()
+
+    cr = CreditRiskRun(
+        run_id=cr_run_id,
+        dataset_id=int(dataset_id),
+        cal_run_ids_json=json.dumps(cal_run_ids),
+        target_cols_json=json.dumps(target_cols),
+        is_active=False,
+        exposure=float(body.get("exposure", 1_000_000)),
+        discount_rate=float(body.get("discount_rate", 0.05)),
+        lifetime_horizon=int(body.get("lifetime_horizon", 5)),
+        curve=body.get("curve", "moodys"),
+        status="queued",
+        triggered_by=identity,
+        created_at=datetime.now(timezone.utc),
+    )
+    with app_session() as s:
+        s.add(cr)
+        s.flush()
+        cr_dict = cr.to_dict()
+
+    run_credit_analysis.delay(cr_run_id)
+    return jsonify(cr_dict), 202
+
+
+@credit_risk.get("/runs/active")
+@jwt_required()
+def get_active_run():
+    cr = CreditRiskRun.query.filter_by(is_active=True).first()
+    if not cr:
+        return jsonify({"error": "No active run"}), 404
+    d = cr.to_dict()
+    ds = Dataset.query.get(cr.dataset_id)
+    d["dataset_name"] = ds.name if ds else None
+    results = CreditRiskResult.query.filter_by(run_id=cr.run_id).all()
+    d["client_ids"] = sorted({r.client_id for r in results})
+    return jsonify(d), 200
+
+
+@credit_risk.put("/runs/<cr_run_id>/active")
+@jwt_required()
+def set_active_run(cr_run_id: str):
+    from project import app_session
+
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+    if cr.status != "success":
+        return jsonify({"error": "Only completed runs can be set as active"}), 400
+
+    with app_session() as s:
+        for row in CreditRiskRun.query.filter_by(is_active=True).all():
+            row.is_active = False
+            s.add(row)
+        r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        r.is_active = True
+        s.add(r)
+
+    return jsonify({"ok": True}), 200
+
+
+@credit_risk.post("/runs/<cr_run_id>/rerun")
+@jwt_required()
+def rerun_run(cr_run_id: str):
+    from project import app_session
+    from project.workers.tasks import run_credit_analysis
+
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+
+    with app_session() as s:
+        CreditRiskResult.query.filter_by(run_id=cr_run_id).delete()
+        r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        r.status = "queued"
+        r.progress = 0
+        r.started_at = None
+        r.finished_at = None
+        r.error_message = None
+        s.add(r)
+
+    run_credit_analysis.delay(cr_run_id)
+    return jsonify({"ok": True}), 202
+
+
+@credit_risk.delete("/runs/<cr_run_id>")
+@jwt_required()
+def delete_run(cr_run_id: str):
+    from project import app_session
+
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+
+    with app_session() as s:
+        r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        s.delete(r)
+
+    return jsonify({"ok": True}), 200
+
+
+@credit_risk.get("/runs/<cr_run_id>")
+@jwt_required()
+def get_run(cr_run_id: str):
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+    d = cr.to_dict()
+    ds = Dataset.query.get(cr.dataset_id)
+    d["dataset_name"] = ds.name if ds else None
+    results = CreditRiskResult.query.filter_by(run_id=cr_run_id).all()
+    d["client_ids"] = sorted({r.client_id for r in results})
+    return jsonify(d), 200
+
+
+@credit_risk.get("/runs/<cr_run_id>/logs")
+@jwt_required()
+def get_run_logs(cr_run_id: str):
+    logs = (
+        CreditRiskRunLog.query.filter_by(run_id=cr_run_id)
+        .order_by(CreditRiskRunLog.id)
+        .all()
+    )
+    return jsonify([log.to_dict() for log in logs]), 200
+
+
+@credit_risk.get("/runs/<cr_run_id>/client/<client_id>")
+@jwt_required()
+def get_client_result(cr_run_id: str, client_id: str):
+    result = CreditRiskResult.query.filter_by(
+        run_id=cr_run_id, client_id=client_id
+    ).first()
+    if not result:
+        return jsonify({"error": "Result not found"}), 404
+    return jsonify(
+        {
+            "kmv": json.loads(result.kmv_json or "[]"),
+            "ecl": json.loads(result.ecl_json or "[]"),
+        }
+    ), 200
+
+
+# ── v1 dummies (retained) ─────────────────────────────────────────────────────
+
+
+@credit_risk.post("/ecl/v1")
+@jwt_required()
+def compute_ecl_v1():
     body = request.get_json(silent=True) or {}
     portfolio = body.get("portfolio", [])
     if not portfolio:
@@ -48,9 +425,9 @@ def compute_ecl():
     ), 200
 
 
-@credit_risk.post("/pd-lgd")
+@credit_risk.post("/pd-lgd/v1")
 @jwt_required()
-def compute_pd_lgd():
+def compute_pd_lgd_v1():
     body = request.get_json(silent=True) or {}
     run_ids = body.get("run_ids", [])
     horizons = body.get("horizons", [1, 2, 3, 5, 7, 10])
@@ -77,3 +454,61 @@ def compute_pd_lgd():
         )
 
     return jsonify({"curves": curves}), 200
+
+
+# ── private helpers ───────────────────────────────────────────────────────────
+
+
+def _read_dataset(path: str) -> pd.DataFrame:
+    if path.endswith(".parquet"):
+        return pd.read_parquet(path)
+    if path.endswith((".xlsx", ".xls")):
+        return pd.read_excel(path)
+    return pd.read_csv(path)
+
+
+def _load_client_data(dataset_id: int, client_id: str):
+    from project.db_models.calibration_models import Dataset
+    from project import DATA_STORE
+    import os
+
+    dataset = Dataset.query.get(dataset_id)
+    if not dataset or not dataset.file_path:
+        raise ValueError(f"Dataset {dataset_id} not found")
+
+    path = (
+        dataset.file_path
+        if os.path.isabs(dataset.file_path)
+        else os.path.join(DATA_STORE, dataset.file_path)
+    )
+    df = _read_dataset(path)
+    client_df = df[df["client_id"] == client_id]
+    if client_df.empty:
+        raise ValueError(f"Client '{client_id}' not found in dataset {dataset_id}")
+
+    required = {"market_cap", "vol_equity", "risk_free_rate", "rating"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Dataset missing required columns: {missing}")
+
+    row = client_df.iloc[0]
+    com_info = {
+        "E0": float(row["market_cap"]),
+        "volE": float(row["vol_equity"]),
+        "r": float(row["risk_free_rate"]),
+        "rating": str(row["rating"]),
+    }
+
+    required_forecast = {"YEAR", "Total_Asset", "CL", "NonCL"}
+    missing_f = required_forecast - set(df.columns)
+    if missing_f:
+        raise ValueError(f"Dataset missing forecast columns: {missing_f}")
+
+    forecast_cols = ["YEAR", "Total_Asset", "CL", "NonCL"]
+    if "SCENARIO" in df.columns:
+        forecast_cols.append("SCENARIO")
+    forecast = client_df[forecast_cols].copy()
+    if "SCENARIO" not in forecast.columns:
+        forecast["SCENARIO"] = "Baseline"
+
+    return com_info, forecast

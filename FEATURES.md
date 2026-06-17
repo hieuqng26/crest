@@ -1,3 +1,14 @@
+Credit Risk:
+- New Analysis page: Calibration run should allow more than 1 calibrations/target variables. It should let user choose the target variables available from all successful calibration, then when user pick a specific calibration id if there are more than 1 runs for a selected target variable
+- Analysis jobs: dont redirect to IFRS 9 ECL on clicking. Instead, add ability to set active, view, rerun, delete. And the table should show Finished date, which target variables (and corresponding calibration id, if possible link the id to the one Calibration's All Jobs page)
+- IFRS 9 ECL and PD/LGD: should load result from active analysis job.
+- IFRS 9 ECL: remove the reload button and analysis run dropdown
+
+
+Later:
+- Create tests for backend scripts
+
+
 - [x] Target and features variables should be set during calibration, not as part of model configuration
 - [x] Add more plots for Diagnosis of regression model
 

@@ -1,16 +1,28 @@
 import { httpClient } from './httpClient'
 
 const datasetsAPI = {
-  list:        ()      => httpClient.get('/datasets/'),
-  get:         (id)    => httpClient.get(`/datasets/${id}`),
-  delete:      (id)    => httpClient.delete(`/datasets/${id}`),
-  bulkDelete:  (ids)   => httpClient.post('/datasets/bulk-delete', { ids }),
+  list:        ()       => httpClient.get('/datasets/'),
+  listByKind:  (kind)   => httpClient.get('/datasets/', { params: { kind } }),
+  get:         (id)     => httpClient.get(`/datasets/${id}`),
+  delete:      (id)     => httpClient.delete(`/datasets/${id}`),
+  bulkDelete:  (ids)    => httpClient.post('/datasets/bulk-delete', { ids }),
 
-  upload: (file, name, description = '') => {
+  upload: (file, name, description = '', kind = 'calibration') => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('name', name)
     fd.append('description', description)
+    fd.append('kind', kind)
+    return httpClient.post('/datasets/upload', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
+  uploadCredit: (file, name) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('name', name)
+    fd.append('kind', 'credit')
     return httpClient.post('/datasets/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })

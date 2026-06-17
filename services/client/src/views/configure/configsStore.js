@@ -27,9 +27,7 @@ export const duplicateConfig = async (cfg) => {
   const body = {
     name: `${cfg.name} (copy)`,
     algorithm: cfg.algorithm,
-    hyperparams: cfg.hyperparams_json ? JSON.parse(cfg.hyperparams_json) : {},
-    feature_cols: cfg.feature_cols_json ? JSON.parse(cfg.feature_cols_json) : [],
-    target_col: cfg.target_col
+    hyperparams: cfg.hyperparams_json ? JSON.parse(cfg.hyperparams_json) : {}
   }
   const { data } = await modelConfigsAPI.create(body)
   addConfig(data)
