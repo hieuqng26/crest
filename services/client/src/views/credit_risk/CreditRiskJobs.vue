@@ -14,12 +14,16 @@ const toast   = useToast()
 const runs        = ref([])
 const listLoading = ref(false)
 const actionBusy  = ref({})   // { [run_id]: true } while an action is in-flight
+const selectedRuns = ref([])
+const bulkDeleting = ref(false)
 
 const fetchRuns = async () => {
   listLoading.value = true
   try {
     const { data } = await creditRiskAPI.listRuns()
     runs.value = data ?? []
+    const ids = new Set((data ?? []).map(r => r.run_id))
+    selectedRuns.value = selectedRuns.value.filter(r => ids.has(r.run_id))
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Failed to load', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -144,6 +148,34 @@ async function deleteRun(run) {
   }
 }
 
+function confirmBulkDelete() {
+  const n = selectedRuns.value.length
+  confirm.require({
+    message: `Permanently delete ${n} selected run${n > 1 ? 's' : ''}? This cannot be undone.`,
+    header: `Delete ${n} run${n > 1 ? 's' : ''}`,
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: bulkDelete,
+  })
+}
+
+async function bulkDelete() {
+  bulkDeleting.value = true
+  const targets = [...selectedRuns.value]
+  const results = await Promise.allSettled(
+    targets.map(r => creditRiskAPI.deleteRun(r.run_id))
+  )
+  const failed = results.filter(r => r.status === 'rejected').length
+  if (failed) {
+    toast.add({ severity: 'warn', summary: `${failed} deletion${failed > 1 ? 's' : ''} failed`, life: 4000 })
+  } else {
+    toast.add({ severity: 'success', summary: `${targets.length} run${targets.length > 1 ? 's' : ''} deleted`, life: 3000 })
+  }
+  selectedRuns.value = []
+  bulkDeleting.value = false
+  await fetchRuns()
+}
+
 function viewRun(run) {
   router.push({ name: 'credit_risk_run', params: { run_id: run.run_id } })
 }
@@ -183,14 +215,32 @@ function viewRun(run) {
       </IconField>
     </div>
 
-    <div class="text-xs text-color-secondary mb-2">
-      Showing {{ filtered.length }} of {{ runs.length }} runs
+    <div class="flex align-items-center justify-content-between mb-2">
+      <span class="text-xs text-color-secondary">Showing {{ filtered.length }} of {{ runs.length }} runs</span>
+      <Transition name="fade-up">
+        <div v-if="selectedRuns.length" class="flex align-items-center gap-2">
+          <span class="text-xs text-color-secondary">{{ selectedRuns.length }} selected</span>
+          <Button
+            icon="pi pi-trash"
+            label="Delete selected"
+            severity="danger"
+            size="small"
+            outlined
+            :loading="bulkDeleting"
+            @click="confirmBulkDelete"
+          />
+        </div>
+      </Transition>
     </div>
 
     <!-- Table -->
     <div class="border-1 surface-border border-round overflow-hidden">
       <DataTable
         :value="filtered"
+        v-model:selection="selectedRuns"
+        selectionMode="multiple"
+        :isRowSelectable="row => row.data.status !== 'running' && row.data.status !== 'queued'"
+        dataKey="run_id"
         size="small"
         :loading="listLoading"
         :paginator="filtered.length > 15"
@@ -207,6 +257,8 @@ function viewRun(run) {
             <Button label="New Analysis" icon="pi pi-plus" text size="small" class="mt-2" @click="router.push({ name: 'credit_risk_new' })" />
           </div>
         </template>
+
+        <Column selectionMode="multiple" style="width: 3rem" />
 
         <!-- Active switch -->
         <Column header="Active" style="width: 5.5rem">
@@ -235,26 +287,24 @@ function viewRun(run) {
           </template>
         </Column>
 
-        <Column header="Target Variables" style="width: 18rem">
+        <Column header="Calibration Inputs" style="width: 18rem">
           <template #body="{ data }">
-            <div v-if="data.target_cols?.length" class="flex flex-column gap-1">
+            <div v-if="data.cal_inputs && Object.keys(data.cal_inputs).length" class="flex flex-column gap-1">
               <div
-                v-for="(tc, i) in data.target_cols"
-                :key="i"
+                v-for="(runId, key) in data.cal_inputs"
+                :key="key"
                 class="flex align-items-center gap-2 text-xs"
               >
-                <span class="font-medium">{{ tc }}</span>
+                <span class="font-medium capitalize" style="min-width:9rem">{{ typeof key === 'string' ? key.replace(/_/g, ' ') : key }}</span>
                 <a
-                  v-if="data.cal_run_ids?.[i]"
+                  v-if="runId"
                   class="font-mono text-color-secondary cursor-pointer hover:text-primary"
                   style="text-decoration: none"
-                  @click.stop="router.push({ name: 'calibrate_run', params: { run_id: data.cal_run_ids[i] } })"
-                >
-                  {{ data.cal_run_ids[i].slice(0, 8) }}…
-                </a>
+                  @click.stop="router.push({ name: 'calibrate_run', params: { run_id: runId } })"
+                >{{ runId.slice(0, 8) }}…</a>
               </div>
             </div>
-            <span v-else class="text-xs text-color-secondary">Synthetic scenarios</span>
+            <span v-else class="text-xs text-color-secondary">—</span>
           </template>
         </Column>
 
@@ -450,4 +500,10 @@ function viewRun(run) {
 :deep(.jobs-table .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 :deep(.jobs-table .p-datatable-tbody > tr:hover) { background: var(--surface-hover, rgba(255,255,255,0.03)); }
 :deep(.jobs-table .p-paginator) { border: 0; border-top: 1px solid var(--surface-border); background: transparent; }
+:deep(.jobs-table .p-selection-column) { padding-right: 0; }
+:deep(.jobs-table .p-checkbox .p-checkbox-box) { border-color: var(--surface-400); }
+
+/* Bulk-delete button fade-up */
+.fade-up-enter-active, .fade-up-leave-active { transition: opacity 150ms ease, transform 150ms ease; }
+.fade-up-enter-from, .fade-up-leave-to { opacity: 0; transform: translateY(4px); }
 </style>

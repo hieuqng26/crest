@@ -2,6 +2,7 @@ from flask import jsonify
 from flask_jwt_extended import jwt_required
 
 from project.db_models.calibration_models import CalibrationRun, Forecast
+from project.workers.tasks import _load_forecast_data
 
 from . import forecasts
 
@@ -17,4 +18,9 @@ def get_forecast(run_id):
         .order_by(Forecast.created_at)
         .all()
     )
-    return jsonify([r.to_dict() for r in rows]), 200
+    result = []
+    for r in rows:
+        d = r.to_dict()
+        d["forecast_json"] = _load_forecast_data(r)
+        result.append(d)
+    return jsonify(result), 200

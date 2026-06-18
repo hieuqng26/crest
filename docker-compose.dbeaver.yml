@@ -14,3 +14,12 @@ services:
 networks:
   app-network:
     driver: bridge
+
+
+# how to set up dbeaver:
+# - Host: mssql
+# - Port: 1433
+# - Database: esg_dev
+# - User name: crst
+# - User password: Ey@2024!
+# - Tick "Trust Server Certificate"

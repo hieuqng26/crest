@@ -22,46 +22,21 @@ const datasetOptions = computed(() =>
   }))
 )
 
-// ── calibration input selection ───────────────────────────────────────────────
-// Group successful cal runs by target_col → { [target_col]: [run, ...] }
-const targetVarMap = computed(() => {
-  const map = {}
-  for (const r of calRuns.value) {
-    const key = r.target_col || '(unknown)'
-    if (!map[key]) map[key] = []
-    map[key].push(r)
-  }
-  return map
-})
+// ── KMV calibration inputs (3 required) ──────────────────────────────────────
+const KMV_INPUTS = [
+  { key: 'total_assets',     label: 'Total Assets',     hint: 'Forecast of total assets — used as AT in KMV' },
+  { key: 'short_term_debts', label: 'Short-term Debts', hint: 'Forecast of current liabilities (CL)' },
+  { key: 'long_term_debts',  label: 'Long-term Debts',  hint: 'Forecast of non-current liabilities (NonCL)' },
+]
 
-const availableTargetVars = computed(() => Object.keys(targetVarMap.value).sort())
+const calInputs = ref({ total_assets: null, short_term_debts: null, long_term_debts: null })
 
-// selectedInputs: [{ target_col, cal_run_id }] — one entry per chosen target variable
-const selectedInputs = ref([])
-
-function toggleTargetVar(targetCol) {
-  const idx = selectedInputs.value.findIndex(i => i.target_col === targetCol)
-  if (idx >= 0) {
-    selectedInputs.value.splice(idx, 1)
-  } else {
-    const runs = targetVarMap.value[targetCol] || []
-    // Default to the most recently created run for this target variable
-    const latest = runs.reduce((a, b) =>
-      new Date(a.created_at || 0) > new Date(b.created_at || 0) ? a : b, runs[0])
-    selectedInputs.value.push({ target_col: targetCol, cal_run_id: latest?.run_id ?? null })
-  }
-}
-
-function isTargetSelected(targetCol) {
-  return selectedInputs.value.some(i => i.target_col === targetCol)
-}
-
-function runOptionsFor(targetCol) {
-  return (targetVarMap.value[targetCol] || []).map(r => ({
-    label: `${r.config_name ?? r.run_id.slice(0, 8)}  ·  ${r.run_id.slice(0, 8)}…`,
+const runOptions = computed(() =>
+  calRuns.value.map(r => ({
+    label: `${r.target_col ?? '—'}  ·  ${r.config_name ?? r.run_id.slice(0, 8)}  ·  ${r.run_id.slice(0, 8)}…`,
     value: r.run_id,
   }))
-}
+)
 
 // ── form state ────────────────────────────────────────────────────────────────
 const selectedDatasetId = ref(null)
@@ -70,7 +45,10 @@ const discountRate      = ref(0.05)
 const lifetimeHorizon   = ref(5)
 const submitting        = ref(false)
 
-const canLaunch = computed(() => selectedDatasetId.value != null && exposure.value > 0)
+const allInputsFilled = computed(() =>
+  KMV_INPUTS.every(i => calInputs.value[i.key] != null)
+)
+const canLaunch = computed(() => selectedDatasetId.value != null && exposure.value > 0 && allInputsFilled.value)
 
 const launch = async () => {
   if (!canLaunch.value) return
@@ -78,7 +56,7 @@ const launch = async () => {
   try {
     const { data } = await creditRiskAPI.createRun({
       dataset_id:       selectedDatasetId.value,
-      cal_run_ids:      selectedInputs.value.map(i => i.cal_run_id).filter(Boolean),
+      cal_inputs:       calInputs.value,
       exposure:         exposure.value,
       discount_rate:    discountRate.value,
       lifetime_horizon: lifetimeHorizon.value,
@@ -173,60 +151,49 @@ onMounted(async () => {
     <div class="form-card mb-4">
       <div class="form-card-head flex align-items-center justify-content-between">
         <div class="text-xs text-color-secondary uppercase font-semibold" style="letter-spacing: 0.06em">
-          Calibration Inputs <span class="font-normal normal-case ml-1">(optional)</span>
+          Calibration Inputs
         </div>
-        <div v-if="selectedInputs.length" class="text-xs text-color-secondary">
-          {{ selectedInputs.length }} selected
+        <div class="text-xs text-color-secondary">
+          {{ KMV_INPUTS.filter(i => calInputs[i.key]).length }} / {{ KMV_INPUTS.length }} selected
         </div>
       </div>
 
-      <!-- No cal runs -->
-      <div v-if="!loadingInit && availableTargetVars.length === 0" class="p-4 text-xs text-color-secondary">
-        No successful calibration runs found. Analysis will use synthetic scenarios.
+      <div v-if="!loadingInit && calRuns.length === 0" class="p-4 text-xs text-color-secondary">
+        No successful calibration runs found.
+        Run calibrations for <span class="font-mono">total_assets</span>,
+        <span class="font-mono">short_term_debts</span>, and
+        <span class="font-mono">long_term_debts</span> before launching.
       </div>
 
-      <div v-else class="p-4">
-        <div class="text-xs text-color-secondary mb-3">
-          Select target variables to use as balance sheet inputs. If multiple runs share a variable, choose which one to use.
-        </div>
-
-        <!-- Target variable chips -->
-        <div class="flex flex-wrap gap-2 mb-4">
-          <button
-            v-for="tv in availableTargetVars"
-            :key="tv"
-            type="button"
-            class="tv-chip"
-            :class="{ 'is-selected': isTargetSelected(tv) }"
-            @click="toggleTargetVar(tv)"
-          >
-            <i class="pi text-xs" :class="isTargetSelected(tv) ? 'pi-check-circle' : 'pi-circle'" />
-            {{ tv }}
-            <span class="tv-count">{{ targetVarMap[tv].length }}</span>
-          </button>
-        </div>
-
-        <!-- Run selectors for chosen target vars -->
-        <div v-if="selectedInputs.length" class="flex flex-column gap-3">
-          <div
-            v-for="inp in selectedInputs"
-            :key="inp.target_col"
-            class="cal-input-row"
-          >
-            <div class="font-medium text-sm w-10rem flex-shrink-0">{{ inp.target_col }}</div>
+      <div v-else>
+        <div
+          v-for="inp in KMV_INPUTS"
+          :key="inp.key"
+          class="form-row"
+        >
+          <div class="form-label">
+            <div class="flex align-items-center gap-2">
+              <i
+                class="pi text-xs"
+                :class="calInputs[inp.key] ? 'pi-check-circle' : 'pi-circle'"
+                :style="calInputs[inp.key] ? 'color:#34d399' : 'color:var(--text-color-secondary)'"
+              />
+              <span class="font-medium text-sm">{{ inp.label }}</span>
+            </div>
+            <div class="text-xs text-color-secondary mt-1 ml-4">{{ inp.hint }}</div>
+          </div>
+          <div class="form-input">
             <Dropdown
-              v-model="inp.cal_run_id"
-              :options="runOptionsFor(inp.target_col)"
+              v-model="calInputs[inp.key]"
+              :options="runOptions"
               optionLabel="label"
               optionValue="value"
-              class="flex-1"
-              :disabled="runOptionsFor(inp.target_col).length <= 1"
-            />
-            <Button
-              icon="pi pi-times"
-              text rounded size="small"
-              severity="secondary"
-              @click="toggleTargetVar(inp.target_col)"
+              :loading="loadingInit"
+              :disabled="loadingInit || calRuns.length === 0"
+              placeholder="Select calibration run"
+              class="w-full"
+              filter
+              showClear
             />
           </div>
         </div>
@@ -334,42 +301,6 @@ onMounted(async () => {
 .form-label { padding-top: 0.2rem; }
 .form-input { display: flex; flex-direction: column; gap: 0.25rem; }
 
-/* Target variable chips */
-.tv-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--surface-border);
-  background: transparent;
-  color: var(--text-color-secondary);
-  font-size: 0.8125rem;
-  cursor: pointer;
-  transition: all 120ms ease;
-}
-.tv-chip:hover { border-color: var(--primary-color); color: var(--text-color); }
-.tv-chip.is-selected {
-  border-color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  color: var(--text-color);
-}
-.tv-count {
-  font-size: 0.7rem;
-  background: var(--surface-border);
-  border-radius: 999px;
-  padding: 1px 6px;
-  color: var(--text-color-secondary);
-}
-
-.cal-input-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  background: var(--surface-ground);
-}
 
 :deep(.p-inputnumber-input) { width: 100%; }
 </style>

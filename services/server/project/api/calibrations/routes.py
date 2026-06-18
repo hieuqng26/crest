@@ -203,6 +203,8 @@ def get_diagnostics(run_id):
 @calibrations.get("/<run_id>/forecast")
 @jwt_required()
 def get_forecast(run_id):
+    from project.workers.tasks import _load_forecast_data
+
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
@@ -211,7 +213,12 @@ def get_forecast(run_id):
         .order_by(Forecast.created_at)
         .all()
     )
-    return jsonify([f.to_dict() for f in forecasts]), 200
+    result = []
+    for f in forecasts:
+        d = f.to_dict()
+        d["forecast_json"] = _load_forecast_data(f)
+        result.append(d)
+    return jsonify(result), 200
 
 
 @calibrations.post("/<run_id>/cancel")
@@ -308,6 +315,8 @@ def recalibrate(run_id):
         r.progress_message = None
         s.add(r)
         CalibrationRunLog.query.filter_by(run_id=run_id).delete()
+        for f in Forecast.query.filter_by(calibration_run_id=r.id).all():
+            s.delete(f)
         s.flush()
         result = r.to_dict()
 

@@ -173,9 +173,13 @@ class Forecast(db.Model):
         db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False
     )
     forecast_horizon = db.Column(db.Integer, nullable=True)
-    forecast_json = db.Column(db.Text, nullable=True)
+    forecast_json = db.Column(db.Text, nullable=True)  # legacy; NULL for new rows
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+    )
+
+    results = db.relationship(
+        "ForecastResult", cascade="all, delete-orphan", lazy="dynamic"
     )
 
     def to_dict(self):
@@ -183,6 +187,23 @@ class Forecast(db.Model):
             id=self.id,
             calibration_run_id=self.calibration_run_id,
             forecast_horizon=self.forecast_horizon,
-            forecast_json=self.forecast_json,
+            has_results=self.results.count() > 0,
+            has_legacy_json=self.forecast_json is not None,
             created_at=self.created_at.isoformat() if self.created_at else None,
         )
+
+
+class ForecastResult(db.Model):
+    __tablename__ = "forecast_results"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    forecast_id = db.Column(
+        db.Integer, db.ForeignKey("forecasts.id"), nullable=False, index=True
+    )
+    actual = db.Column(db.Float, nullable=True)
+    predicted = db.Column(db.Float, nullable=True)
+    client_id = db.Column(db.String(64), nullable=True)
+    date = db.Column(db.String(32), nullable=True)
+    meta_json = db.Column(
+        db.Text, nullable=True
+    )  # JSON obj of non-client_id/date meta cols

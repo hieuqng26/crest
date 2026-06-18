@@ -230,20 +230,20 @@ const levelColor = (level) =>
               <dd>{{ run.dataset_name ?? run.dataset_id }}</dd>
             </div>
             <div class="detail-row">
-              <dt>Target Variables</dt>
+              <dt>Calibration Inputs</dt>
               <dd>
-                <div v-if="run.target_cols?.length" class="flex flex-column gap-1">
-                  <div v-for="(tc, i) in run.target_cols" :key="i" class="flex align-items-center gap-2">
-                    <span class="font-medium">{{ tc }}</span>
+                <div v-if="run.cal_inputs && Object.keys(run.cal_inputs).length" class="flex flex-column gap-1">
+                  <div v-for="(runId, key) in run.cal_inputs" :key="key" class="flex align-items-center gap-2">
+                    <span class="font-medium capitalize" style="min-width:9rem">{{ typeof key === 'string' ? key.replace(/_/g, ' ') : key }}</span>
                     <a
-                      v-if="run.cal_run_ids?.[i]"
+                      v-if="runId"
                       class="font-mono text-xs text-color-secondary cursor-pointer hover:text-primary"
                       style="text-decoration:none"
-                      @click="router.push({ name: 'calibrate_run', params: { run_id: run.cal_run_ids[i] } })"
-                    >{{ run.cal_run_ids[i].slice(0, 8) }}…</a>
+                      @click="router.push({ name: 'calibrate_run', params: { run_id: runId } })"
+                    >{{ runId.slice(0, 8) }}…</a>
                   </div>
                 </div>
-                <span v-else class="text-color-secondary text-sm">Synthetic scenarios</span>
+                <span v-else class="text-color-secondary text-sm">—</span>
               </dd>
             </div>
             <div class="detail-row">

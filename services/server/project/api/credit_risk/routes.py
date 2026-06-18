@@ -239,12 +239,13 @@ def create_run():
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
 
-    # Resolve cal_run_ids → target_cols
-    cal_run_ids = body.get("cal_run_ids") or []
-    target_cols = []
-    for crid in cal_run_ids:
-        cal = CalibrationRun.query.filter_by(run_id=crid).first()
-        target_cols.append(cal.target_col if cal else None)
+    cal_inputs = body.get("cal_inputs") or {}
+    required_keys = {"total_assets", "short_term_debts", "long_term_debts"}
+    missing = required_keys - {k for k, v in cal_inputs.items() if v}
+    if missing:
+        return jsonify(
+            {"error": f"Missing required calibration inputs: {sorted(missing)}"}
+        ), 400
 
     cr_run_id = str(uuid.uuid4())
     identity = get_jwt_identity()
@@ -252,8 +253,7 @@ def create_run():
     cr = CreditRiskRun(
         run_id=cr_run_id,
         dataset_id=int(dataset_id),
-        cal_run_ids_json=json.dumps(cal_run_ids),
-        target_cols_json=json.dumps(target_cols),
+        cal_run_ids_json=json.dumps(cal_inputs),
         is_active=False,
         exposure=float(body.get("exposure", 1_000_000)),
         discount_rate=float(body.get("discount_rate", 0.05)),
@@ -342,6 +342,7 @@ def delete_run(cr_run_id: str):
         return jsonify({"error": "Run not found"}), 404
 
     with app_session() as s:
+        CreditRiskRunLog.query.filter_by(run_id=cr_run_id).delete()
         r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
         s.delete(r)
 

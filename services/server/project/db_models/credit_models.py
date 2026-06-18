@@ -29,12 +29,7 @@ class CreditRiskRun(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
-    cal_run_ids_json = db.Column(
-        db.Text, nullable=True
-    )  # JSON list of cal_run_id strings
-    target_cols_json = db.Column(
-        db.Text, nullable=True
-    )  # JSON list of target_col strings (parallel to above)
+    cal_run_ids_json = db.Column(db.Text, nullable=True)  # JSON dict {slot: cal_run_id}
     is_active = db.Column(db.Boolean, nullable=False, default=False)
     exposure = db.Column(db.Float, nullable=False)
     discount_rate = db.Column(db.Float, nullable=False, default=0.05)
@@ -59,8 +54,7 @@ class CreditRiskRun(db.Model):
             id=self.id,
             run_id=self.run_id,
             dataset_id=self.dataset_id,
-            cal_run_ids=json.loads(self.cal_run_ids_json or "[]"),
-            target_cols=json.loads(self.target_cols_json or "[]"),
+            cal_inputs=json.loads(self.cal_run_ids_json or "{}"),
             is_active=bool(self.is_active),
             exposure=self.exposure,
             discount_rate=self.discount_rate,
