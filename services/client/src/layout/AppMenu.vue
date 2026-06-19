@@ -12,21 +12,22 @@ const model = [
   {
     label: 'Models',
     items: [
-      { label: 'Model Catalog',     to: { name: 'models' },         module: 'configure' },
-      { label: 'Configurations',    to: { name: 'configurations' }, module: 'configure' }
+      { label: 'Model Catalog',          to: { name: 'models' },         module: 'configure' },
+      { label: 'Model Configurations',   to: { name: 'configurations' }, module: 'configure' },
+      { label: 'New Calibration',        to: { name: 'calibrate_new' },  module: 'calibrate' },
+      { label: 'Calibration Jobs',       to: { name: 'calibrate_jobs' }, module: 'calibrate' }
     ]
   },
   {
-    label: 'Calibration',
+    label: 'Forecast',
     items: [
-      { label: 'New Run',  to: { name: 'calibrate_new' },  module: 'calibrate' },
-      { label: 'All Jobs', to: { name: 'calibrate_jobs' }, module: 'calibrate' }
+      { label: 'New Forecast',   to: { name: 'forecast_new' },  module: 'forecast' },
+      { label: 'Forecast Jobs',  to: { name: 'forecast_jobs' }, module: 'forecast' }
     ]
   },
   {
     label: 'Credit Risk',
     items: [
-      { label: 'Credit Data',   to: { name: 'credit_risk_data' },        module: 'credit_risk' },
       { label: 'New Analysis',  to: { name: 'credit_risk_new' },         module: 'credit_risk' },
       { label: 'Analysis Jobs', to: { name: 'credit_risk_jobs' },        module: 'credit_risk' },
       { label: 'IFRS 9 ECL',   to: { name: 'credit_risk_ecl' },         module: 'credit_risk' },

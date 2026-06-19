@@ -101,6 +101,7 @@ def create_app():
     from project.api.credit_risk import credit_risk
     from project.api.datasets import datasets
     from project.api.evaluations import evaluations
+    from project.api.forecast_runs import forecast_runs
     from project.api.forecasts import forecasts
     from project.api.model_configs import model_configs
     from project.api.roles.models import Role  # noqa: F401
@@ -115,10 +116,15 @@ def create_app():
         ModelConfig,
     )
     from project.db_models.credit_models import (
+        CreditRiskForecastInput,  # noqa: F401
         CreditRiskResult,  # noqa: F401
         CreditRiskRun,  # noqa: F401
         CreditRiskRunLog,  # noqa: F401
         PdRating,  # noqa: F401
+    )
+    from project.db_models.forecast_models import (  # noqa: F401
+        ForecastRun,
+        ForecastRunResult,
     )
 
     app.register_blueprint(auth, url_prefix="/api/auth")
@@ -130,6 +136,7 @@ def create_app():
     app.register_blueprint(calibrations, url_prefix="/api/calibrations")
     app.register_blueprint(evaluations, url_prefix="/api/evaluations")
     app.register_blueprint(forecasts, url_prefix="/api/forecasts")
+    app.register_blueprint(forecast_runs, url_prefix="/api/forecast-runs")
     app.register_blueprint(credit_risk, url_prefix="/api/credit-risk")
 
     # add health check route

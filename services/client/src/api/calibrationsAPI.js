@@ -9,7 +9,8 @@ const calibrationsAPI = {
   recalibrate: (runId, body)  => httpClient.post(`/calibrations/${runId}/recalibrate`, body),
   logs:        (runId)        => httpClient.get(`/calibrations/${runId}/logs`),
   cancel:      (runId)        => httpClient.post(`/calibrations/${runId}/cancel`),
-  delete:      (runId)        => httpClient.delete(`/calibrations/${runId}`),
+  refs:        (runId)        => httpClient.get(`/calibrations/${runId}/refs`),
+  delete:      (runId)        => httpClient.delete(`/calibrations/${runId}`, { validateStatus: (s) => s < 500 }),
   bulkDelete:  (runIds)       => httpClient.post('/calibrations/bulk-delete', { run_ids: runIds }),
 }
 

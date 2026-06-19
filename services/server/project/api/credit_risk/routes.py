@@ -6,13 +6,15 @@ import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from project.db_models.calibration_models import CalibrationRun, Dataset
+from project.db_models.calibration_models import Dataset
 from project.db_models.credit_models import (
+    CreditRiskForecastInput,
     CreditRiskResult,
     CreditRiskRun,
     CreditRiskRunLog,
     PdRating,
 )
+from project.db_models.forecast_models import ForecastRun
 
 from . import credit_risk
 
@@ -21,6 +23,8 @@ from . import credit_risk
 
 
 def _load_metrics(run_id: str) -> dict | None:
+    from project.db_models.calibration_models import CalibrationRun
+
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run or run.status != "success":
         return None
@@ -239,13 +243,24 @@ def create_run():
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
 
-    cal_inputs = body.get("cal_inputs") or {}
+    forecast_inputs = body.get("cal_inputs") or {}
     required_keys = {"total_assets", "short_term_debts", "long_term_debts"}
-    missing = required_keys - {k for k, v in cal_inputs.items() if v}
+    missing = required_keys - {k for k, v in forecast_inputs.items() if v}
     if missing:
         return jsonify(
-            {"error": f"Missing required calibration inputs: {sorted(missing)}"}
+            {"error": f"Missing required forecast inputs: {sorted(missing)}"}
         ), 400
+
+    # Resolve each slot's UUID to its integer PK — validates existence and acts as
+    # the FK reference that will block accidental deletion of the forecast run.
+    slot_to_forecast_run: dict[str, ForecastRun] = {}
+    for slot, run_uuid in forecast_inputs.items():
+        fr = ForecastRun.query.filter_by(run_id=run_uuid).first()
+        if not fr or fr.status != "success":
+            return jsonify(
+                {"error": f"Forecast run for '{slot}' not found or not successful"}
+            ), 400
+        slot_to_forecast_run[slot] = fr
 
     cr_run_id = str(uuid.uuid4())
     identity = get_jwt_identity()
@@ -253,7 +268,6 @@ def create_run():
     cr = CreditRiskRun(
         run_id=cr_run_id,
         dataset_id=int(dataset_id),
-        cal_run_ids_json=json.dumps(cal_inputs),
         is_active=False,
         exposure=float(body.get("exposure", 1_000_000)),
         discount_rate=float(body.get("discount_rate", 0.05)),
@@ -265,6 +279,16 @@ def create_run():
     )
     with app_session() as s:
         s.add(cr)
+        s.flush()
+        for slot, fr in slot_to_forecast_run.items():
+            s.add(
+                CreditRiskForecastInput(
+                    credit_risk_run_id=cr.id,
+                    forecast_run_id=fr.id,
+                    forecast_run_uuid=fr.run_id,
+                    slot=slot,
+                )
+            )
         s.flush()
         cr_dict = cr.to_dict()
 
@@ -330,6 +354,70 @@ def rerun_run(cr_run_id: str):
 
     run_credit_analysis.delay(cr_run_id)
     return jsonify({"ok": True}), 202
+
+
+@credit_risk.post("/runs/<cr_run_id>/cancel")
+@jwt_required()
+def cancel_run(cr_run_id: str):
+    from project import app_session
+
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+    if cr.status not in ("queued", "running"):
+        return jsonify({"error": f"Cannot cancel a run with status '{cr.status}'"}), 409
+
+    with app_session() as s:
+        r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        r.status = "failed"
+        r.finished_at = datetime.now(timezone.utc)
+        r.error_message = "Cancelled by user"
+        s.add(r)
+        s.flush()
+        result = r.to_dict()
+
+    return jsonify(result), 200
+
+
+@credit_risk.get("/runs/<cr_run_id>/results")
+@jwt_required()
+def get_run_results(cr_run_id: str):
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+
+    limit = min(int(request.args.get("limit", 200)), 1000)
+    results = (
+        CreditRiskResult.query.filter_by(run_id=cr_run_id)
+        .order_by(CreditRiskResult.id)
+        .limit(limit)
+        .all()
+    )
+    total = CreditRiskResult.query.filter_by(run_id=cr_run_id).count()
+
+    rows = []
+    for r in results:
+        ecl_rows = json.loads(r.ecl_json or "[]")
+        # Summarise: grab the Baseline scenario's latest-year ECL stage
+        baseline = [
+            e for e in ecl_rows if str(e.get("SCENARIO", "")).lower() == "baseline"
+        ]
+        if not baseline:
+            baseline = ecl_rows
+        latest = max(baseline, key=lambda e: e.get("YEAR", 0), default=None)
+        rows.append(
+            {
+                "client_id": r.client_id,
+                "stage": latest.get("STAGE") if latest else None,
+                "pd": latest.get("PD") if latest else None,
+                "lgd": latest.get("LGD") if latest else None,
+                "ecl": latest.get("ECL") if latest else None,
+                "scenario": latest.get("SCENARIO") if latest else None,
+                "year": latest.get("YEAR") if latest else None,
+            }
+        )
+
+    return jsonify({"rows": rows, "total": total, "showing": len(rows)}), 200
 
 
 @credit_risk.delete("/runs/<cr_run_id>")
@@ -438,6 +526,8 @@ def compute_pd_lgd_v1():
         metrics = _load_metrics(run_id)
         if not metrics:
             continue
+        from project.db_models.calibration_models import CalibrationRun
+
         run = CalibrationRun.query.filter_by(run_id=run_id).first()
         base_pd = max(0.001, metrics.get("auc_roc", 0.5) - 0.5)
         pd_curve = [round(min(1.0, base_pd * h**0.7), 4) for h in horizons]

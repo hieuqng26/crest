@@ -3,16 +3,16 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
-import calibrationsAPI from '@/api/calibrationsAPI'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import datasetsAPI from '@/api/datasetsAPI'
+import forecastRunsAPI from '@/api/forecastRunsAPI'
 
 const router = useRouter()
 const toast  = useToast()
 
 // ── data sources ──────────────────────────────────────────────────────────────
 const creditDatasets = ref([])
-const calRuns        = ref([])
+const forecastRuns   = ref([])
 const loadingInit    = ref(false)
 
 const datasetOptions = computed(() =>
@@ -32,8 +32,8 @@ const KMV_INPUTS = [
 const calInputs = ref({ total_assets: null, short_term_debts: null, long_term_debts: null })
 
 const runOptions = computed(() =>
-  calRuns.value.map(r => ({
-    label: `${r.target_col ?? '—'}  ·  ${r.config_name ?? r.run_id.slice(0, 8)}  ·  ${r.run_id.slice(0, 8)}…`,
+  forecastRuns.value.map(r => ({
+    label: `${r.target_col ?? '—'}  ·  ${r.name ?? r.config_name ?? r.run_id.slice(0, 8)}  ·  ${r.run_id.slice(0, 8)}…`,
     value: r.run_id,
   }))
 )
@@ -73,12 +73,12 @@ const launch = async () => {
 onMounted(async () => {
   loadingInit.value = true
   try {
-    const [dsResp, crResp] = await Promise.all([
+    const [dsResp, frResp] = await Promise.all([
       datasetsAPI.listByKind('credit'),
-      calibrationsAPI.list({ status: 'success', per_page: 200 }),
+      forecastRunsAPI.list({ status: 'success' }),
     ])
     creditDatasets.value = dsResp.data ?? []
-    calRuns.value        = (crResp.data?.items ?? crResp.data) ?? []
+    forecastRuns.value   = frResp.data ?? []
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Failed to load', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -139,30 +139,32 @@ onMounted(async () => {
             filter
           />
           <div v-if="!loadingInit && creditDatasets.length === 0" class="text-xs text-color-secondary mt-1">
-            No credit datasets found.
-            <a class="text-primary cursor-pointer" @click="router.push({ name: 'credit_risk_data' })">Upload one</a>
-            first.
+            No credit datasets found. Go to
+            <a class="text-primary cursor-pointer" @click="router.push({ name: 'datasets' })">Datasets</a>
+            and upload a file with type "Credit".
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Card: Calibration Inputs -->
+    <!-- Card: Forecast Inputs -->
     <div class="form-card mb-4">
       <div class="form-card-head flex align-items-center justify-content-between">
         <div class="text-xs text-color-secondary uppercase font-semibold" style="letter-spacing: 0.06em">
-          Calibration Inputs
+          Forecast Inputs
         </div>
         <div class="text-xs text-color-secondary">
           {{ KMV_INPUTS.filter(i => calInputs[i.key]).length }} / {{ KMV_INPUTS.length }} selected
         </div>
       </div>
 
-      <div v-if="!loadingInit && calRuns.length === 0" class="p-4 text-xs text-color-secondary">
-        No successful calibration runs found.
-        Run calibrations for <span class="font-mono">total_assets</span>,
+      <div v-if="!loadingInit && forecastRuns.length === 0" class="p-4 text-xs text-color-secondary">
+        No successful forecast runs found.
+        Create forecast runs for <span class="font-mono">total_assets</span>,
         <span class="font-mono">short_term_debts</span>, and
-        <span class="font-mono">long_term_debts</span> before launching.
+        <span class="font-mono">long_term_debts</span> in the
+        <a class="text-primary cursor-pointer" @click="router.push({ name: 'forecast_jobs' })">Forecast</a>
+        module before launching.
       </div>
 
       <div v-else>
@@ -189,8 +191,8 @@ onMounted(async () => {
               optionLabel="label"
               optionValue="value"
               :loading="loadingInit"
-              :disabled="loadingInit || calRuns.length === 0"
-              placeholder="Select calibration run"
+              :disabled="loadingInit || forecastRuns.length === 0"
+              placeholder="Select forecast run"
               class="w-full"
               filter
               showClear

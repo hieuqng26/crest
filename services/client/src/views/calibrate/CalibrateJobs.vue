@@ -7,7 +7,7 @@ import { statusSeverity } from './runUtils'
 import { fmtDate } from '@/utils/datetime'
 
 const router = useRouter()
-const toast = useToast()
+const toast  = useToast()
 
 const runs = ref([])
 const listLoading = ref(false)
@@ -116,13 +116,35 @@ const duplicateRun = async (r) => {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
 }
-const deleteRun = async (r) => {
+// Delete dialog
+const deleteDialog   = ref(false)
+const deleteTarget   = ref(null)
+const deleteRefs     = ref([])
+const deleteRefsLoading = ref(false)
+const deleteConfirming  = ref(false)
+
+const openDeleteDialog = async (r) => {
+  deleteTarget.value  = r
+  deleteRefs.value    = []
+  deleteDialog.value  = true
+  deleteRefsLoading.value = true
   try {
-    await calibrationsAPI.delete(r.run_id)
-    runs.value = runs.value.filter(x => x.run_id !== r.run_id)
-    toast.add({ severity: 'success', summary: 'Run deleted', detail: r.run_id, life: 2000 })
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    const { data } = await calibrationsAPI.refs(r.run_id)
+    deleteRefs.value = data.forecast_runs ?? []
+  } catch { /* non-critical */ }
+  finally { deleteRefsLoading.value = false }
+}
+
+const confirmDelete = async () => {
+  deleteConfirming.value = true
+  const res = await calibrationsAPI.delete(deleteTarget.value.run_id)
+  deleteConfirming.value = false
+  if (res.status === 204 || res.status === 200) {
+    runs.value = runs.value.filter(x => x.run_id !== deleteTarget.value.run_id)
+    deleteDialog.value = false
+    toast.add({ severity: 'success', summary: 'Run deleted', life: 2000 })
+  } else {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: res.data?.error, life: 4000 })
   }
 }
 
@@ -136,22 +158,18 @@ const clearSelection = () => { selection.value = []; confirmingBulkDelete.value 
 
 const bulkDelete = async () => {
   const runIds = selection.value.map(r => r.run_id)
+  exitSelectMode()
   try {
     const { data } = await calibrationsAPI.bulkDelete(runIds)
-    const deletedSet = new Set(
-      selection.value
-        .filter(r => r.status !== 'queued' && r.status !== 'running')
-        .map(r => r.run_id)
-    )
-    runs.value = runs.value.filter(r => !deletedSet.has(r.run_id))
+    await fetchRuns()
+    const severity = data.skipped > 0 ? 'warn' : 'success'
     const msg = data.skipped > 0
-      ? `${data.deleted} deleted, ${data.skipped} skipped (active runs)`
+      ? `${data.deleted} deleted, ${data.skipped} skipped (active or referenced by forecast jobs)`
       : `${data.deleted} run${data.deleted > 1 ? 's' : ''} deleted`
-    toast.add({ severity: 'success', summary: 'Deleted', detail: msg, life: 3000 })
+    toast.add({ severity, summary: data.skipped > 0 ? 'Partial delete' : 'Deleted', detail: msg, life: 4000 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
-  exitSelectMode()
 }
 
 // Per-row overflow menu
@@ -163,7 +181,7 @@ const showMenu = (e, r) => {
     { label: 'Re-run',    icon: 'pi pi-refresh',         command: () => duplicateRun(r) },
     { separator: true },
     { label: 'Cancel',    icon: 'pi pi-times', disabled: r.status !== 'running' && r.status !== 'queued', command: () => cancelRun(r) },
-    { label: 'Delete',    icon: 'pi pi-trash', class: 'text-red-400', command: () => deleteRun(r) }
+    { label: 'Delete',    icon: 'pi pi-trash', class: 'text-red-400', command: () => openDeleteDialog(r) }
   ]
   menuRef.value.toggle(e)
 }
@@ -431,10 +449,62 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
     </div>
 
     <Menu ref="menuRef" :model="menuItems" popup />
+
+    <!-- Delete confirm dialog -->
+    <Dialog v-model:visible="deleteDialog" modal :style="{ width: '32rem' }" :draggable="false" header="Delete run">
+      <div class="flex flex-column gap-3">
+        <p class="m-0 text-sm">
+          Are you sure you want to delete run
+          <span class="font-mono font-semibold">{{ deleteTarget?.run_id?.slice(0, 12) }}…</span>?
+          This cannot be undone.
+        </p>
+
+        <div v-if="deleteRefsLoading" class="flex align-items-center gap-2 text-sm text-color-secondary">
+          <i class="pi pi-spin pi-spinner" /> Checking dependencies…
+        </div>
+
+        <div v-else-if="deleteRefs.length" class="flex flex-column gap-2">
+          <div class="text-sm font-semibold text-red-400 flex align-items-center gap-2">
+            <i class="pi pi-exclamation-triangle" />
+            Cannot delete — referenced by {{ deleteRefs.length }} forecast job(s):
+          </div>
+          <div class="flex flex-column gap-1 pl-2">
+            <div v-for="fr in deleteRefs" :key="fr.run_id" class="flex align-items-center gap-2 text-sm">
+              <span class="dot-status" :style="{ background: { queued:'#60a5fa', running:'#facc15', success:'#34d399', failed:'#f87171' }[fr.status] ?? 'var(--surface-400)' }" />
+              <a class="text-primary cursor-pointer hover:underline font-mono text-xs"
+                @click="router.push({ name: 'forecast_run', params: { run_id: fr.run_id } }); deleteDialog = false">
+                {{ fr.name ?? fr.run_id.slice(0, 16) + '…' }}
+              </a>
+              <span class="text-xs text-color-secondary capitalize">({{ fr.status }})</span>
+            </div>
+          </div>
+          <p class="m-0 text-xs text-color-secondary">Delete those forecast jobs first, then retry.</p>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="deleteDialog = false" />
+        <Button
+          label="Delete"
+          icon="pi pi-trash"
+          severity="danger"
+          :disabled="deleteRefsLoading || deleteRefs.length > 0"
+          :loading="deleteConfirming"
+          @click="confirmDelete"
+        />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
+.dot-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 /* Status pills */
 .status-pills {
   display: inline-flex;

@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 
 from project import db
@@ -23,13 +22,31 @@ class PdRating(db.Model):
         )
 
 
+class CreditRiskForecastInput(db.Model):
+    __tablename__ = "credit_risk_run_forecast_inputs"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    credit_risk_run_id = db.Column(
+        db.Integer,
+        db.ForeignKey("credit_risk_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    forecast_run_id = db.Column(
+        db.Integer,
+        db.ForeignKey("forecast_runs.id"),
+        nullable=False,
+    )
+    forecast_run_uuid = db.Column(db.String(64), nullable=False)
+    slot = db.Column(db.String(32), nullable=False)
+
+
 class CreditRiskRun(db.Model):
     __tablename__ = "credit_risk_runs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
-    cal_run_ids_json = db.Column(db.Text, nullable=True)  # JSON dict {slot: cal_run_id}
     is_active = db.Column(db.Boolean, nullable=False, default=False)
     exposure = db.Column(db.Float, nullable=False)
     discount_rate = db.Column(db.Float, nullable=False, default=0.05)
@@ -45,6 +62,9 @@ class CreditRiskRun(db.Model):
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
+    forecast_inputs_rel = db.relationship(
+        "CreditRiskForecastInput", cascade="all, delete-orphan", lazy=True
+    )
     results = db.relationship(
         "CreditRiskResult", backref="run", cascade="all, delete-orphan"
     )
@@ -54,7 +74,9 @@ class CreditRiskRun(db.Model):
             id=self.id,
             run_id=self.run_id,
             dataset_id=self.dataset_id,
-            cal_inputs=json.loads(self.cal_run_ids_json or "{}"),
+            forecast_inputs={
+                inp.slot: inp.forecast_run_uuid for inp in self.forecast_inputs_rel
+            },
             is_active=bool(self.is_active),
             exposure=self.exposure,
             discount_rate=self.discount_rate,

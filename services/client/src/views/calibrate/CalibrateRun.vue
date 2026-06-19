@@ -44,7 +44,7 @@ const TABS = [
   { key: 'overview',    label: 'Overview',    icon: 'pi pi-info-circle' },
   { key: 'progress',    label: 'Progress',    icon: 'pi pi-bolt' },
   { key: 'diagnostics', label: 'Diagnostics', icon: 'pi pi-chart-bar' },
-  { key: 'forecast',    label: 'Forecast',    icon: 'pi pi-chart-line' }
+  { key: 'forecast',    label: 'Backtesting', icon: 'pi pi-chart-line' }
 ]
 const activeKey = computed({
   get: () => TABS.find(t => t.key === route.query.tab)?.key || 'overview',

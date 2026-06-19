@@ -65,8 +65,21 @@ const uploadVisible = ref(false)
 const uploading = ref(false)
 const uploadFile = ref(null)
 const uploadName = ref('')
+const uploadKind = ref('calibration')
 
-const openUpload = () => { uploadFile.value = null; uploadName.value = ''; uploading.value = false; uploadVisible.value = true }
+const KIND_OPTIONS = [
+  { label: 'Calibration',  value: 'calibration' },
+  { label: 'Credit',       value: 'credit' },
+  { label: 'Forecast',     value: 'forecast' },
+]
+
+const openUpload = () => {
+  uploadFile.value = null
+  uploadName.value = ''
+  uploadKind.value = 'calibration'
+  uploading.value = false
+  uploadVisible.value = true
+}
 
 const onSelectFile = (event) => {
   uploadFile.value = event.files[0]
@@ -78,7 +91,7 @@ const saveUpload = async () => {
   if (!uploadName.value.trim()) { toast.add({ severity: 'warn', summary: 'Dataset name is required', life: 2500 }); return }
   uploading.value = true
   try {
-    const { data } = await datasetsAPI.upload(uploadFile.value, uploadName.value.trim())
+    const { data } = await datasetsAPI.upload(uploadFile.value, uploadName.value.trim(), '', uploadKind.value)
     addDataset(data)
     toast.add({ severity: 'success', summary: 'Uploaded', detail: data.name, life: 2500 })
     uploadVisible.value = false
@@ -205,6 +218,14 @@ const saveQuery = () => {
             <Tag :value="data.source === 'live_query' ? 'Live Query' : 'Upload'" :severity="sourceSeverity(data.source)" />
           </template>
         </Column>
+        <Column field="kind" header="Type" sortable>
+          <template #body="{ data }">
+            <Tag
+              :value="{ calibration: 'Calibration', credit: 'Credit', forecast: 'Forecast' }[data.kind] ?? data.kind ?? '—'"
+              :severity="{ calibration: 'secondary', credit: 'info', forecast: 'warning' }[data.kind] ?? 'secondary'"
+            />
+          </template>
+        </Column>
         <Column field="row_count" header="Rows" sortable>
           <template #body="{ data }">{{ data.row_count?.toLocaleString() }}</template>
         </Column>
@@ -258,6 +279,16 @@ const saveQuery = () => {
         <div class="flex flex-column gap-1">
           <label class="font-medium text-sm">Dataset name</label>
           <InputText v-model="uploadName" placeholder="e.g. PD_Corporate_2024" class="w-full" />
+        </div>
+
+        <div class="flex flex-column gap-1">
+          <label class="font-medium text-sm">Type</label>
+          <Dropdown v-model="uploadKind" :options="KIND_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+          <div class="text-xs text-color-secondary">
+            <span v-if="uploadKind === 'calibration'">Used for model training and backtesting.</span>
+            <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis.</span>
+            <span v-else-if="uploadKind === 'forecast'">Feature data for generating forward-looking predictions.</span>
+          </div>
         </div>
       </div>
 

@@ -21,7 +21,9 @@ const creditRiskAPI = {
   getRun:          (runId)         => httpClient.get(`/credit-risk/runs/${runId}`),
   getClientResult: (runId, cId)    => httpClient.get(`/credit-risk/runs/${runId}/client/${cId}`),
   getRunLogs:      (runId)         => httpClient.get(`/credit-risk/runs/${runId}/logs`),
+  getRunResults:   (runId, limit = 200) => httpClient.get(`/credit-risk/runs/${runId}/results`, { params: { limit } }),
   setActiveRun:    (runId)         => httpClient.put(`/credit-risk/runs/${runId}/active`),
+  cancelRun:       (runId)         => httpClient.post(`/credit-risk/runs/${runId}/cancel`),
   rerunRun:        (runId)         => httpClient.post(`/credit-risk/runs/${runId}/rerun`),
   deleteRun:       (runId)         => httpClient.delete(`/credit-risk/runs/${runId}`),
 }

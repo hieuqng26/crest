@@ -15,7 +15,7 @@ onMounted(async () => {
   try {
     const { data } = await calibrationsAPI.forecast(props.run.run_id)
     if (data.length > 0) {
-      const parsed = JSON.parse(data[0].forecast_json)
+      const parsed = data[0].forecast_json
       actual.value    = parsed.actual    ?? []
       predicted.value = parsed.predicted ?? []
       meta.value      = parsed.meta      ?? {}
@@ -318,7 +318,7 @@ const classStats = computed(() => {
 
 // ── Prediction tables ─────────────────────────────────────────────────────────
 const regressionTableRows = computed(() =>
-  regressionPairs.value.slice(0, 100).map((d) => ({
+  regressionPairs.value.map((d) => ({
     date:      d.date ?? '—',
     client_id: d.client_id ?? '—',
     country:   d.country   ?? '—',
@@ -329,7 +329,7 @@ const regressionTableRows = computed(() =>
 )
 
 const classTableRows = computed(() =>
-  clsFilteredIndices.value.slice(0, 100).map((i) => {
+  clsFilteredIndices.value.map((i) => {
     const a = actual.value[i]
     const p = predicted.value[i]
     return {
@@ -344,6 +344,21 @@ const classTableRows = computed(() =>
     }
   })
 )
+
+const classFirst      = ref(0)
+const regressionFirst = ref(0)
+
+function downloadCsv(rows, filename) {
+  if (!rows.length) return
+  const headers = Object.keys(rows[0])
+  const lines = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))]
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
 </script>
 
 <template>
@@ -419,13 +434,22 @@ const classTableRows = computed(() =>
 
         <!-- Table -->
         <div class="surface-card border-round p-4" style="border:1px solid var(--surface-border)">
-          <h4 class="text-sm font-semibold mb-3 m-0">
-            Predictions
-            <span class="text-xs font-normal text-color-secondary ml-2">
-              (first 100 of {{ clsFilteredIndices.length.toLocaleString() }})
-            </span>
-          </h4>
-          <DataTable :value="classTableRows" size="small" scrollable scrollHeight="300px" class="forecast-table">
+          <div class="flex align-items-center justify-content-between mb-3">
+            <h4 class="text-sm font-semibold m-0">
+              Predictions
+              <span class="text-xs font-normal text-color-secondary ml-2">{{ clsFilteredIndices.length.toLocaleString() }} rows</span>
+            </h4>
+            <Button label="Download CSV" icon="pi pi-download" size="small" severity="secondary" outlined
+              @click="downloadCsv(classTableRows, 'backtesting_predictions.csv')" />
+          </div>
+          <DataTable :value="classTableRows" size="small" class="forecast-table"
+            :paginator="classTableRows.length > 25" :rows="25"
+            v-model:first="classFirst">
+            <template #paginatorstart>
+              <span class="text-xs text-color-secondary">
+                {{ classTableRows.length === 0 ? '0' : classFirst + 1 }}–{{ Math.min(classFirst + 25, classTableRows.length) }} of {{ classTableRows.length.toLocaleString() }}
+              </span>
+            </template>
             <Column field="date"       header="Date"            v-if="hasDate"     style="font-family:monospace;white-space:nowrap" />
             <Column field="client_id"  header="Client"          v-if="hasClientId" style="font-family:monospace" />
             <Column field="country"    header="Country"         v-if="hasCountry"  />
@@ -502,11 +526,22 @@ const classTableRows = computed(() =>
 
         <!-- Predictions table -->
         <div class="surface-card border-round p-4" style="border:1px solid var(--surface-border)">
-          <h4 class="text-sm font-semibold mb-3 m-0">
-            Prediction values
-            <span class="text-xs font-normal text-color-secondary ml-2">(first 100)</span>
-          </h4>
-          <DataTable :value="regressionTableRows" size="small" scrollable scrollHeight="320px" class="forecast-table">
+          <div class="flex align-items-center justify-content-between mb-3">
+            <h4 class="text-sm font-semibold m-0">
+              Prediction values
+              <span class="text-xs font-normal text-color-secondary ml-2">{{ regressionPairs.length.toLocaleString() }} rows</span>
+            </h4>
+            <Button label="Download CSV" icon="pi pi-download" size="small" severity="secondary" outlined
+              @click="downloadCsv(regressionTableRows, 'backtesting_predictions.csv')" />
+          </div>
+          <DataTable :value="regressionTableRows" size="small" class="forecast-table"
+            :paginator="regressionTableRows.length > 25" :rows="25"
+            v-model:first="regressionFirst">
+            <template #paginatorstart>
+              <span class="text-xs text-color-secondary">
+                {{ regressionTableRows.length === 0 ? '0' : regressionFirst + 1 }}–{{ Math.min(regressionFirst + 25, regressionTableRows.length) }} of {{ regressionTableRows.length.toLocaleString() }}
+              </span>
+            </template>
             <Column field="date"      header="Date"      v-if="hasDate"     style="font-family:monospace;white-space:nowrap" />
             <Column field="client_id" header="Client"    v-if="hasClientId" style="font-family:monospace" />
             <Column field="country"   header="Country"   v-if="hasCountry" />

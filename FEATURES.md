@@ -1,21 +1,41 @@
+- [x] Results table in Forecast job and Backtesting's prediction table in Calibration job: show the row number "x to y" corresponding to the selected page
+- [x] Results table in Forecast: doesn't need the box on top of the datatable ("PREDICTIONS ... xxx rows")
+- [x] Rename sidebar items: Models' Configurations -> Model Configurations, Calibration's New Run -> New Calibration, All Jobs -> Calibration Jobs, Forecast's New Forecast Run -> New Forecast, All Jobs -> Forecast Jobs. Then group MODELS and CALIBRATION modules together, call it MODELS
+
+---
+
+- [x] Add a column scenario to demo_macro_forecast.csv: this column is required. Forecast result should contain this column, which will be consumed by the Credit Risk analysis job, and then IFRS 9 ECL and PD/LGD
+- [x] Make the Forecast's All Jobs page and Credit Risk's Analysis Jobs page similar to Calibration's All Jobs page: Add "Select" button (for bulk deleting), remove the small "Forecast" text on top of "Forecast Jobs", add a filter button. The "View", "Rerun", "Delete" are grouped into a vertical 3 dots. Add ability to cancel the job as well. The run id in "CALIBRATION MODEL" column of the jobs table should be linked to the corresponding calibration jobs
+- [x] When View a specific Forecast job: Overview should be similar to Credit Risk's Analysis Jobs
+- [x] When View a specific Credit Risk analysis job: add result tab (similar to Forecast's)
+- [x] Calibration job: Backtesting's Prediction table should show the whole table (not just top 100), with ability to download
+
+---
+
+Calibration:
+- [x] The current forecast for each calibration run is done on validation set. This should not be a forecast but rather a backtesting/diagnosis.
+
+Forecast
+- [x] Create another module for "Forecast". For the forecast, user needs to register another forecast dataset of independent variables. User will choose the calibrated model and the forecast dataset, then launch a forecast run. The forecast runs' results will be the inputs to credit risk analysis jobs.
+
 Credit Risk:
-- New Analysis page: Calibration run should allow more than 1 calibrations/target variables. It should let user choose the target variables available from all successful calibration, then when user pick a specific calibration id if there are more than 1 runs for a selected target variable
-- Analysis jobs: dont redirect to IFRS 9 ECL on clicking. Instead, add ability to set active, view, rerun, delete. And the table should show Finished date, which target variables (and corresponding calibration id, if possible link the id to the one Calibration's All Jobs page)
-- IFRS 9 ECL and PD/LGD: should load result from active analysis job.
-- IFRS 9 ECL: remove the reload button and analysis run dropdown
+- [x] New Analysis page: Calibration run should allow more than 1 calibrations/target variables. It should let user choose the target variables available from all successful calibration, then when user pick a specific calibration id if there are more than 1 runs for a selected target variable
+- [x] Analysis jobs: dont redirect to IFRS 9 ECL on clicking. Instead, add ability to set active, view, rerun, delete. And the table should show Finished date, which target variables (and corresponding calibration id, if possible link the id to the one Calibration's All Jobs page)
+- [x] IFRS 9 ECL and PD/LGD: should load result from active analysis job.
+- [x] IFRS 9 ECL: remove the reload button and analysis run dropdown
 
-
-Later:
-- Create tests for backend scripts
-
+---
 
 - [x] Target and features variables should be set during calibration, not as part of model configuration
 - [x] Add more plots for Diagnosis of regression model
 
+---
 
 - [x] data split, scaler, hyperparameter search should be part of model configurations instead of being set in calibration
 - [x] Confirm if Forecast is currently static. If so, connect it to the workflow
 - [x] In All Jobs page, remove DURATION column, instead showing STARTED and FINISHED
+
+---
 
 Datasets page
 - [x] "All", "Upload", "Live Query" filters should be grouped into a dropdown (default to "All")

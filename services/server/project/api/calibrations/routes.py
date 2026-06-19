@@ -14,6 +14,7 @@ from project.db_models.calibration_models import (
     Forecast,
     ModelConfig,
 )
+from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
 from project.workers.tasks import run_calibration
 
@@ -255,18 +256,53 @@ def get_logs(run_id):
     return jsonify([log.to_dict() for log in logs]), 200
 
 
+@calibrations.get("/<run_id>/refs")
+@jwt_required()
+def get_refs(run_id):
+    r = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not r:
+        return jsonify({"error": "Not found"}), 404
+    forecast_refs = ForecastRun.query.filter_by(calibration_run_id=r.id).all()
+    return jsonify(
+        {
+            "forecast_runs": [
+                {"run_id": fr.run_id, "name": fr.name, "status": fr.status}
+                for fr in forecast_refs
+            ]
+        }
+    ), 200
+
+
+def _check_forecast_references(cal_run_id: int):
+    """Return a 409 response if forecast runs reference this calibration run, else None."""
+    refs = ForecastRun.query.filter_by(calibration_run_id=cal_run_id).all()
+    if refs:
+        n = len(refs)
+        return (
+            jsonify(
+                {
+                    "error": f"This calibration run is used by {n} forecast job(s). "
+                    "Delete those forecast jobs first, then retry."
+                }
+            ),
+            409,
+        )
+    return None, None
+
+
 @calibrations.delete("/<run_id>")
 @jwt_required()
 def delete_run(run_id):
+    r = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not r:
+        return jsonify({"error": "Not found"}), 404
+    if r.status in ("queued", "running"):
+        return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
+    err, code = _check_forecast_references(r.id)
+    if err:
+        return err, code
     with app_session() as s:
-        r = CalibrationRun.query.filter_by(run_id=run_id).first()
-        if not r:
-            return jsonify({"error": "Not found"}), 404
-        if r.status in ("queued", "running"):
-            return jsonify(
-                {"error": "Cannot delete an active run — cancel it first"}
-            ), 409
-        s.delete(r)
+        s.delete(CalibrationRun.query.get(r.id))
     return "", 204
 
 
@@ -279,17 +315,23 @@ def bulk_delete_runs():
 
     deleted, skipped = [], []
     for rid in run_ids:
+        run = CalibrationRun.query.filter_by(run_id=rid).first()
+        if not run:
+            continue
+        if run.status in ("queued", "running"):
+            skipped.append(rid)
+            continue
+        err, _ = _check_forecast_references(run.id)
+        if err:
+            skipped.append(rid)
+            continue
         with app_session() as s:
-            run = CalibrationRun.query.filter_by(run_id=rid).first()
-            if not run:
-                continue
-            if run.status in ("queued", "running"):
-                skipped.append(rid)
-                continue
-            s.delete(run)
+            s.delete(CalibrationRun.query.get(run.id))
         deleted.append(rid)
 
-    return jsonify({"deleted": len(deleted), "skipped": len(skipped)}), 200
+    return jsonify(
+        {"deleted": len(deleted), "deleted_ids": deleted, "skipped": len(skipped)}
+    ), 200
 
 
 @calibrations.post("/<run_id>/recalibrate")

@@ -1,15 +1,13 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
-import creditRiskAPI from '@/api/creditRiskAPI'
+import forecastRunsAPI from '@/api/forecastRunsAPI'
 import { fmtDate } from '@/utils/datetime'
 
-const router  = useRouter()
-const confirm = useConfirm()
-const toast   = useToast()
+const router = useRouter()
+const toast  = useToast()
 
 const runs        = ref([])
 const listLoading = ref(false)
@@ -21,7 +19,7 @@ const bulkDeleting = ref(false)
 const fetchRuns = async () => {
   listLoading.value = true
   try {
-    const { data } = await creditRiskAPI.listRuns()
+    const { data } = await forecastRunsAPI.list()
     runs.value = data ?? []
     const ids = new Set((data ?? []).map(r => r.run_id))
     selection.value = selection.value.filter(r => ids.has(r.run_id))
@@ -49,19 +47,7 @@ function startPolling() {
 
 function stopPolling() { clearInterval(pollTimer); pollTimer = null }
 
-async function autoSetLatest() {
-  if (runs.value.some(r => r.is_active)) return
-  const latest = [...runs.value]
-    .filter(r => r.status === 'success')
-    .sort((a, b) => new Date(b.finished_at ?? b.created_at) - new Date(a.finished_at ?? a.created_at))[0]
-  if (latest) await setActive(latest, { silent: true })
-}
-
-onMounted(async () => {
-  await fetchRuns()
-  await autoSetLatest()
-  if (hasActive.value) startPolling()
-})
+onMounted(async () => { await fetchRuns(); if (hasActive.value) startPolling() })
 onUnmounted(stopPolling)
 
 // ── filters ───────────────────────────────────────────────────────────────────
@@ -104,7 +90,7 @@ const preFiltered = computed(() =>
     .filter(r => dateRange.value === 'all' || daysAgo(r.created_at) <= Number(dateRange.value))
     .filter(r => {
       const q = search.value.trim().toLowerCase()
-      return !q || (r.run_id + (r.dataset_name ?? '')).toLowerCase().includes(q)
+      return !q || (r.run_id + (r.name ?? '') + (r.dataset_name ?? '') + (r.target_col ?? '')).toLowerCase().includes(q)
     })
 )
 
@@ -129,40 +115,26 @@ const menuItems = ref([])
 function showMenu(e, run) {
   menuItems.value = [
     { label: 'Open',   icon: 'pi pi-arrow-up-right', command: () => viewRun(run) },
-    { label: 'Set active', icon: 'pi pi-check-circle', command: () => setActive(run), disabled: run.status !== 'success' || run.is_active },
     { label: 'Rerun',  icon: 'pi pi-refresh',         command: () => rerunRun(run), disabled: run.status === 'running' || run.status === 'queued' },
     { separator: true },
     { label: 'Cancel', icon: 'pi pi-times',           command: () => cancelRun(run), disabled: run.status !== 'running' && run.status !== 'queued' },
-    { label: 'Delete', icon: 'pi pi-trash',           class: 'text-red-400', command: () => confirmDelete(run), disabled: run.status === 'running' || run.status === 'queued' },
+    { label: 'Delete', icon: 'pi pi-trash',           class: 'text-red-400', command: () => openDeleteDialog(run), disabled: run.status === 'running' || run.status === 'queued' },
   ]
   menuRef.value.toggle(e)
 }
 
 // ── actions ───────────────────────────────────────────────────────────────────
 function viewRun(run) {
-  router.push({ name: 'credit_risk_run', params: { run_id: run.run_id } })
-}
-
-async function setActive(run, { silent = false } = {}) {
-  actionBusy.value[run.run_id] = true
-  try {
-    await creditRiskAPI.setActiveRun(run.run_id)
-    await fetchRuns()
-    if (!silent) toast.add({ severity: 'success', summary: 'Active run set', detail: run.dataset_name ?? run.run_id.slice(0, 8), life: 3000 })
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
-  } finally {
-    delete actionBusy.value[run.run_id]
-  }
+  router.push({ name: 'forecast_run', params: { run_id: run.run_id } })
 }
 
 async function rerunRun(run) {
   actionBusy.value[run.run_id] = true
   try {
-    await creditRiskAPI.rerunRun(run.run_id)
+    await forecastRunsAPI.rerun(run.run_id)
     await fetchRuns()
     startPolling()
-    toast.add({ severity: 'info', summary: 'Rerun queued', detail: run.dataset_name ?? run.run_id.slice(0, 8), life: 3000 })
+    toast.add({ severity: 'info', summary: 'Rerun queued', detail: run.name ?? run.run_id.slice(0, 8), life: 3000 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -173,9 +145,9 @@ async function rerunRun(run) {
 async function cancelRun(run) {
   actionBusy.value[run.run_id] = true
   try {
-    await creditRiskAPI.cancelRun(run.run_id)
+    await forecastRunsAPI.cancel(run.run_id)
     await fetchRuns()
-    toast.add({ severity: 'warn', summary: 'Cancelled', detail: run.dataset_name ?? run.run_id.slice(0, 8), life: 3000 })
+    toast.add({ severity: 'warn', summary: 'Cancelled', detail: run.name ?? run.run_id.slice(0, 8), life: 3000 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -183,54 +155,57 @@ async function cancelRun(run) {
   }
 }
 
-function confirmDelete(run) {
-  confirm.require({
-    message: `Delete run "${run.dataset_name ?? run.run_id.slice(0, 8)}"? This cannot be undone.`,
-    header: 'Delete run',
-    icon: 'pi pi-exclamation-triangle',
-    acceptClass: 'p-button-danger',
-    accept: () => deleteRun(run),
-  })
+// Delete dialog
+const deleteDialog      = ref(false)
+const deleteTarget      = ref(null)
+const deleteRefs        = ref([])
+const deleteRefsLoading = ref(false)
+const deleteConfirming  = ref(false)
+
+async function openDeleteDialog(run) {
+  deleteTarget.value  = run
+  deleteRefs.value    = []
+  deleteDialog.value  = true
+  deleteRefsLoading.value = true
+  try {
+    const { data } = await forecastRunsAPI.refs(run.run_id)
+    deleteRefs.value = data.credit_risk_runs ?? []
+  } catch { /* non-critical */ }
+  finally { deleteRefsLoading.value = false }
 }
 
-async function deleteRun(run) {
-  actionBusy.value[run.run_id] = true
-  try {
-    await creditRiskAPI.deleteRun(run.run_id)
+async function confirmDelete() {
+  deleteConfirming.value = true
+  const res = await forecastRunsAPI.delete(deleteTarget.value.run_id)
+  deleteConfirming.value = false
+  if (res.status === 200 || res.status === 204) {
+    deleteDialog.value = false
     await fetchRuns()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
-  } finally {
-    delete actionBusy.value[run.run_id]
+    toast.add({ severity: 'success', summary: 'Run deleted', life: 2000 })
+  } else {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: res.data?.error, life: 4000 })
   }
 }
 
 function exitSelectMode() { selectMode.value = false; selection.value = [] }
 
-function confirmBulkDelete() {
-  const n = selection.value.length
-  confirm.require({
-    message: `Permanently delete ${n} selected run${n > 1 ? 's' : ''}? This cannot be undone.`,
-    header: `Delete ${n} run${n > 1 ? 's' : ''}`,
-    icon: 'pi pi-exclamation-triangle',
-    acceptClass: 'p-button-danger',
-    accept: bulkDelete,
-  })
-}
-
 async function bulkDelete() {
-  bulkDeleting.value = true
-  const targets = [...selection.value]
-  const results = await Promise.allSettled(targets.map(r => creditRiskAPI.deleteRun(r.run_id)))
-  const failed = results.filter(r => r.status === 'rejected').length
-  if (failed) {
-    toast.add({ severity: 'warn', summary: `${failed} deletion${failed > 1 ? 's' : ''} failed`, life: 4000 })
-  } else {
-    toast.add({ severity: 'success', summary: `${targets.length} run${targets.length > 1 ? 's' : ''} deleted`, life: 3000 })
-  }
+  const runIds = selection.value.map(r => r.run_id)
   exitSelectMode()
-  bulkDeleting.value = false
-  await fetchRuns()
+  bulkDeleting.value = true
+  try {
+    const { data } = await forecastRunsAPI.bulkDelete(runIds)
+    await fetchRuns()
+    const severity = data.skipped > 0 ? 'warn' : 'success'
+    const msg = data.skipped > 0
+      ? `${data.deleted} deleted, ${data.skipped} skipped (active or referenced by credit risk jobs)`
+      : `${data.deleted} run${data.deleted > 1 ? 's' : ''} deleted`
+    toast.add({ severity, summary: data.skipped > 0 ? 'Partial delete' : 'Deleted', detail: msg, life: 4000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    bulkDeleting.value = false
+  }
 }
 
 const filterPanel = ref(null)
@@ -241,10 +216,10 @@ const filterPanel = ref(null)
     <!-- Header -->
     <header class="flex align-items-end justify-content-between mb-4 flex-wrap gap-3">
       <div>
-        <h1 class="text-3xl font-semibold m-0 tracking-tight">Analysis Jobs</h1>
-        <p class="text-color-secondary text-sm m-0 mt-1">Credit risk analysis runs — KMV · ECL · PD/LGD.</p>
+        <h1 class="text-3xl font-semibold m-0 tracking-tight">Forecast Jobs</h1>
+        <p class="text-color-secondary text-sm m-0 mt-1">Apply calibrated models to forward-looking datasets.</p>
       </div>
-      <Button label="New Analysis" icon="pi pi-plus" @click="router.push({ name: 'credit_risk_new' })" />
+      <Button label="New Forecast Run" icon="pi pi-plus" @click="router.push({ name: 'forecast_new' })" />
     </header>
 
     <!-- Toolbar -->
@@ -267,7 +242,7 @@ const filterPanel = ref(null)
       <div class="flex align-items-center gap-2 ml-auto">
         <IconField iconPosition="left" style="width: 22rem">
           <InputIcon class="pi pi-search" />
-          <InputText v-model="search" placeholder="Search by run ID or dataset…" class="w-full" />
+          <InputText v-model="search" placeholder="Search by name, run ID, target…" class="w-full" />
         </IconField>
         <Button
           :label="activeFilterCount > 0 ? `Filters (${activeFilterCount})` : 'Filters'"
@@ -323,7 +298,7 @@ const filterPanel = ref(null)
             size="small"
             outlined
             :loading="bulkDeleting"
-            @click="confirmBulkDelete"
+            @click="bulkDelete"
           />
         </div>
       </Transition>
@@ -349,26 +324,13 @@ const filterPanel = ref(null)
       >
         <template #empty>
           <div class="text-center py-6 text-color-secondary">
-            <i class="pi pi-inbox text-3xl block mb-2 opacity-50" />
-            <p class="m-0">No analysis runs yet.</p>
-            <Button label="New Analysis" icon="pi pi-plus" text size="small" class="mt-2" @click="router.push({ name: 'credit_risk_new' })" />
+            <i class="pi pi-send text-3xl block mb-2 opacity-50" />
+            <p class="m-0">No forecast runs yet.</p>
+            <Button label="New Forecast Run" icon="pi pi-plus" text size="small" class="mt-2" @click="router.push({ name: 'forecast_new' })" />
           </div>
         </template>
 
         <Column v-if="selectMode" selectionMode="multiple" style="width: 3rem" />
-
-        <!-- Active switch -->
-        <Column header="Active" style="width: 5.5rem">
-          <template #body="{ data }">
-            <InputSwitch
-              v-if="data.status === 'success'"
-              :modelValue="data.is_active"
-              :disabled="data.is_active || !!actionBusy[data.run_id]"
-              v-tooltip.top="data.is_active ? 'Results shown in ECL / PD-LGD' : 'Set as active'"
-              @change="setActive(data)"
-            />
-          </template>
-        </Column>
 
         <Column header="Run" sortField="run_id" sortable>
           <template #body="{ data }">
@@ -377,33 +339,33 @@ const filterPanel = ref(null)
                 <span v-if="data.status === 'running'" class="status-dot-ping" :style="{ background: statusDot(data.status) }" />
               </span>
               <div class="line-height-3">
-                <div class="font-medium text-sm">{{ data.dataset_name ?? '—' }}</div>
+                <div class="font-medium text-sm">{{ data.name ?? data.run_id.slice(0, 16) }}</div>
                 <div class="text-xs text-color-secondary font-mono">{{ data.run_id }}</div>
               </div>
             </div>
           </template>
         </Column>
 
-        <Column header="Forecast Inputs" style="width: 18rem">
+        <Column header="Calibration Model" style="width: 16rem">
           <template #body="{ data }">
-            <div v-if="data.forecast_inputs && Object.keys(data.forecast_inputs).length" class="flex flex-column gap-1">
-              <div v-for="(runId, key) in data.forecast_inputs" :key="key" class="flex align-items-center gap-2 text-xs">
-                <span class="font-medium capitalize" style="min-width:9rem">{{ typeof key === 'string' ? key.replace(/_/g, ' ') : key }}</span>
+            <div class="line-height-3">
+              <div class="text-sm font-medium">{{ data.target_col ?? '—' }}</div>
+              <div class="text-xs text-color-secondary">
+                {{ data.config_name ?? '—' }}
                 <a
-                  v-if="runId"
-                  class="font-mono text-color-secondary cursor-pointer hover:text-primary"
+                  v-if="data.calibration_run_uuid"
+                  class="ml-1 font-mono opacity-70 cursor-pointer hover:text-primary"
                   style="text-decoration: none"
-                  @click.stop="router.push({ name: 'forecast_run', params: { run_id: runId } })"
-                >{{ runId.slice(0, 8) }}…</a>
+                  @click.stop="router.push({ name: 'calibrate_run', params: { run_id: data.calibration_run_uuid } })"
+                >· {{ data.calibration_run_uuid.slice(0, 8) }}…</a>
               </div>
             </div>
-            <span v-else class="text-xs text-color-secondary">—</span>
           </template>
         </Column>
 
-        <Column header="Exposure" style="width: 9rem">
+        <Column header="Forecast Dataset" style="width: 12rem">
           <template #body="{ data }">
-            <span class="text-sm font-mono">{{ data.exposure?.toLocaleString() }}</span>
+            <span class="text-sm">{{ data.dataset_name ?? '—' }}</span>
           </template>
         </Column>
 
@@ -462,11 +424,62 @@ const filterPanel = ref(null)
     </div>
 
     <Menu ref="menuRef" :model="menuItems" popup />
-    <ConfirmDialog />
+
+    <!-- Delete confirm dialog -->
+    <Dialog v-model:visible="deleteDialog" modal :style="{ width: '32rem' }" :draggable="false" header="Delete run">
+      <div class="flex flex-column gap-3">
+        <p class="m-0 text-sm">
+          Are you sure you want to delete run
+          <span class="font-mono font-semibold">{{ deleteTarget?.name ?? deleteTarget?.run_id?.slice(0, 16) + '…' }}</span>?
+          This cannot be undone.
+        </p>
+
+        <div v-if="deleteRefsLoading" class="flex align-items-center gap-2 text-sm text-color-secondary">
+          <i class="pi pi-spin pi-spinner" /> Checking dependencies…
+        </div>
+
+        <div v-else-if="deleteRefs.length" class="flex flex-column gap-2">
+          <div class="text-sm font-semibold text-red-400 flex align-items-center gap-2">
+            <i class="pi pi-exclamation-triangle" />
+            Cannot delete — referenced by {{ deleteRefs.length }} credit risk job(s):
+          </div>
+          <div class="flex flex-column gap-1 pl-2">
+            <div v-for="cr in deleteRefs" :key="cr.run_id" class="flex align-items-center gap-2 text-sm">
+              <span class="dot-status" :style="{ background: { queued:'#60a5fa', running:'#facc15', success:'#34d399', failed:'#f87171' }[cr.status] ?? 'var(--surface-400)' }" />
+              <a class="text-primary cursor-pointer hover:underline font-mono text-xs"
+                @click="router.push({ name: 'credit_risk_run', params: { run_id: cr.run_id } }); deleteDialog = false">
+                {{ cr.run_id.slice(0, 16) }}…
+              </a>
+              <span class="text-xs text-color-secondary capitalize">({{ cr.status }})</span>
+            </div>
+          </div>
+          <p class="m-0 text-xs text-color-secondary">Delete those credit risk jobs first, then retry.</p>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="deleteDialog = false" />
+        <Button
+          label="Delete"
+          icon="pi pi-trash"
+          severity="danger"
+          :disabled="deleteRefsLoading || deleteRefs.length > 0"
+          :loading="deleteConfirming"
+          @click="confirmDelete"
+        />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
+.dot-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 .status-pills {
   display: inline-flex;
   background: var(--surface-card);
@@ -503,8 +516,6 @@ const filterPanel = ref(null)
   text-align: center;
 }
 .status-pill.is-active .count { background: var(--surface-300, var(--surface-border)); color: var(--text-color); }
-
-:deep(.jobs-table .p-inputswitch) { transform: scale(0.85); }
 
 .status-dot {
   position: relative;

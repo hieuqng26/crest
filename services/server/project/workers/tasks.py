@@ -495,6 +495,166 @@ def run_calibration(self, run_id: str):
             raise
 
 
+def _write_forecast_progress(
+    run_id: str, progress: int, message: str, level: str = "info"
+):
+    """Write progress + a log line for a forecast run. Silent-fails so the task is never blocked."""
+    try:
+        from project import app_session
+        from project.db_models.forecast_models import ForecastRun, ForecastRunLog
+
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        with app_session() as s:
+            r = ForecastRun.query.filter_by(run_id=run_id).first()
+            if r:
+                r.progress = max(0, progress)
+                s.add(r)
+            s.add(ForecastRunLog(run_id=run_id, t=now, level=level, message=message))
+    except Exception:
+        pass
+
+
+@celery_app.task(bind=True, name="run_forecast")
+def run_forecast(self, run_id: str):
+    app = _make_flask_app()
+    with app.app_context():
+        import pickle
+
+        from project import app_session
+        from project.db_models.calibration_models import CalibrationRun, Dataset
+        from project.db_models.forecast_models import ForecastRun, ForecastRunResult
+
+        # Load all needed DB values as plain scalars before any session closes.
+        with app_session() as s:
+            fr = ForecastRun.query.filter_by(run_id=run_id).first()
+            if not fr:
+                logger.error(f"ForecastRun {run_id} not found")
+                return
+            cal_run = CalibrationRun.query.get(fr.calibration_run_id)
+            ds = Dataset.query.get(fr.dataset_id)
+            if not cal_run or not cal_run.artifact_path:
+                raise ValueError("Calibration run artifact not found")
+            if not ds or not ds.file_path:
+                raise ValueError(f"Dataset {fr.dataset_id} not found or has no file")
+            artifact_path = cal_run.artifact_path
+            ds_file_path = ds.file_path
+            fr.status = "running"
+            fr.started_at = datetime.now(timezone.utc)
+            s.add(fr)
+
+        try:
+            _write_forecast_progress(run_id, 5, "Loading forecast dataset…")
+
+            file_bytes = storage.download_bytes(ds_file_path.split("/", 1)[-1])
+            ext = ds_file_path.rsplit(".", 1)[-1].lower()
+            buf = io.BytesIO(file_bytes)
+            if ext == "csv":
+                df = pd.read_csv(buf)
+            elif ext == "xlsx":
+                df = pd.read_excel(buf)
+            elif ext == "parquet":
+                df = pd.read_parquet(buf)
+            else:
+                raise ValueError(f"Unsupported file type: {ext}")
+
+            _write_forecast_progress(
+                run_id, 20, f"Loaded {len(df):,} rows · {len(df.columns)} columns"
+            )
+
+            _write_forecast_progress(run_id, 30, "Loading calibration model artifact…")
+            artifact_bytes = storage.download_bytes(artifact_path.split("/", 1)[-1])
+            artifact = pickle.loads(artifact_bytes)  # noqa: S301
+            plugin = artifact["model"]
+            scaler = artifact["scaler"]
+            feature_cols = artifact["feature_cols"]
+
+            missing_cols = [c for c in feature_cols if c not in df.columns]
+            if missing_cols:
+                raise ValueError(
+                    f"Forecast dataset is missing required feature columns: {missing_cols}"
+                )
+
+            _write_forecast_progress(run_id, 40, "Preparing features…")
+            X_df = df[feature_cols].select_dtypes(include=[np.number])
+            actual_feature_cols = list(X_df.columns)
+            missing_numeric = [c for c in feature_cols if c not in actual_feature_cols]
+            if missing_numeric:
+                raise ValueError(
+                    f"Feature columns are not numeric in forecast dataset: {missing_numeric}"
+                )
+            X = X_df.values
+
+            if scaler:
+                X = scaler.transform(X)
+
+            _write_forecast_progress(run_id, 55, "Applying model…")
+            predicted_arr = plugin.predict(X)
+
+            meta_col_set = set(actual_feature_cols)
+            meta_cols = [c for c in df.columns if c not in meta_col_set]
+
+            def _coerce(v):
+                if v is None or isinstance(v, (str, bool)):
+                    return v
+                if isinstance(v, float):
+                    return float(v)
+                if isinstance(v, (int, np.integer)):
+                    return int(v)
+                return str(v)
+
+            meta_dict = {
+                col: [_coerce(v) for v in df[col].tolist()] for col in meta_cols
+            }
+            client_ids_list = meta_dict.get("client_id", [None] * len(predicted_arr))
+            dates_list = meta_dict.get("date", [None] * len(predicted_arr))
+            other_keys = [k for k in meta_cols if k not in ("client_id", "date")]
+
+            _write_forecast_progress(run_id, 70, "Storing predictions…")
+            predicted_list = [
+                float(v) if v is not None else None for v in predicted_arr.tolist()
+            ]
+
+            with app_session() as s:
+                r = ForecastRun.query.filter_by(run_id=run_id).first()
+                result_rows = [
+                    {
+                        "forecast_run_id": r.id,
+                        "client_id": str(client_ids_list[i])
+                        if client_ids_list[i] is not None
+                        else None,
+                        "date": str(dates_list[i])
+                        if dates_list[i] is not None
+                        else None,
+                        "predicted": predicted_list[i],
+                        "meta_json": json.dumps(
+                            {k: meta_dict[k][i] for k in other_keys}
+                        )
+                        if other_keys
+                        else None,
+                    }
+                    for i in range(len(predicted_list))
+                ]
+                s.bulk_insert_mappings(ForecastRunResult, result_rows)
+                r.status = "success"
+                r.finished_at = datetime.now(timezone.utc)
+                r.progress = 100
+                s.add(r)
+
+            _write_forecast_progress(run_id, 100, "Forecast completed successfully")
+
+        except Exception as exc:
+            logger.error(f"Forecast run {run_id} failed: {exc}", exc_info=True)
+            with app_session() as s:
+                r = ForecastRun.query.filter_by(run_id=run_id).first()
+                if r:
+                    r.status = "failed"
+                    r.finished_at = datetime.now(timezone.utc)
+                    r.error_message = str(exc)
+                    s.add(r)
+            _write_forecast_progress(run_id, -1, f"Failed: {exc}")
+            raise
+
+
 def _cr_log(
     cr_run_id: str, message: str, level: str = "info", progress: int | None = None
 ):
@@ -525,12 +685,9 @@ def run_credit_analysis(self, cr_run_id: str):
         from project.api.credit_risk.routes import _pd_rating_df
         from project.core.credit_risk.ecl import compute_ecl
         from project.core.credit_risk.kmv import run_kmv
-        from project.db_models.calibration_models import (
-            CalibrationRun,
-            Dataset,
-            Forecast,
-        )
+        from project.db_models.calibration_models import Dataset
         from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
+        from project.db_models.forecast_models import ForecastRun, ForecastRunResult
 
         cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
         if not cr:
@@ -538,7 +695,9 @@ def run_credit_analysis(self, cr_run_id: str):
             return
 
         dataset_id = cr.dataset_id
-        cal_inputs = json.loads(cr.cal_run_ids_json or "{}")
+        forecast_inputs = {
+            inp.slot: inp.forecast_run_uuid for inp in cr.forecast_inputs_rel
+        }
         exposure = cr.exposure
         discount_rate = cr.discount_rate
         lifetime_horizon = cr.lifetime_horizon
@@ -588,65 +747,50 @@ def run_credit_analysis(self, cr_run_id: str):
             n_clients = len(credit_df)
             _cr_log(cr_run_id, f"Loaded {n_clients} clients from dataset", progress=2)
 
-            # 3. Build per-variable forecast indices from the 3 required calibration runs.
+            # 3. Build per-variable forecast indices from the 3 required forecast runs.
             #    Each key maps to {client_id: {year: value}}.
             REQUIRED_INPUTS = ("total_assets", "short_term_debts", "long_term_debts")
-            missing_inputs = [k for k in REQUIRED_INPUTS if not cal_inputs.get(k)]
+            missing_inputs = [k for k in REQUIRED_INPUTS if not forecast_inputs.get(k)]
             if missing_inputs:
-                raise ValueError(
-                    f"Missing required calibration inputs: {missing_inputs}"
-                )
+                raise ValueError(f"Missing required forecast inputs: {missing_inputs}")
 
-            forecast_by_var: dict[str, dict[str, dict[int, float]]] = {}
+            # forecast_by_var[key][client_id][scenario][year] = predicted
+            forecast_by_var: dict[str, dict[str, dict[str, dict[int, float]]]] = {}
             for key in REQUIRED_INPUTS:
-                cal_run_id_k = cal_inputs[key]
-                cal_run = CalibrationRun.query.filter_by(run_id=cal_run_id_k).first()
-                if not cal_run or cal_run.status != "success":
+                fr_run_uuid = forecast_inputs[key]
+                fr = ForecastRun.query.filter_by(run_id=fr_run_uuid).first()
+                if not fr or fr.status != "success":
                     raise ValueError(
-                        f"Calibration run for '{key}' ({cal_run_id_k[:8]}…) not found or not successful"
+                        f"Forecast run for '{key}' ({fr_run_uuid[:8]}…) not found or not successful"
                     )
-                cal_forecasts = Forecast.query.filter_by(
-                    calibration_run_id=cal_run.id
-                ).all()
-                if not cal_forecasts:
+                fr_rows = (
+                    ForecastRunResult.query.filter_by(forecast_run_id=fr.id)
+                    .order_by(ForecastRunResult.id)
+                    .all()
+                )
+                if not fr_rows:
                     raise ValueError(
-                        f"Calibration run for '{key}' ({cal_run_id_k[:8]}…) has no forecast data"
+                        f"Forecast run for '{key}' ({fr_run_uuid[:8]}…) has no results"
                     )
-                fc = cal_forecasts[0]
-                if fc.results.count() > 0:
-                    from project.db_models.calibration_models import (
-                        ForecastResult as FR,
-                    )
-
-                    fc_rows = (
-                        fc.results.with_entities(FR.client_id, FR.date, FR.predicted)
-                        .order_by(FR.id)
-                        .all()
-                    )
-                    cids = [r.client_id for r in fc_rows]
-                    dates = [r.date for r in fc_rows]
-                    predicted = [r.predicted for r in fc_rows]
-                else:
-                    fdata = json.loads(fc.forecast_json or "{}")
-                    predicted = fdata.get("predicted", [])
-                    meta = fdata.get("meta", {})
-                    dates = meta.get("date", [])
-                    cids = meta.get("client_id", [])
-                idx_map: dict[str, dict[int, float]] = {}
-                for i, cid in enumerate(cids):
-                    cid = str(cid)
+                idx_map: dict[str, dict[str, dict[int, float]]] = {}
+                for row in fr_rows:
+                    cid = str(row.client_id) if row.client_id else None
+                    if cid is None:
+                        continue
+                    meta = json.loads(row.meta_json or "{}")
+                    scen = str(meta.get("scenario", "Baseline"))
                     try:
-                        yr = int(pd.to_datetime(str(dates[i])).year)
+                        yr = int(pd.to_datetime(str(row.date)).year)
                     except Exception:
-                        yr = int(str(dates[i])[:4]) if dates else 2024
-                    if i < len(predicted) and predicted[i] is not None:
-                        if cid not in idx_map:
-                            idx_map[cid] = {}
-                        idx_map[cid][yr] = float(predicted[i])
+                        yr = int(str(row.date)[:4]) if row.date else 2024
+                    if row.predicted is not None:
+                        idx_map.setdefault(cid, {}).setdefault(scen, {})[yr] = float(
+                            row.predicted
+                        )
                 forecast_by_var[key] = idx_map
                 _cr_log(
                     cr_run_id,
-                    f"Loaded '{key}' forecast from run {cal_run_id_k[:8]}…"
+                    f"Loaded '{key}' forecast from run {fr_run_uuid[:8]}…"
                     f" ({len(idx_map)} clients)",
                 )
 
@@ -675,12 +819,40 @@ def run_credit_analysis(self, cr_run_id: str):
                     "rating": str(row["rating"]),
                 }
 
-                # Build forecast DataFrame from the 3 calibrated variable indices
-                ta_idx = forecast_by_var["total_assets"].get(client_id, {})
-                cl_idx = forecast_by_var["short_term_debts"].get(client_id, {})
-                nc_idx = forecast_by_var["long_term_debts"].get(client_id, {})
-                years = sorted(set(ta_idx) & set(cl_idx) & set(nc_idx))
-                if not years:
+                # Build forecast DataFrame from the 3 calibrated variable indices.
+                # If forecast data contains multiple scenarios (e.g. Baseline / Adverse /
+                # Severely Adverse), use them directly; fall back to a single "Baseline"
+                # with artificial growth multipliers when the data has no scenario dimension.
+                ta_by_scen = forecast_by_var["total_assets"].get(client_id, {})
+                cl_by_scen = forecast_by_var["short_term_debts"].get(client_id, {})
+                nc_by_scen = forecast_by_var["long_term_debts"].get(client_id, {})
+
+                all_scens = sorted(set(ta_by_scen) & set(cl_by_scen) & set(nc_by_scen))
+                if not all_scens:
+                    # Flatten any single-scenario data for the fallback path
+                    all_scens = ["Baseline"]
+                    ta_by_scen = {"Baseline": next(iter(ta_by_scen.values()), {})}
+                    cl_by_scen = {"Baseline": next(iter(cl_by_scen.values()), {})}
+                    nc_by_scen = {"Baseline": next(iter(nc_by_scen.values()), {})}
+
+                rows_fc = []
+                for scen in all_scens:
+                    ta_yr = ta_by_scen.get(scen, {})
+                    cl_yr = cl_by_scen.get(scen, {})
+                    nc_yr = nc_by_scen.get(scen, {})
+                    years = sorted(set(ta_yr) & set(cl_yr) & set(nc_yr))
+                    for yr in years:
+                        rows_fc.append(
+                            {
+                                "YEAR": yr,
+                                "SCENARIO": scen,
+                                "Total_Asset": ta_yr[yr],
+                                "CL": cl_yr[yr],
+                                "NonCL": nc_yr[yr],
+                            }
+                        )
+
+                if not rows_fc:
                     failed_clients += 1
                     _cr_log(
                         cr_run_id,
@@ -688,23 +860,6 @@ def run_credit_analysis(self, cr_run_id: str):
                         level="warn",
                     )
                     continue
-                rows_fc = []
-                for scen, growth in [
-                    ("Baseline", 1.0),
-                    ("Upside", 1.02),
-                    ("Downside", 0.98),
-                ]:
-                    for j, yr in enumerate(years):
-                        factor = growth**j
-                        rows_fc.append(
-                            {
-                                "YEAR": yr,
-                                "SCENARIO": scen,
-                                "Total_Asset": ta_idx[yr] * factor,
-                                "CL": cl_idx[yr] * factor,
-                                "NonCL": nc_idx[yr] * factor,
-                            }
-                        )
                 forecast = pd.DataFrame(rows_fc)
 
                 try:
