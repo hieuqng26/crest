@@ -332,7 +332,7 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
     </div>
 
     <!-- Table -->
-    <div class="border-1 surface-border border-round overflow-hidden">
+    <div class="surface-card border-round overflow-hidden shadow-1">
       <DataTable
         :value="filtered"
         v-model:selection="selection"

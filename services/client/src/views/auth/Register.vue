@@ -4,7 +4,7 @@
 // import { useToast } from 'primevue/usetoast'
 // import { useStore } from 'vuex'
 
-// const logoUrl = import.meta.env.VITE_LOGO_URL
+const logoUrl = '/layout/images/logo-ey-dark.svg'
 // const appName = import.meta.env.VITE_APP_NAME
 // const store = useStore()
 // const toast = useToast()

@@ -9,7 +9,7 @@ const router = useRouter()
 const toast = useToast()
 
 const FAMILY_LABEL = { classification: 'Classification', ensemble: 'Ensemble', regression: 'Regression', timeseries: 'Time Series', statistical: 'Statistical' }
-const FAMILY_SEVERITY = { classification: 'info', ensemble: 'warning', regression: 'secondary', timeseries: 'contrast', statistical: 'success' }
+const FAMILY_SEVERITY = { classification: 'info', ensemble: 'warning', regression: 'success', timeseries: 'contrast', statistical: 'secondary' }
 const FAMILY_ORDER = ['classification', 'ensemble', 'regression', 'timeseries', 'statistical']
 
 onMounted(fetchConfigs)

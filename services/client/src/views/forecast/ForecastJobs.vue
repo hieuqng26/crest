@@ -305,7 +305,7 @@ const filterPanel = ref(null)
     </div>
 
     <!-- Table -->
-    <div class="border-1 surface-border border-round overflow-hidden">
+    <div class="surface-card border-round overflow-hidden shadow-1">
       <DataTable
         :value="filtered"
         v-model:selection="selection"
@@ -354,7 +354,7 @@ const filterPanel = ref(null)
                 {{ data.config_name ?? '—' }}
                 <a
                   v-if="data.calibration_run_uuid"
-                  class="ml-1 font-mono opacity-70 cursor-pointer hover:text-primary"
+                  class="ml-1 font-mono text-color-secondary cursor-pointer hover:text-primary"
                   style="text-decoration: none"
                   @click.stop="router.push({ name: 'calibrate_run', params: { run_id: data.calibration_run_uuid } })"
                 >· {{ data.calibration_run_uuid.slice(0, 8) }}…</a>
@@ -547,7 +547,7 @@ const filterPanel = ref(null)
   transition: all 120ms;
 }
 .chip-toggle:hover { color: var(--text-color); }
-.chip-toggle.is-active { background: var(--primary-color); border-color: var(--primary-color); color: #fff; }
+.chip-toggle.is-active { background: var(--primary-color); border-color: var(--primary-color); color: var(--primary-color-text); }
 
 :deep(.jobs-table .p-datatable-thead > tr > th) {
   background: var(--surface-ground);

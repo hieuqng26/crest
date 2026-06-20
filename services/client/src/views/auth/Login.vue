@@ -5,7 +5,7 @@ import { useToast } from 'primevue/usetoast'
 import { useStore } from 'vuex'
 import { useRoute } from 'vue-router'
 
-const logoUrl = '/layout/images/logo-ey.svg'
+const logoUrl = '/layout/images/logo-ey-dark.svg'
 const appName = import.meta.env.VITE_APP_NAME
 const store = useStore()
 const toast = useToast()

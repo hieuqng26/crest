@@ -1,7 +1,8 @@
 /*
- * CREST brand overrides — sits on top of the PrimeVue `ey-dark` theme to refine
- * tokens, typography, and component appearance toward the ey.com aesthetic.
- * Edit DESIGN.md before adjusting anything here.
+ * CREST brand overrides — sits on top of the PrimeVue theme to refine tokens,
+ * typography, and component appearance toward the ey.com aesthetic:
+ * light, airy content surfaces framed by dark charcoal chrome (topbar + sidebar),
+ * with EY Yellow reserved for sparse accents. See .claude/docs/design.md before changing.
  */
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -9,52 +10,79 @@
  * is open-source). The theme already self-hosts Inter var.
  * ───────────────────────────────────────────────────────────────────── */
 :root {
-  /* Surfaces — deeper than PrimeVue defaults, gives cards real elevation */
-  --surface-ground:  #0A0A0F;
-  --surface-section: #11111A;
-  --surface-card:    #16161E;
-  --surface-overlay: #1C1C26;
-  --surface-border:  #2A2A36;
-  --surface-hover:   rgba(255, 230, 0, 0.04);
+  /* Content surfaces — light & airy (ey.com content area) */
+  --surface-ground:  #EDEEF2;  /* app canvas — light lavender-grey */
+  --surface-section: #F6F7F9;  /* faint fills, inputs */
+  --surface-card:    #FFFFFF;  /* cards lift off the canvas */
+  --surface-overlay: #FFFFFF;  /* dialogs, menus, toasts */
+  --surface-border:  #E1E3E9;
+  --surface-hover:   #EBECF1;
 
-  /* Text — warm white sits easier than #FFFFFF on dark */
-  --text-color:           #F5F5F7;
-  --text-color-secondary: #9F9FAE;
-  --text-color-muted:     #6B6B7A;
+  /* Numbered ramp — re-based light (low = light surface, high = dark).
+     Components use --surface-100/200/300 for pill/badge fills. */
+  --surface-0:   #FFFFFF;
+  --surface-50:  #F6F7F9;
+  --surface-100: #EDEEF2;
+  --surface-200: #E1E3E9;
+  --surface-300: #CFD2DA;
+  --surface-400: #A1A1AA;
+  --surface-500: #71717A;
+  --surface-600: #52525B;
+  --surface-700: #3F3F46;
+  --surface-800: #27272A;
+  --surface-900: #18181B;
 
-  /* Brand — EY Yellow stays the primary accent */
-  --primary-color:      #FFE600;
-  --primary-color-text: #1A1A24;
-  --primary-color-hover:#FFEA33;
+  /* Text — EY black on light reads crisp, not harsh */
+  --text-color:           #2E2E38;  /* EY black */
+  --text-color-secondary: #5C5C68;
+  --text-color-muted:     #8E8E9A;
+
+  /* Chrome — persistent dark charcoal that frames the light content */
+  --chrome-bg:           #2E2E38;  /* EY black */
+  --chrome-border:       #3D3D49;
+  --chrome-text:         #FFFFFF;
+  --chrome-text-muted:   #B7B7C2;
+  --chrome-hover:        rgba(255, 255, 255, 0.08);
+  --chrome-active:       rgba(255, 255, 255, 0.07);
+
+  /* Brand — EY's light-mode gold (less neon than #FFE600); accent only */
+  --primary-color:      #F2C200;
+  --primary-color-text: #2E2E38;
+  --primary-color-hover:#FFD42E;
+
+  /* Primary action button — solid EY charcoal, white text */
+  --button-primary-bg:    #2E2E38;
+  --button-primary-hover: #3D3D49;
+  --button-primary-text:  #FFFFFF;
 
   /* Highlights & state */
-  --highlight-bg:           rgba(255, 230, 0, 0.10);
-  --highlight-text-color:   #FFFFFF;
-  --focus-ring:             0 0 0 2px rgba(255, 230, 0, 0.35);
-  --p-focus-ring-color:     #FFE600;
+  --highlight-bg:           rgba(242, 194, 0, 0.16);
+  --highlight-text-color:   #2E2E38;
+  --focus-ring:             0 0 0 3px rgba(242, 194, 0, 0.22);
+  --p-focus-ring-color:     #F2C200;
 
   /* Semantic — only used for status, never decoration */
-  --success-color: #34D399;
-  --warning-color: #F59E0B;
-  --danger-color:  #F87171;
-  --info-color:    #60A5FA;
+  --success-color: #1F9D63;
+  --warning-color: #C77700;
+  --danger-color:  #D64545;
+  --info-color:    #2D6FD6;
 
-  /* Radii — tighter than PrimeVue default; ey.com uses square-ish edges */
-  --radius-sm:  4px;
-  --radius-md:  6px;
-  --radius-lg:  8px;
-  --radius-xl:  12px;
+  /* Radii — softened for a calmer, modern feel */
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  10px;
+  --radius-xl:  14px;
   --border-radius: var(--radius-md);
 
   /* Chart palette — first slot is always EY Yellow */
-  --chart-1: #FFE600;
-  --chart-2: #60A5FA;
-  --chart-3: #34D399;
-  --chart-4: #F472B6;
-  --chart-5: #A78BFA;
-  --chart-6: #FB923C;
-  --chart-7: #22D3EE;
-  --chart-8: #F87171;
+  --chart-1: #E6CF00;
+  --chart-2: #2D6FD6;
+  --chart-3: #1F9D63;
+  --chart-4: #D6489B;
+  --chart-5: #7C5CD6;
+  --chart-6: #E0792A;
+  --chart-7: #0E9BB5;
+  --chart-8: #D64545;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -66,6 +94,8 @@ html, body {
   font-family: "EYInterstate", "Inter var", "Inter", -apple-system,
                BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   letter-spacing: -0.005em;
+  background: var(--surface-ground);
+  color: var(--text-color);
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -86,28 +116,28 @@ code, kbd, pre, .font-mono {
   font-feature-settings: "calt" 0;
 }
 
-/* Soft scrollbar in the EY style */
+/* Soft scrollbar */
 ::-webkit-scrollbar        { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track  { background: transparent; }
 ::-webkit-scrollbar-thumb  {
-  background: var(--surface-border);
+  background: #CFD2DA;
   border-radius: 999px;
   border: 2px solid var(--surface-ground);
 }
-::-webkit-scrollbar-thumb:hover { background: #3A3A48; }
+::-webkit-scrollbar-thumb:hover { background: #B6BAC5; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Topbar — flat, low contrast, brand-led
+ * Topbar — dark charcoal chrome, brand-led
  * ───────────────────────────────────────────────────────────────────── */
 .layout-topbar {
-  background-color: var(--surface-ground) !important;
-  border-bottom: 1px solid var(--surface-border);
+  background-color: var(--chrome-bg) !important;
+  border-bottom: 1px solid var(--chrome-border);
   box-shadow: none !important;
   height: 4.5rem !important;
 }
 
 .layout-topbar .layout-topbar-logo {
-  color: var(--text-color) !important;
+  color: var(--chrome-text) !important;
   letter-spacing: -0.015em;
 }
 .layout-topbar .layout-topbar-logo img {
@@ -115,16 +145,28 @@ code, kbd, pre, .font-mono {
 }
 
 .layout-topbar .layout-topbar-button {
-  color: var(--text-color-secondary);
+  color: var(--chrome-text-muted);
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 .layout-topbar .layout-topbar-button:hover {
+  color: var(--chrome-text);
+  background-color: var(--chrome-hover);
+}
+/* Mobile overlay dropdown is a light panel — restore content colours there */
+.layout-topbar .layout-topbar-menu.layout-topbar-menu-mobile-active {
+  background-color: var(--surface-overlay) !important;
+  border: 1px solid var(--surface-border);
+}
+.layout-topbar .layout-topbar-menu.layout-topbar-menu-mobile-active .layout-topbar-button {
+  color: var(--text-color-secondary);
+}
+.layout-topbar .layout-topbar-menu.layout-topbar-menu-mobile-active .layout-topbar-button:hover {
   color: var(--text-color);
   background-color: var(--surface-hover);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Sidebar — float card, tight rhythm
+ * Sidebar — light card (airy), framed only by the dark topbar
  * ───────────────────────────────────────────────────────────────────── */
 .layout-sidebar {
   background-color: var(--surface-card) !important;
@@ -145,16 +187,18 @@ code, kbd, pre, .font-mono {
   border-radius: var(--radius-md) !important;
   padding: 0.55rem 0.75rem !important;
   font-size: 0.875rem;
-  color: var(--text-color) !important;
+  color: var(--text-color-secondary) !important;
   position: relative;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
+.layout-menu ul a .layout-menuitem-icon { color: var(--text-color-muted); }
 .layout-menu ul a:hover {
   background-color: var(--surface-hover) !important;
+  color: var(--text-color) !important;
 }
 .layout-menu ul a.active-route {
   color: var(--text-color) !important;
-  background-color: rgba(255, 230, 0, 0.06) !important;
+  background-color: var(--surface-100) !important;
   font-weight: 600 !important;
   box-shadow: none !important;
   outline: none !important;
@@ -177,7 +221,8 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Buttons — EY look: sharp corners, strong weight
+ * Buttons — EY look: square corners, charcoal primary, outlined secondary.
+ * Severity variants (danger/success/etc.) keep their own colours.
  * ───────────────────────────────────────────────────────────────────── */
 .p-button {
   border-radius: var(--radius-sm) !important;
@@ -186,14 +231,15 @@ code, kbd, pre, .font-mono {
   transition: background-color 0.15s ease, border-color 0.15s ease,
               box-shadow 0.15s ease, transform 0.05s ease;
 }
-.p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link) {
-  background: var(--primary-color);
-  border: 1px solid var(--primary-color);
-  color: var(--primary-color-text);
+.p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warning):not(.p-button-danger):not(.p-button-help) {
+  background: var(--button-primary-bg);
+  border: 1px solid var(--button-primary-bg);
+  color: var(--button-primary-text);
 }
-.p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link):hover {
-  background: var(--primary-color-hover);
-  border-color: var(--primary-color-hover);
+.p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warning):not(.p-button-danger):not(.p-button-help):hover {
+  background: var(--button-primary-hover);
+  border-color: var(--button-primary-hover);
+  color: var(--button-primary-text);
 }
 .p-button.p-button-outlined {
   border: 1px solid var(--surface-border);
@@ -214,14 +260,14 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Inputs — flat surface with subtle border, yellow on focus
+ * Inputs — light surface with subtle border, yellow on focus
  * ───────────────────────────────────────────────────────────────────── */
 .p-inputtext,
 .p-dropdown,
 .p-multiselect,
 .p-password input,
 .p-inputnumber-input {
-  background: var(--surface-section) !important;
+  background: var(--surface-card) !important;
   border: 1px solid var(--surface-border) !important;
   color: var(--text-color) !important;
   border-radius: var(--radius-sm) !important;
@@ -236,26 +282,44 @@ code, kbd, pre, .font-mono {
 .p-dropdown:not(.p-disabled).p-focus,
 .p-multiselect:not(.p-disabled).p-focus {
   border-color: var(--primary-color) !important;
-  box-shadow: 0 0 0 1px var(--primary-color) !important;
+  box-shadow: 0 0 0 3px rgba(242, 194, 0, 0.20) !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Cards / panels — flat, single hairline border
+ * Cards / panels — white, hairline border, whisper of elevation
  * ───────────────────────────────────────────────────────────────────── */
 .surface-card {
   background: var(--surface-card) !important;
   border-radius: var(--radius-lg) !important;
 }
 .shadow-1, .shadow-2, .shadow-3 {
-  box-shadow: none !important;
+  box-shadow: 0 1px 3px rgba(20, 20, 40, 0.05) !important;
   border: 1px solid var(--surface-border);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * DataTable — no stripes, hover-only emphasis
+ * Progress bar — gold fill, dark readable label
  * ───────────────────────────────────────────────────────────────────── */
+.p-progressbar {
+  background: var(--surface-200) !important;
+  border-radius: 999px !important;
+}
+.p-progressbar .p-progressbar-value {
+  border-radius: 999px !important;
+}
+.p-progressbar .p-progressbar-label {
+  color: var(--primary-color-text) !important;
+  font-weight: 600 !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * DataTable — white surface so it lifts off the canvas, hover-only emphasis
+ * ───────────────────────────────────────────────────────────────────── */
+.p-datatable {
+  background: var(--surface-card) !important;
+}
 .p-datatable .p-datatable-thead > tr > th {
-  background: var(--surface-ground) !important;
+  background: var(--surface-section) !important;
   color: var(--text-color-secondary) !important;
   font-size: 0.7rem !important;
   text-transform: uppercase;
@@ -296,7 +360,7 @@ code, kbd, pre, .font-mono {
 .p-dialog {
   border-radius: var(--radius-lg) !important;
   border: 1px solid var(--surface-border);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45), 0 4px 8px rgba(0, 0, 0, 0.25) !important;
+  box-shadow: 0 16px 40px rgba(20, 20, 40, 0.18), 0 4px 8px rgba(20, 20, 40, 0.08) !important;
 }
 .p-dialog .p-dialog-header,
 .p-dialog .p-dialog-content,
@@ -312,7 +376,7 @@ code, kbd, pre, .font-mono {
   border-radius: var(--radius-md) !important;
   border: 1px solid var(--surface-border) !important;
   background: var(--surface-overlay) !important;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45) !important;
+  box-shadow: 0 12px 24px rgba(20, 20, 40, 0.16) !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -325,6 +389,6 @@ code, kbd, pre, .font-mono {
 
 /* Selection — brand-coloured */
 ::selection {
-  background: rgba(255, 230, 0, 0.32);
-  color: #FFFFFF;
+  background: rgba(242, 194, 0, 0.32);
+  color: #2E2E38;
 }

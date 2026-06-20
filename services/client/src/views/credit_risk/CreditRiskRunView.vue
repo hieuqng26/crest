@@ -191,7 +191,7 @@ const statusSeverity = (s) =>
   ({ queued: 'info', running: 'warning', success: 'success', failed: 'danger' }[s] ?? 'secondary')
 
 const levelColor = (level) =>
-  ({ info: 'text-color-secondary', warn: 'text-yellow-400', error: 'text-red-400' }[level] ?? 'text-color-secondary')
+  ({ info: 'text-color-secondary', warn: 'text-yellow-700', error: 'text-red-500' }[level] ?? 'text-color-secondary')
 </script>
 
 <template>
@@ -535,7 +535,7 @@ const levelColor = (level) =>
   transition: color 120ms ease, border-color 120ms ease;
 }
 .tab-btn:hover { color: var(--text-color); }
-.tab-btn.is-active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+.tab-btn.is-active { color: var(--text-color); border-bottom-color: var(--primary-color); }
 .tab-btn.is-disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Results table */

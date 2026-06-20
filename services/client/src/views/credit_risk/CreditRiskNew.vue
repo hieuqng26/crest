@@ -88,7 +88,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-5 mx-auto" style="max-width: 860px">
+  <div class="p-5 mx-auto" style="max-width: 1040px">
     <!-- Header -->
     <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
       <div>
@@ -280,12 +280,13 @@ onMounted(async () => {
   border: 1px solid var(--surface-border);
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: 0 2px 8px rgba(20, 20, 40, 0.06), 0 1px 2px rgba(20, 20, 40, 0.04);
 }
 
 .form-card-head {
   padding: 0.85rem 1.5rem;
   border-bottom: 1px solid var(--surface-border);
-  background: var(--surface-ground);
+  background: var(--surface-section);
   display: flex;
   align-items: center;
   justify-content: space-between;

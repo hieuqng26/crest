@@ -1,5 +1,5 @@
 <script setup>
-const logoUrl = '/layout/images/logo-ey.svg'
+const logoUrl = '/layout/images/logo-ey-dark.svg'
 </script>
 <script setup></script>
 

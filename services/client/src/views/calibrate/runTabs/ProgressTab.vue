@@ -70,8 +70,8 @@ watch(filteredLogs, async () => {
 
 const levelColor = (level) => ({
   info:  'text-color-secondary',
-  warn:  'text-yellow-400',
-  error: 'text-red-400'
+  warn:  'text-yellow-700',
+  error: 'text-red-500'
 }[level] || 'text-color-secondary')
 
 const copyAll = () => {

@@ -245,11 +245,11 @@ const toggleMenu = (event) => {
   font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: var(--text-color);
+  color: var(--chrome-text);
 }
 .brand-tagline {
   font-size: 0.6875rem;
-  color: var(--text-color-secondary);
+  color: var(--chrome-text-muted);
   letter-spacing: 0.02em;
 }
 
@@ -258,17 +258,17 @@ const toggleMenu = (event) => {
   justify-content: center;
   align-items: center;
   position: relative;
-  color: var(--text-color-secondary);
+  color: var(--chrome-text-muted);
   border-radius: 50%;
   width: 3rem;
   height: 3rem;
   cursor: pointer;
   transition: background-color 0.2s;
-  background-color: var(--surface-card);
+  background-color: transparent;
   border-width: 0px;
   &:hover {
-    color: var(--text-color);
-    background-color: var(--surface-hover);
+    color: var(--chrome-text);
+    background-color: var(--chrome-hover);
   }
 
   i {

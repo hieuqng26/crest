@@ -40,7 +40,8 @@ h6 {
 }
 
 mark {
-  background: #fff8e1;
+  background: var(--highlight-bg);
+  color: var(--text-color);
   padding: 0.25rem 0.4rem;
   border-radius: $borderRadius;
   font-family: monospace;
@@ -49,7 +50,7 @@ mark {
 blockquote {
   margin: 1rem 0;
   padding: 0 2rem;
-  border-left: 4px solid #90a4ae;
+  border-left: 4px solid var(--surface-border);
 }
 
 hr {

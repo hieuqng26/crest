@@ -2,10 +2,10 @@ import { toRefs, reactive, computed } from 'vue'
 
 const layoutConfig = reactive({
   ripple: true,
-  darkTheme: true,
+  darkTheme: false,
   inputStyle: 'outlined',
   menuMode: 'static',
-  theme: 'ey-dark',
+  theme: 'ey-light',
   scale: 13,
   activeMenuItem: null
 })

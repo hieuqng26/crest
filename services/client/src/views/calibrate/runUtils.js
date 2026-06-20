@@ -1,10 +1,10 @@
 import calibrationsAPI from '@/api/calibrationsAPI'
 
 export const STATUS_META = {
-  success: { severity: 'success', icon: 'pi pi-check-circle',  color: 'text-green-400'   },
-  running: { severity: 'warning', icon: 'pi pi-spin pi-spinner', color: 'text-yellow-400' },
-  queued:  { severity: 'info',    icon: 'pi pi-clock',         color: 'text-blue-400'    },
-  failed:  { severity: 'danger',  icon: 'pi pi-times-circle',  color: 'text-red-400'     }
+  success: { severity: 'success', icon: 'pi pi-check-circle',  color: 'text-green-500'  },
+  running: { severity: 'warning', icon: 'pi pi-spin pi-spinner', color: 'text-yellow-600' },
+  queued:  { severity: 'info',    icon: 'pi pi-clock',         color: 'text-blue-500'   },
+  failed:  { severity: 'danger',  icon: 'pi pi-times-circle',  color: 'text-red-500'    }
 }
 
 export const statusSeverity = (s) => STATUS_META[s]?.severity ?? 'secondary'

@@ -2,7 +2,7 @@
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const logoUrl = '/layout/images/logo-ey.svg'
+const logoUrl = '/layout/images/logo-ey-dark.svg'
 </script>
 <script setup></script>
 
