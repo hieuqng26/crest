@@ -1,10 +1,11 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
-import { getRun, statusSeverity, duration, isTimeSeries } from './runUtils'
-import { fmtDate } from '@/utils/datetime'
+import { getRun, statusSeverity, isTimeSeries } from './runUtils'
+import { fmtDate, duration } from '@/utils/datetime'
 import OverviewTab    from './runTabs/OverviewTab.vue'
 import ProgressTab    from './runTabs/ProgressTab.vue'
 import DiagnosticsTab from './runTabs/DiagnosticsTab.vue'
@@ -12,6 +13,7 @@ import ForecastTab    from './runTabs/ForecastTab.vue'
 
 const route = useRoute()
 const router = useRouter()
+const confirm = useConfirm()
 const toast = useToast()
 const runId = computed(() => route.params.run_id)
 
@@ -85,6 +87,29 @@ const copyRunId = () => {
   navigator.clipboard?.writeText(run.value.run_id)
   toast.add({ severity: 'info', summary: 'Copied', detail: run.value.run_id, life: 1500 })
 }
+const confirmDelete = () => {
+  confirm.require({
+    message: 'Delete this calibration run? This cannot be undone.',
+    header: 'Delete run',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    acceptLabel: 'Delete',
+    accept: doDelete,
+  })
+}
+const doDelete = async () => {
+  try {
+    const res = await calibrationsAPI.delete(runId.value)
+    if (res.status < 300) {
+      toast.add({ severity: 'success', summary: 'Run deleted', life: 2000 })
+      router.push({ name: 'calibrate_jobs' })
+      return
+    }
+    toast.add({ severity: 'error', summary: 'Cannot delete', detail: res.data?.error ?? 'This run is referenced by forecast runs.', life: 5000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 5000 })
+  }
+}
 
 const STATUS_DOT = {
   success: '#34d399',
@@ -139,6 +164,15 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
             @click="cancel"
           />
           <Button label="Re-run" icon="pi pi-refresh" size="small" @click="rerun" />
+          <Button
+            label="Delete"
+            icon="pi pi-trash"
+            severity="danger"
+            outlined
+            size="small"
+            :disabled="run.status === 'running' || run.status === 'queued'"
+            @click="confirmDelete"
+          />
         </div>
       </div>
 
@@ -189,6 +223,8 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
       </div>
     </div>
     </template><!-- end v-else (run loaded) -->
+
+    <ConfirmDialog />
   </div>
 </template>
 

@@ -5,7 +5,7 @@ import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
-import { fmtDate } from '@/utils/datetime'
+import { fmtDate, duration } from '@/utils/datetime'
 
 const route   = useRoute()
 const router  = useRouter()
@@ -165,12 +165,27 @@ async function rerun() {
   }
 }
 
+async function cancelRun() {
+  actionBusy.value = true
+  try {
+    const { data } = await creditRiskAPI.cancelRun(runId.value)
+    run.value = { ...run.value, ...data }
+    stopPolling()
+    toast.add({ severity: 'warn', summary: 'Run cancelled', life: 2500 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    actionBusy.value = false
+  }
+}
+
 function confirmDelete() {
   confirm.require({
     message: 'Delete this run and all its results? This cannot be undone.',
     header: 'Delete run',
     icon: 'pi pi-exclamation-triangle',
     acceptClass: 'p-button-danger',
+    acceptLabel: 'Delete',
     accept: doDelete,
   })
 }
@@ -179,9 +194,10 @@ async function doDelete() {
   actionBusy.value = true
   try {
     await creditRiskAPI.deleteRun(runId.value)
+    toast.add({ severity: 'success', summary: 'Run deleted', life: 2000 })
     router.push({ name: 'credit_risk_jobs' })
   } catch (e) {
-    toast.add({ severity: 'error', summary: 'Failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 5000 })
     actionBusy.value = false
   }
 }
@@ -189,6 +205,14 @@ async function doDelete() {
 // ── helpers ───────────────────────────────────────────────────────────────────
 const statusSeverity = (s) =>
   ({ queued: 'info', running: 'warning', success: 'success', failed: 'danger' }[s] ?? 'secondary')
+
+const statusDot = {
+  queued:  '#60a5fa',
+  running: '#facc15',
+  success: '#34d399',
+  failed:  '#f87171',
+}
+const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Queued', failed: 'Failed' })[s] || s
 
 const levelColor = (level) =>
   ({ info: 'text-color-secondary', warn: 'text-yellow-700', error: 'text-red-500' }[level] ?? 'text-color-secondary')
@@ -202,43 +226,67 @@ const levelColor = (level) =>
     </div>
 
     <template v-else-if="run">
-      <!-- Header -->
-      <header class="flex align-items-center justify-content-between mb-3 flex-wrap gap-3">
-        <div class="flex align-items-center gap-3">
-          <Button icon="pi pi-arrow-left" text rounded severity="secondary" size="small"
-            @click="router.push({ name: 'credit_risk_jobs' })" />
-          <div>
-            <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing:0.06em">Credit Risk Run</div>
-            <h1 class="text-2xl font-semibold m-0 tracking-tight">
-              {{ run.dataset_name ?? run.run_id.slice(0, 8) }}
-            </h1>
+      <button class="back-link mb-3" @click="router.push({ name: 'credit_risk_jobs' })">
+        <i class="pi pi-arrow-left text-xs" />
+        <span>All jobs</span>
+      </button>
+
+      <!-- Run header -->
+      <header class="run-header mb-4">
+        <div class="flex flex-wrap align-items-start justify-content-between gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex align-items-center gap-2 mb-2">
+              <span class="status-dot-lg" :style="{ background: statusDot[run.status] ?? 'var(--surface-400)' }">
+                <span v-if="run.status === 'running'" class="status-ping" :style="{ background: statusDot[run.status] }" />
+              </span>
+              <span class="text-xs uppercase tracking-wide font-medium" :style="{ color: statusDot[run.status] ?? 'var(--surface-400)' }">
+                {{ statusLabel(run.status) }}
+              </span>
+              <span v-if="run.is_active" class="text-xs text-color-secondary">·</span>
+              <span v-if="run.is_active" class="text-xs font-medium" style="color:#34d399">Active</span>
+              <span class="text-xs text-color-secondary">·</span>
+              <span class="text-xs text-color-secondary font-mono">{{ duration(run.started_at, run.finished_at, run.status) }}</span>
+            </div>
+
+            <h1 class="text-3xl font-semibold m-0 tracking-tight">{{ run.dataset_name ?? run.run_id.slice(0, 8) }}</h1>
+          </div>
+
+          <div class="flex gap-2 flex-shrink-0">
+            <Button
+              label="Cancel"
+              icon="pi pi-times"
+              severity="secondary"
+              outlined
+              size="small"
+              :disabled="run.status !== 'running' && run.status !== 'queued'"
+              @click="cancelRun"
+            />
+            <Button label="Re-run" icon="pi pi-refresh" size="small" :loading="actionBusy" @click="rerun" />
+            <Button
+              label="Delete"
+              icon="pi pi-trash"
+              severity="danger"
+              outlined
+              size="small"
+              :disabled="run.status === 'running' || run.status === 'queued'"
+              @click="confirmDelete"
+            />
           </div>
         </div>
-        <div class="flex align-items-center gap-2">
-          <Button
-            label="Rerun"
-            icon="pi pi-refresh"
-            size="small"
-            severity="secondary"
-            outlined
-            :loading="actionBusy"
-            :disabled="run.status === 'running' || run.status === 'queued'"
-            @click="rerun"
-          />
-          <Button
-            label="Delete"
-            icon="pi pi-trash"
-            size="small"
-            severity="danger"
-            outlined
-            :disabled="run.status === 'running' || run.status === 'queued'"
-            @click="confirmDelete"
-          />
+
+        <!-- Live progress strip (only while running) -->
+        <div v-if="run.status === 'running'" class="mt-4">
+          <div class="flex justify-content-between text-xs text-color-secondary mb-1">
+            <span>Running</span><span class="font-mono">{{ run.progress ?? 0 }}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" :style="{ width: (run.progress ?? 0) + '%' }" />
+          </div>
         </div>
       </header>
 
-      <!-- Tabs -->
-      <div class="tab-strip mb-4">
+      <!-- Segmented tabs -->
+      <nav class="tab-bar mb-4">
         <button
           v-for="t in TABS" :key="t.key" type="button"
           class="tab-btn"
@@ -246,10 +294,10 @@ const levelColor = (level) =>
           :disabled="tabDisabled(t.key)"
           @click="!tabDisabled(t.key) && (activeKey = t.key)"
         >
-          <i :class="['pi', t.icon, 'text-sm']" />
-          {{ t.label }}
+          <i :class="t.icon" class="text-sm" />
+          <span>{{ t.label }}</span>
         </button>
-      </div>
+      </nav>
 
       <!-- Overview tab -->
       <div v-if="activeKey === 'overview'" class="run-body">
@@ -513,29 +561,84 @@ const levelColor = (level) =>
   color: var(--text-color-secondary);
 }
 
-/* Tabs */
-.tab-strip {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--surface-border);
+/* Back link */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  color: var(--text-color-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.back-link:hover { color: var(--text-color); }
+
+/* Run header */
+.run-header { padding: 0.5rem 0 1rem; border-bottom: 1px solid var(--surface-border); }
+
+.status-dot-lg {
+  position: relative;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.status-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0.6;
+  animation: ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes ping { 75%, 100% { transform: scale(2.6); opacity: 0; } }
+
+/* Live progress strip */
+.progress-track {
+  height: 4px;
+  background: var(--surface-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary-color);
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
+/* Segmented tab bar */
+.tab-bar {
+  display: inline-flex;
+  align-self: flex-start;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 2px;
 }
 .tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0.6rem 1.1rem;
-  background: transparent;
+  gap: 8px;
+  padding: 8px 16px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  background: transparent;
+  border-radius: 8px;
   color: var(--text-color-secondary);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  margin-bottom: -1px;
-  transition: color 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
-.tab-btn:hover { color: var(--text-color); }
-.tab-btn.is-active { color: var(--text-color); border-bottom-color: var(--primary-color); }
+.tab-btn:hover:not(.is-disabled):not(.is-active) { color: var(--text-color); }
+.tab-btn.is-active {
+  background: var(--surface-100, var(--surface-ground));
+  color: var(--text-color);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
 .tab-btn.is-disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Results table */

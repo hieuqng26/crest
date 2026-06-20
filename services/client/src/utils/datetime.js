@@ -42,3 +42,30 @@ export function fmtDateShort(iso) {
     timeZone: DATETIME_CONFIG.timezone,
   })
 }
+
+function _toDate(iso) {
+  if (!iso) return null
+  let s = iso.includes('T') ? iso : iso.replace(' ', 'T')
+  if (!s.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(s)) s += 'Z'
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * Human-readable elapsed time between two ISO timestamps.
+ * Returns 'live' for a running job with no finish time, '—' when unknown.
+ */
+export function duration(startedIso, finishedIso, status) {
+  const start = _toDate(startedIso)
+  if (!start) return '—'
+  const end = _toDate(finishedIso) || (status === 'running' ? new Date() : null)
+  if (!end) return status === 'running' ? 'live' : '—'
+  const totalSec = Math.max(0, Math.round((end - start) / 1000))
+  if (totalSec < 60) return `${totalSec}s`
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  return `${h}h ${mm}m`
+}
