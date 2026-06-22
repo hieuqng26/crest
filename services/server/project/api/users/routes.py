@@ -3,21 +3,25 @@ import os
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, make_response, request
-from flask_jwt_extended import jwt_required
 from werkzeug.exceptions import Conflict
 
 from project import bcrypt, db
 from project.api.auditlog.models import log_audit
-from project.api.auth.utils import prevent_multiple_logins_per_user
+from project.api.auth import sessions
+from project.api.auth.decorators import require_perm
+from project.api.roles.models import RoleModel
 from project.api.users.models import User
 from project.api.utils import valid_date, valid_uuid, validate_request
 
 user = Blueprint("user", __name__)
 
 
+def _role_exists(role: str) -> bool:
+    return bool(role) and RoleModel.query.filter_by(name=role).first() is not None
+
+
 @user.route("/all", methods=["GET"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:read")
 @validate_request()
 def get_all_users():
     """Query all users"""
@@ -26,8 +30,7 @@ def get_all_users():
 
 
 @user.route("/is_local_system_admin/<string:username>", methods=["GET"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:read")
 @validate_request()
 def get_is_local_system_admin(username):
     LOCAL_SYSTEM_ADMIN_USERNAME = os.getenv("LOCAL_SYSTEM_ADMIN_USERNAME")
@@ -36,8 +39,7 @@ def get_is_local_system_admin(username):
 
 
 @user.route("/id/<string:id>", methods=["GET"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:read")
 @validate_request()
 def get_user_by_id(id):
     """Query user by uid"""
@@ -88,8 +90,7 @@ def get_user_by_id(id):
 
 
 @user.route("/email/<string:email>", methods=["GET"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:read")
 @validate_request()
 def get_user_by_email(email):
     """Query user by email"""
@@ -126,44 +127,48 @@ def get_user_by_email(email):
 
 
 @user.route("/add_batch", methods=["POST"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:write")
 @validate_request(allowed_keys=["users"])
 def add_multi_users():
-    """Add multiple users"""
+    """Add multiple users. Every row must carry a valid, existing role."""
     try:
         data = request.get_json()
         users = data.get("users")
         if not users:
             raise ValueError("No users provided")
 
+        errors = []
+        for idx, user_data in enumerate(users):
+            email = user_data.get("email")
+            if not email or not user_data.get("password") or not user_data.get("role"):
+                errors.append(f"row {idx + 1}: email, password, and role are required")
+            elif not _role_exists(user_data.get("role")):
+                errors.append(
+                    f"row {idx + 1} ({email}): unknown role '{user_data.get('role')}'"
+                )
+        if errors:
+            return make_response(
+                jsonify({"message": "Import rejected", "errors": errors}), 400
+            )
+
         for user_data in users:
             email = user_data.get("email")
-            password = user_data.get("password")
-            role = user_data.get("role")
-            name = user_data.get("name")
-            status = user_data.get("status")
-            registered_on = user_data.get("registeredOn", datetime.now(timezone.utc))
-
-            user = User.query.filter_by(email=email).first()
-            if user:
+            if User.query.filter_by(email=email).first():
                 continue
-
-            if not email or not password or not role:
-                continue
-
-            user = User(
-                email=email,
-                password=password,
-                role=role,
-                name=name,
-                status=status,
-                registered_on=valid_date(registered_on),
+            db.session.add(
+                User(
+                    email=email,
+                    password=user_data.get("password"),
+                    role=user_data.get("role"),
+                    name=user_data.get("name"),
+                    status=user_data.get("status"),
+                    registered_on=valid_date(
+                        user_data.get("registeredOn", datetime.now(timezone.utc))
+                    ),
+                )
             )
-            db.session.add(user)
-            db.session.commit()
+        db.session.commit()
 
-        # audit log
         log_audit(
             action="Add",
             module="uam",
@@ -175,7 +180,6 @@ def add_multi_users():
             database_involved="users",
         )
         return make_response(jsonify({"message": "Users added"}), 201)
-
     except Exception as e:
         db.session.rollback()
         log_audit(
@@ -192,8 +196,7 @@ def add_multi_users():
 
 
 @user.route("/add", methods=["POST"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:write")
 @validate_request(
     allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
 )
@@ -215,14 +218,15 @@ def add_user():
         if not email or not password or not role:
             raise ValueError("Email, password, and role are required")
 
-        user = User(
-            email=email,
-            password=password,
-            role=role,
-            name=name,
-            status=status,
-            registered_on=valid_date(registered_on),
-        )
+        if not _role_exists(role):
+            raise ValueError(f"Unknown role '{role}'")
+
+        user_kwargs = dict(email=email, password=password, role=role, name=name)
+        if status is not None:
+            user_kwargs["status"] = status
+        if registered_on is not None:
+            user_kwargs["registered_on"] = valid_date(registered_on)
+        user = User(**user_kwargs)
         db.session.add(user)
         db.session.commit()
 
@@ -283,8 +287,7 @@ def add_user():
 
 
 @user.route("/update/<string:email>", methods=["PUT"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:write")
 @validate_request(
     allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
 )
@@ -317,6 +320,8 @@ def update_user(email):
             user.password = password
 
         if role and role != user.role:
+            if not _role_exists(role):
+                raise ValueError(f"Unknown role '{role}'")
             previous_data["role"] = user.role
             new_data["role"] = role
             user.role = role
@@ -340,6 +345,9 @@ def update_user(email):
 
         db.session.commit()
 
+        if "role" in new_data:
+            sessions.revoke_all_for_user(user.email)
+
         # audit log
         log_audit(
             action="Update",
@@ -352,6 +360,20 @@ def update_user(email):
             database_involved="users",
         )
         return make_response(jsonify(user.to_dict()), 200)
+
+    except ValueError as e:
+        db.session.rollback()
+        log_audit(
+            action="Update",
+            module="uam",
+            submodule="user",
+            previous_data="",
+            new_data="",
+            description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
+            error_codes="400",
+            database_involved="users",
+        )
+        return make_response(jsonify({"message": str(e)}), 400)
 
     except Exception as e:
         db.session.rollback()
@@ -369,8 +391,7 @@ def update_user(email):
 
 
 @user.route("/updates", methods=["PUT"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:write")
 @validate_request(allowed_keys=["users"])
 def update_users():
     """Update users"""
@@ -408,6 +429,8 @@ def update_users():
                 user.password = password
 
             if role and role != user.role:
+                if not _role_exists(role):
+                    raise ValueError(f"Unknown role '{role}'")
                 previous_data["role"] = user.role
                 new_data["role"] = role
                 user.role = role
@@ -433,6 +456,9 @@ def update_users():
 
             db.session.commit()
 
+            if "role" in new_data:
+                sessions.revoke_all_for_user(user.email)
+
             # audit log
             log_audit(
                 action="Update",
@@ -445,6 +471,20 @@ def update_users():
                 database_involved="users",
             )
         return make_response(jsonify({"message": "Users updated"}), 201)
+
+    except ValueError as e:
+        db.session.rollback()
+        log_audit(
+            action="Update",
+            module="uam",
+            submodule="user",
+            previous_data="",
+            new_data="",
+            description=f"User [$USER] failed to update users. Error: {str(e)}",
+            error_codes="400",
+            database_involved="users",
+        )
+        return make_response(jsonify({"message": str(e)}), 400)
 
     except Exception as e:
         db.session.rollback()
@@ -462,8 +502,7 @@ def update_users():
 
 
 @user.route("/delete/<string:email>", methods=["DELETE"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("user:write")
 @validate_request()
 def delete_user(email):
     """Delete user by email"""
