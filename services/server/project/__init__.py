@@ -56,6 +56,11 @@ def create_app():
         app.config.from_object(Config)
         # allowed_origins = Config.ALLOWED_ORIGINS.split(',')
 
+    if not app.config.get("JWT_SECRET_KEY"):
+        raise RuntimeError(
+            "JWT_SECRET_KEY environment variable is not set. The app cannot start without it."
+        )
+
     # cookies
     app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
 

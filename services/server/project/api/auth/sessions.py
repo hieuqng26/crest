@@ -32,6 +32,12 @@ def revoke_all_for_user(user_email):
     db.session.commit()
 
 
+def delete_all_for_user(user_email):
+    """Permanently delete all session records for a user. Call before deleting the user row."""
+    UserSession.query.filter_by(user_email=user_email).delete()
+    db.session.commit()
+
+
 def _as_utc(dt) -> datetime:
     """Return *dt* as an aware UTC datetime, adding tzinfo if SQLite stripped it."""
     if dt is None:
