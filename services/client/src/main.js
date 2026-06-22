@@ -110,6 +110,7 @@ import VirtualScroller from 'primevue/virtualscroller'
 import VueApexCharts from 'vue3-apexcharts'
 
 import store from './store'
+import { can } from '@/directives/can'
 import '@/assets/styles.scss'
 
 const app = createApp(App)
@@ -126,6 +127,7 @@ app.directive('tooltip', Tooltip)
 app.directive('badge', BadgeDirective)
 app.directive('ripple', Ripple)
 app.directive('styleclass', StyleClass)
+app.directive('can', can)
 
 app.component('Accordion', Accordion)
 app.component('AccordionTab', AccordionTab)
@@ -223,4 +225,4 @@ app.component('TreeTable', TreeTable)
 app.component('TriStateCheckbox', TriStateCheckbox)
 app.component('VirtualScroller', VirtualScroller)
 
-app.mount('#app')
+store.dispatch('fetchMe').finally(() => app.mount('#app'))
