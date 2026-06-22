@@ -8,9 +8,10 @@
       </div>
       <div class="flex align-items-center gap-2">
         <input ref="fileInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" @change="onFileChange" />
-        <Button icon="pi pi-upload" label="Import" text class="action-btn" @click="fileInput.click()" />
+        <Button icon="pi pi-upload" label="Import" text class="action-btn" v-tooltip.bottom="'CSV must include a role column (an existing role name) per row.'" @click="fileInput.click()" />
         <Button icon="pi pi-download" label="Export" text class="action-btn" @click="exportMenu.toggle($event)" />
         <Menu ref="exportMenu" :model="exportOptions" popup :pt="{ label: { style: 'font-size:0.7rem' }, icon: { style: 'font-size:0.7rem' } }" />
+        <Button v-can="'user:write'" icon="pi pi-plus" label="New User" @click="onAddUser" />
       </div>
     </header>
 
@@ -268,6 +269,7 @@ import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
 import { formatDate } from '@/utils'
 import { saveFile } from '@/views/composables/views.js'
+import { roleAPI } from '@/api'
 
 const store = useStore()
 const toast = useToast()
@@ -292,10 +294,9 @@ const updateSubmitted = ref(false) // to validate mandatory fields are filled
 
 // properties
 onMounted(() => {
-  let forceLoadDB = true
-  store.dispatch('getAllRolePermissions', forceLoadDB).then((res) => {
-    roles.value = Object.keys(res)
-  })
+  roleAPI.list()
+    .then((res) => { roles.value = res.data.map((r) => r.name) })
+    .catch(() => { roles.value = [] })
   store
     .dispatch('getAllUsers')
     .then((res) => {
@@ -331,7 +332,9 @@ const onFileChange = (event) => {
     })
     .catch((err) => {
       loading.value = false
-      toast.add({ severity: 'error', summary: 'Error', detail: 'File not uploaded. ' + (err.response?.data?.message || err.message), life: 5000 })
+      const body = err.response?.data
+      const detail = body?.errors ? body.errors.join('; ') : (body?.message || err.message)
+      toast.add({ severity: 'error', summary: 'Import failed', detail, life: 8000 })
     })
 }
 
@@ -351,7 +354,7 @@ const onAddUser = () => {
     id: createId(),
     registered_on: new Date(),
     status: 'active',
-    role: 'readonly'
+    role: roles.value?.[0] || null
   }
   addSubmitted.value = false
   showAddDialog.value = true
