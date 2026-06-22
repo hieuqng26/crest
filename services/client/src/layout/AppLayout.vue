@@ -77,6 +77,7 @@ const isOutsideClicked = (event) => {
       <app-config></app-config>
     </div>
     <Toast position="bottom-right" />
+    <ConfirmDialog />
   </div>
 </template>
 
