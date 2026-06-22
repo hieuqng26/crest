@@ -1,9 +1,10 @@
-import { httpClient, setAuthHeader } from '@/api/httpClient'
+import httpClient from '@/api/httpClient'
 
 const authAPI = {
-  login: (userData) => httpClient.post(`/auth/login`, userData),
-  refreshToken: (jwt) => httpClient.post(`/auth/refresh`, null, { headers: setAuthHeader(jwt) }),
-  logout: (jwt) => httpClient.post(`/auth/logout`, null, { headers: setAuthHeader(jwt) })
+  login: (credentials) => httpClient.post('/auth/login', credentials),
+  refresh: () => httpClient.post('/auth/refresh'),
+  logout: () => httpClient.post('/auth/logout'),
+  me: () => httpClient.get('/auth/me'),
+  changePassword: (payload) => httpClient.post('/auth/change-password', payload)
 }
-
 export default authAPI

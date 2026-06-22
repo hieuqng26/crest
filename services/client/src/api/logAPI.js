@@ -1,19 +1,17 @@
-import { httpClient, setAuthHeader } from '@/api/httpClient'
+import httpClient from '@/api/httpClient'
 
 const logAPI = {
-  getAllLogs: (logData, jwt) =>
+  getAllLogs: (logData) =>
     httpClient.post(`/log/all`, logData, {
       headers: {
-        ...setAuthHeader(jwt),
         'Content-Type': 'application/json'
       }
     }),
-  getLogsbyUser: (userEmail, jwt) =>
-    httpClient.get(`/log/email/${userEmail}`, { headers: setAuthHeader(jwt) }),
-  log: (logData, jwt) =>
+  getLogsbyUser: (userEmail) =>
+    httpClient.get(`/log/email/${userEmail}`),
+  log: (logData) =>
     httpClient.post(`/log/add`, logData, {
       headers: {
-        ...setAuthHeader(jwt),
         'Content-Type': 'application/json'
       }
     })
