@@ -77,8 +77,15 @@ matrix: `.claude/docs/architecture.md`.
 - **Don't break serialised model pickles** in MinIO — version new plugins instead.
 - **Deletes are dependency-checked** (FK, no cascade): block with 409 + dep list, do
   not auto-cascade. See `.claude/skills/delete-with-refs.md`.
-- **Secrets** live only in `env/.env.*` (gitignored). All `/api/*` need `@jwt_required()`
-  except login/ping. `WTF_CSRF_ENABLED=False` is intentional for this JWT-only API.
+- **Auth & RBAC:** cookie-based revocable sessions (httpOnly access + refresh cookies, CSRF
+  tokens). All `/api/*` routes except `/api/auth/login` and `/api/ping` require
+  `@jwt_required()`. Fine-grained permissions use `@require_perm("domain:action")` from
+  `api/auth/decorators.py` — 9 domains × `{read, write, execute}` (delete is folded into
+  write). Roles are DB-managed in the `roles` table; the built-in `sysadmin` role (`["*"]`,
+  `is_system=True`) cannot be deleted or renamed. The role registry is cached 5 min per
+  process (use Redis in prod). `WTF_CSRF_ENABLED=False` is intentional (CSRF tokens are
+  sent in a custom `X-CSRF-TOKEN` header, not via WTF forms). See `architecture.md` and
+  `state_management.md` for full detail.
 - **Never expose** MLflow UI or Celery Flower to users.
 - **Git commits:** never add `Co-Authored-By` trailers.
 - **Branch management:** whenever fixing a bug or adding a new feature, if it requires a lot of changes, create a new branch to work on.

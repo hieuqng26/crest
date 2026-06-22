@@ -39,18 +39,22 @@ Phases are *severity tiers*, not a strict schedule:
 4. Remove `services/client/.env` from tracking; ship `.env.example` only.
 5. Consider `git filter-repo` to purge secrets from history (or treat all rotated).
 
-### [SEC] S2 — RBAC is not enforced on user-management or compute/data endpoints — High / M
-**Evidence:** `roles_required(...)` (`api/roles/roles.py:9`) is only ever called inside `api/roles/routes.py`. A per-domain grep shows **0** usages in `users/`, `datasets/`, `calibrations/`, `credit_risk/`, `forecasts/`, `forecast_runs/`, `model_configs/`, `evaluations/`. Every handler there is guarded by `@jwt_required()` only.
-- `api/users/routes.py`: `add`, `add_batch`, `update`, `delete`, and **role reassignment** (`:319-322` `user.role = role`) are reachable by *any* authenticated user → **privilege escalation** (a `viewer` can promote itself to `sysadmin` or delete other users).
-- Any authenticated user can delete another user's runs/datasets (e.g. `credit_risk/routes.py:423` `delete_run`).
+### [SEC] S2 — RBAC is not enforced on user-management or compute/data endpoints — **RESOLVED** ✓
+**Resolved by:** `AUTH_RBAC_REBUILD_PLAN.md` (Tasks 1–17, branch `feature/auth-rbac-rebuild`).
 
-**Secondary bug:** `roles_required` (`roles.py:11`) does `user.role` without a null check — an orphaned/invalid identity raises `AttributeError` → 500 instead of 403.
-
-**Fix:**
-1. Make `roles_required` a real decorator (or add a `@requires_role(...)` wrapper) and apply it to every mutating endpoint, keyed off the `analyst`/`sysadmin`/`viewer` model in CLAUDE.md.
-2. Gate user CRUD + role changes to `sysadmin`. Gate run creation/deletion to `analyst`+. Leave reads open to `viewer`.
-3. Null-guard the identity lookup; return 403 not 500.
-4. Add a regression test per endpoint (see P3-T1) — this is exactly the class of bug tests must catch.
+**What was built:**
+- Fine-grained permission catalog (9 domains × `{read,write,execute}`) in `api/auth/permissions.py`.
+- `@require_perm("domain:action")` decorator applied to every endpoint across all blueprints
+  (datasets, model_configs, calibrations, evaluations, forecasts, forecast_runs, credit_risk,
+  auditlog, users, roles).
+- DB-managed roles (`roles` table) with a 5-min cached registry; role edits take effect without
+  re-login.
+- Built-in `sysadmin` role (wildcard `["*"]`, `is_system=True`) is the lockout-recovery path and
+  cannot be deleted/renamed.
+- Legacy `roles_required` and the `active_session` table removed; Alembic migration applied.
+- Frontend: `v-can` directive, Vuex `can(perm)` getter, router `requiresPerm` guard, Role Management
+  CRUD page (`/admin/role-management`).
+- Single-session enforcement + revocable httpOnly cookie sessions (`user_sessions` table).
 
 ### [SEC] S3 — `/api/datasets/query` runs arbitrary user SQL — High / M
 **Evidence:** `api/datasets/routes.py` `query_dataset()` takes a raw `sql` string and only rejects it if the first word isn't `SELECT`/`WITH`, then `pd.read_sql(sql, conn)` against `RISK_DB_CONN_STR`.
@@ -71,14 +75,20 @@ Phases are *severity tiers*, not a strict schedule:
 ### [SEC] S4 — Unencrypted DB connection & token-in-localStorage — Medium / S
 **Evidence:**
 - `config.py:97/169` ODBC string sets `Encrypt=no; TrustServerCertificate=yes` → MSSQL traffic is plaintext.
-- Frontend persists the JWT to `localStorage` via `vuex-persistedstate` (`store/`) and sends it as a `Bearer` header (`api/httpClient.js:18`), *while also* setting httpOnly cookies at login (`auth/routes.py:49-58`). Tokens in `localStorage` are readable by any XSS.
+- ~~Frontend persists the JWT to `localStorage` via `vuex-persistedstate`~~ — **half resolved:** the
+  auth rebuild (Task 12–13) switched to httpOnly cookies with no `localStorage` persistence.
+  `currentUser` and `permissions` are re-populated from `/auth/me` on every load, not from storage.
+  Tokens are never accessible to JavaScript. The `localStorage` XSS vector is closed.
 
-**Fix:** set `Encrypt=yes` with a proper cert chain (or `TrustServerCertificate` only inside a trusted network). Decide on a single token-transport: prefer the httpOnly-cookie path you already issue, and stop persisting the access token to `localStorage` (keep it in memory + silent refresh).
+**Remaining:** set `Encrypt=yes` on the MSSQL ODBC string with a proper cert chain (or
+`TrustServerCertificate` only inside a trusted network). The DB-in-plaintext issue is unchanged.
 
 ### [SEC] S5 — CORS handler can 500; CORS configured twice — Medium / S
+**Note:** the `CORS_ORIGIN` null-guard fix (`os.getenv("CORS_ORIGIN", "")`) landed in **Task 3** of the auth-RBAC rebuild, preventing the `AttributeError` 500 on startup. The dual-CORS-mechanism cleanup (prefer `flask-cors` over the manual `after_request`) is still pending.
+
 **Evidence:** `__init__.py:149-150` `os.getenv("CORS_ORIGIN").split(",")` → `AttributeError` if `CORS_ORIGIN` is unset (every request). Also `flask-cors` is initialized with an empty origins list (`:73-77`) and then a manual `after_request` re-implements CORS (`:147`) — two sources of truth.
 
-**Fix:** default `CORS_ORIGIN` safely (`os.getenv("CORS_ORIGIN", "")`), pick **one** CORS mechanism (prefer `flask-cors` driven by an env allowlist), and drive `Access-Control-Allow-Origin` from that single config.
+**Remaining fix:** pick **one** CORS mechanism (prefer `flask-cors` driven by an env allowlist) and remove the manual `after_request` duplication.
 
 ---
 
@@ -191,16 +201,21 @@ Phases are *severity tiers*, not a strict schedule:
 ## Quick wins (high value, ≤0.5d each)
 
 1. **S1** — strip secret defaults from `config.py`; fail fast in prod if unset.
-2. **S5** — `os.getenv("CORS_ORIGIN", "")` so requests stop 500-ing when the var is unset.
-3. **P1a** — single migration adding the missing FK/`created_at` indexes.
-4. **M5** — delete the `v1` dummy credit-risk endpoints.
-5. **P1b** — swap the two "load all results to get distinct client_ids" spots for a `.distinct()` query.
-6. **M6** — fix the ODBC Driver 17→18 doc drift.
+2. ~~**S2**~~ — resolved by auth-RBAC rebuild.
+3. ~~**S5** (CORS null-guard)~~ — null-guard fixed in auth-RBAC Task 3; dual-mechanism dedup still pending.
+4. **P1a** — single migration adding the missing FK/`created_at` indexes.
+5. **M5** — delete the `v1` dummy credit-risk endpoints.
+6. **P1b** — swap the two "load all results to get distinct client_ids" spots for a `.distinct()` query.
+7. **M6** — fix the ODBC Driver 17→18 doc drift.
 
 ## Suggested sequencing
 
+0. **Auth/RBAC rebuild (DONE):** `AUTH_RBAC_REBUILD_PLAN.md` (Tasks 1–18, branch
+   `feature/auth-rbac-rebuild`) — resolves S2 fully; closes the `localStorage` half of S4;
+   patches the CORS null-guard from S5. This runs *before* the P0 security pass below.
 1. **Week 0:** Quick wins above + stand up CI skeleton running `ruff` (T2).
-2. **P0 security pass:** S1→S5 + C1 (each is S/M). Add the RBAC tests (T1.1) alongside S2 so it can't regress.
+2. **P0 security pass:** S1, S3, S4 (DB encryption), S5 (CORS dedup), C1 (each is S/M).
+   S2 is resolved; add regression tests (T1.1) to lock it in.
 3. **Safety net:** quant golden tests (T1.2) — prerequisite for the refactors.
 4. **P1 scale pass:** indexes (P1a) → N+1/pagination (P1b/P1c) → Celery tuning (P1e) → request-time parsing (P1d).
 5. **P2 refactor pass:** `extensions.py` (M3) → unify dataset IO (M2) → split `tasks.py` (M1) → serializers (M4).

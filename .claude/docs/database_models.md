@@ -51,6 +51,38 @@ datasets ──< calibration_runs ──< forecast_runs ──< credit_risk_run_
 - Always pre-check references and block with a clear 409 + dependency list rather
   than letting the DB raise. Use the pattern in `.claude/skills/delete-with-refs.md`.
 
+## Auth & RBAC tables (`api/auth/models.py`, `api/roles/models.py`)
+
+### `user_sessions`
+- **`sid`** — UUID primary key (session ID, embedded in JWT `jti`).
+- **`user_email`** — indexed FK → `users.email`.
+- **`issued_at`**, **`expires_at`** — datetimes.
+- **`revoked_at`** — NULL while active; set on explicit logout, forced revocation, or
+  superseded by a new login (single-session-per-user policy).
+- **`ip`**, **`user_agent`** — recorded at issue time for audit.
+- Used as the JWT blocklist: `is_revoked(jti)` looks up `sid` and checks `revoked_at`.
+  `purge_expired()` cleans up rows past `expires_at`.
+
+### `roles`
+- **`name`** — unique string PK (role name, e.g. `"sysadmin"`, `"analyst"`, `"viewer"`).
+- **`description`** — human-readable label.
+- **`permissions`** — JSON array of permission strings (e.g. `["datasets:read",
+  "calibrations:write"]`) or `["*"]` for superuser wildcard.
+- **`is_system`** — boolean; `True` for built-in roles (`sysadmin`) which cannot be
+  deleted or renamed via the API.
+- **`created_by`** — email of the user who created this role (nullable for seeded roles).
+- **`created_at`**, **`updated_at`** — timestamps.
+
+> **`users.role`** — stores the role *name* as a plain string column. There is **no
+> foreign key** to the `roles` table; referential integrity is enforced in the API layer
+> (the endpoint validates that the supplied role name exists in `roles` before saving).
+> This avoids cascade complexity when roles are renamed or deleted: the API blocks
+> deletion of a role that is still assigned to any user (409 + count).
+
+> **Legacy tables removed:** the old `roles` permission-matrix table and `active_session`
+> tracking table were dropped in the auth-RBAC rebuild migration (Alembic migration
+> `c3d5f7a9b1e2`). The new `user_sessions` and updated `roles` tables replace them.
+
 ## Conventions
 - Runs carry an immutable UUID `run_id` (string) plus the integer PK `id`. FKs from
   child run-tables point at `id`; cross-domain references and logs key off `run_id`.
