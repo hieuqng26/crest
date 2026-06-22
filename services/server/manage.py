@@ -16,8 +16,26 @@ def create_db():
 
 @cli.command("seed_db")
 def seed_db():
-    if User.query.first() is None:
-        db.session.add(User(email="admin", password="admin", role="admin"))
+    import os
+
+    from project.api.roles.defaults import ensure_default_roles
+
+    ensure_default_roles()
+    admin_email = os.getenv("SEED_ADMIN_EMAIL", "admin@crest.local")
+    admin_pw = os.getenv("SEED_ADMIN_PASSWORD")
+    if not admin_pw:
+        raise SystemExit(
+            "SEED_ADMIN_PASSWORD env var is required to seed the admin user"
+        )
+    if not User.query.filter_by(email=admin_email).first():
+        db.session.add(
+            User(
+                email=admin_email,
+                password=admin_pw,
+                role="sysadmin",
+                name="Administrator",
+            )
+        )
         db.session.commit()
 
 

@@ -54,3 +54,9 @@ def test_logout_revokes_session(client, make_user):
     client.post("/api/auth/login", json={"email": "u@x.io", "password": "Passw0rd!"})
     assert client.post("/api/auth/logout").status_code == 200
     assert client.get("/api/auth/me").status_code == 401
+
+
+def test_legacy_role_endpoints_gone(client, make_user):
+    make_user("s@x.io", "sysadmin")
+    client.post("/api/auth/login", json={"email": "s@x.io", "password": "Passw0rd!"})
+    assert client.get("/api/role/all").status_code == 404

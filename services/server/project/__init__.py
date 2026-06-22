@@ -94,7 +94,7 @@ def create_app():
     from project.api.model_configs import model_configs
     from project.api.roles.models import Role  # noqa: F401
     from project.api.roles.models import RoleModel  # noqa: F401
-    from project.api.roles.routes import role, roles_bp
+    from project.api.roles.routes import roles_bp
     from project.api.users.models import User  # noqa: F401
     from project.api.users.routes import user
     from project.db_models.calibration_models import (  # noqa: F401
@@ -119,7 +119,6 @@ def create_app():
     app.register_blueprint(auth, url_prefix="/api/auth")
     app.register_blueprint(user, url_prefix="/api/user")
     app.register_blueprint(auditlog, url_prefix="/api/log")
-    app.register_blueprint(role, url_prefix="/api/role")
     app.register_blueprint(roles_bp, url_prefix="/api/roles")
     app.register_blueprint(datasets, url_prefix="/api/datasets")
     app.register_blueprint(model_configs, url_prefix="/api/model-configs")
