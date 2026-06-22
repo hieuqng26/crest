@@ -1,6 +1,6 @@
 from flask import jsonify
-from flask_jwt_extended import jwt_required
 
+from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import CalibrationRun, Forecast
 from project.workers.tasks import _load_forecast_data
 
@@ -8,7 +8,7 @@ from . import forecasts
 
 
 @forecasts.get("/<run_id>")
-@jwt_required()
+@require_perm("forecast:read")
 def get_forecast(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:

@@ -1,10 +1,11 @@
 import json
 
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError
 
 from project import app_session
+from project.api.auth.decorators import require_perm
 from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
 from project.db_models.calibration_models import ModelConfig
 from project.logger import get_logger
@@ -15,20 +16,20 @@ logger = get_logger(__name__)
 
 
 @model_configs.get("/registry")
-@jwt_required()
+@require_perm("model_config:read")
 def list_registry():
     return jsonify(registry_metadata()), 200
 
 
 @model_configs.get("/")
-@jwt_required()
+@require_perm("model_config:read")
 def list_configs():
     rows = ModelConfig.query.order_by(ModelConfig.created_at.desc()).all()
     return jsonify([r.to_dict() for r in rows]), 200
 
 
 @model_configs.post("/")
-@jwt_required()
+@require_perm("model_config:write")
 def create_config():
     body = request.get_json(silent=True) or {}
     required = ("name", "algorithm")
@@ -74,7 +75,7 @@ def create_config():
 
 
 @model_configs.get("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:read")
 def get_config(config_id):
     cfg = ModelConfig.query.filter_by(id=config_id).first()
     if not cfg:
@@ -83,7 +84,7 @@ def get_config(config_id):
 
 
 @model_configs.patch("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:write")
 def update_config(config_id):
     body = request.get_json(silent=True) or {}
 
@@ -126,7 +127,7 @@ def update_config(config_id):
 
 
 @model_configs.delete("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:write")
 def delete_config(config_id):
     with app_session() as session:
         cfg = ModelConfig.query.filter_by(id=config_id).first()
@@ -137,7 +138,7 @@ def delete_config(config_id):
 
 
 @model_configs.post("/bulk-delete")
-@jwt_required()
+@require_perm("model_config:write")
 def bulk_delete_configs():
     ids = (request.get_json(silent=True) or {}).get("ids", [])
     if not ids:

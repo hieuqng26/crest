@@ -4,9 +4,10 @@ import uuid
 from datetime import datetime, timezone
 
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
+from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
@@ -58,7 +59,7 @@ def _expand_param_values(defn: dict) -> list:
 
 
 @calibrations.get("/")
-@jwt_required()
+@require_perm("calibration:read")
 def list_runs():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
@@ -89,7 +90,7 @@ def list_runs():
 
 
 @calibrations.post("/")
-@jwt_required()
+@require_perm("calibration:execute")
 def create_run():
     body = request.get_json(silent=True) or {}
     # Accept either dataset_ids (list) or the legacy dataset_id scalar
@@ -167,7 +168,7 @@ def create_run():
 
 
 @calibrations.get("/<run_id>")
-@jwt_required()
+@require_perm("calibration:read")
 def get_run(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
@@ -181,7 +182,7 @@ def get_run(run_id):
 
 
 @calibrations.get("/<run_id>/diagnostics")
-@jwt_required()
+@require_perm("calibration:read")
 def get_diagnostics(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
@@ -202,7 +203,7 @@ def get_diagnostics(run_id):
 
 
 @calibrations.get("/<run_id>/forecast")
-@jwt_required()
+@require_perm("calibration:read")
 def get_forecast(run_id):
     from project.workers.tasks import _load_forecast_data
 
@@ -223,7 +224,7 @@ def get_forecast(run_id):
 
 
 @calibrations.post("/<run_id>/cancel")
-@jwt_required()
+@require_perm("calibration:write")
 def cancel_run(run_id):
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()
@@ -243,7 +244,7 @@ def cancel_run(run_id):
 
 
 @calibrations.get("/<run_id>/logs")
-@jwt_required()
+@require_perm("calibration:read")
 def get_logs(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
@@ -257,7 +258,7 @@ def get_logs(run_id):
 
 
 @calibrations.get("/<run_id>/refs")
-@jwt_required()
+@require_perm("calibration:read")
 def get_refs(run_id):
     r = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not r:
@@ -291,7 +292,7 @@ def _check_forecast_references(cal_run_id: int):
 
 
 @calibrations.delete("/<run_id>")
-@jwt_required()
+@require_perm("calibration:write")
 def delete_run(run_id):
     r = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not r:
@@ -307,7 +308,7 @@ def delete_run(run_id):
 
 
 @calibrations.post("/bulk-delete")
-@jwt_required()
+@require_perm("calibration:write")
 def bulk_delete_runs():
     run_ids = (request.get_json(silent=True) or {}).get("run_ids", [])
     if not run_ids:
@@ -335,7 +336,7 @@ def bulk_delete_runs():
 
 
 @calibrations.post("/<run_id>/recalibrate")
-@jwt_required()
+@require_perm("calibration:execute")
 def recalibrate(run_id):
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()

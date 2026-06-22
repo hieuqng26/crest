@@ -5,9 +5,10 @@ import uuid
 import pandas as pd
 import pyodbc
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
+from project.api.auth.decorators import require_perm
 from project.core import storage
 from project.db_models.calibration_models import Dataset
 from project.logger import get_logger
@@ -35,7 +36,7 @@ def _read_dataframe(file_bytes: bytes, ext: str) -> pd.DataFrame:
 
 
 @datasets.get("/")
-@jwt_required()
+@require_perm("dataset:read")
 def list_datasets():
     kind = request.args.get("kind")
     q = Dataset.query.filter(Dataset.status != "deleted")
@@ -46,7 +47,7 @@ def list_datasets():
 
 
 @datasets.post("/upload")
-@jwt_required()
+@require_perm("dataset:write")
 def upload_dataset():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -100,7 +101,7 @@ def upload_dataset():
 
 
 @datasets.post("/query")
-@jwt_required()
+@require_perm("dataset:write")
 def query_dataset():
     body = request.get_json(silent=True) or {}
     sql = body.get("sql", "").strip()
@@ -152,7 +153,7 @@ def query_dataset():
 
 
 @datasets.get("/<int:dataset_id>/rows")
-@jwt_required()
+@require_perm("dataset:read")
 def get_dataset_rows(dataset_id):
     ds = Dataset.query.filter_by(id=dataset_id).first()
     if not ds or ds.status == "deleted":
@@ -195,7 +196,7 @@ def get_dataset_rows(dataset_id):
 
 
 @datasets.get("/<int:dataset_id>")
-@jwt_required()
+@require_perm("dataset:read")
 def get_dataset(dataset_id):
     ds = Dataset.query.filter_by(id=dataset_id).first()
     if not ds or ds.status == "deleted":
@@ -204,7 +205,7 @@ def get_dataset(dataset_id):
 
 
 @datasets.delete("/<int:dataset_id>")
-@jwt_required()
+@require_perm("dataset:write")
 def delete_dataset(dataset_id):
     ds = Dataset.query.filter_by(id=dataset_id).first()
     if not ds or ds.status == "deleted":
@@ -216,7 +217,7 @@ def delete_dataset(dataset_id):
 
 
 @datasets.post("/bulk-delete")
-@jwt_required()
+@require_perm("dataset:write")
 def bulk_delete_datasets():
     ids = (request.get_json(silent=True) or {}).get("ids", [])
     if not ids:

@@ -2,8 +2,9 @@ import uuid
 from datetime import datetime, timezone
 
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 
+from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import CalibrationRun, Dataset
 from project.db_models.credit_models import CreditRiskForecastInput, CreditRiskRun
 from project.db_models.forecast_models import (
@@ -16,7 +17,7 @@ from . import forecast_runs
 
 
 @forecast_runs.get("")
-@jwt_required()
+@require_perm("forecast:read")
 def list_runs():
     status = request.args.get("status")
     q = ForecastRun.query
@@ -27,7 +28,7 @@ def list_runs():
 
 
 @forecast_runs.post("")
-@jwt_required()
+@require_perm("forecast:execute")
 def create_run():
     from project import app_session
     from project.workers.tasks import run_forecast
@@ -81,7 +82,7 @@ def create_run():
 
 
 @forecast_runs.get("/<run_id>")
-@jwt_required()
+@require_perm("forecast:read")
 def get_run(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -90,7 +91,7 @@ def get_run(run_id: str):
 
 
 @forecast_runs.get("/<run_id>/refs")
-@jwt_required()
+@require_perm("forecast:read")
 def get_refs(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -124,7 +125,7 @@ def _cr_refs_for(fr_id: int):
 
 
 @forecast_runs.delete("/<run_id>")
-@jwt_required()
+@require_perm("forecast:write")
 def delete_run(run_id: str):
     from project import app_session
 
@@ -151,7 +152,7 @@ def delete_run(run_id: str):
 
 
 @forecast_runs.post("/bulk-delete")
-@jwt_required()
+@require_perm("forecast:write")
 def bulk_delete_runs():
     from project import app_session
 
@@ -182,7 +183,7 @@ def bulk_delete_runs():
 
 
 @forecast_runs.post("/<run_id>/cancel")
-@jwt_required()
+@require_perm("forecast:execute")
 def cancel_run(run_id: str):
     from project import app_session
 
@@ -205,7 +206,7 @@ def cancel_run(run_id: str):
 
 
 @forecast_runs.get("/<run_id>/logs")
-@jwt_required()
+@require_perm("forecast:read")
 def get_logs(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -217,7 +218,7 @@ def get_logs(run_id: str):
 
 
 @forecast_runs.post("/<run_id>/rerun")
-@jwt_required()
+@require_perm("forecast:execute")
 def rerun_run(run_id: str):
     from project import app_session
     from project.workers.tasks import run_forecast
@@ -241,7 +242,7 @@ def rerun_run(run_id: str):
 
 
 @forecast_runs.get("/<run_id>/results")
-@jwt_required()
+@require_perm("forecast:read")
 def get_results(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:

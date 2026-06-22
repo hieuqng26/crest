@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 
+from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import Dataset
 from project.db_models.credit_models import (
     CreditRiskForecastInput,
@@ -42,7 +43,7 @@ def _pd_rating_df(curve: str = "moodys") -> pd.DataFrame:
 
 
 @credit_risk.get("/pd-ratings")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_pd_ratings():
     curve = request.args.get("curve", "moodys")
     rows = PdRating.query.filter_by(curve_name=curve).order_by(PdRating.category).all()
@@ -50,7 +51,7 @@ def get_pd_ratings():
 
 
 @credit_risk.get("/clients")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_clients():
     from project.db_models.calibration_models import Dataset
     from project import DATA_STORE
@@ -88,7 +89,7 @@ def get_clients():
 
 
 @credit_risk.post("/kmv")
-@jwt_required()
+@require_perm("credit_risk:read")
 def compute_kmv():
     from project.core.credit_risk.kmv import run_kmv
 
@@ -144,7 +145,7 @@ def compute_kmv():
 
 
 @credit_risk.post("/ecl")
-@jwt_required()
+@require_perm("credit_risk:read")
 def compute_ecl_v2():
     from project.core.credit_risk.ecl import compute_ecl
     from project.core.credit_risk.kmv import run_kmv
@@ -216,7 +217,7 @@ def compute_ecl_v2():
 
 
 @credit_risk.get("/runs")
-@jwt_required()
+@require_perm("credit_risk:read")
 def list_runs():
     runs = CreditRiskRun.query.order_by(CreditRiskRun.created_at.desc()).all()
     result = []
@@ -229,7 +230,7 @@ def list_runs():
 
 
 @credit_risk.post("/runs")
-@jwt_required()
+@require_perm("credit_risk:execute")
 def create_run():
     from project import app_session
     from project.workers.tasks import run_credit_analysis
@@ -297,7 +298,7 @@ def create_run():
 
 
 @credit_risk.get("/runs/active")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_active_run():
     cr = CreditRiskRun.query.filter_by(is_active=True).first()
     if not cr:
@@ -311,7 +312,7 @@ def get_active_run():
 
 
 @credit_risk.put("/runs/<cr_run_id>/active")
-@jwt_required()
+@require_perm("credit_risk:execute")
 def set_active_run(cr_run_id: str):
     from project import app_session
 
@@ -333,7 +334,7 @@ def set_active_run(cr_run_id: str):
 
 
 @credit_risk.post("/runs/<cr_run_id>/rerun")
-@jwt_required()
+@require_perm("credit_risk:execute")
 def rerun_run(cr_run_id: str):
     from project import app_session
     from project.workers.tasks import run_credit_analysis
@@ -357,7 +358,7 @@ def rerun_run(cr_run_id: str):
 
 
 @credit_risk.post("/runs/<cr_run_id>/cancel")
-@jwt_required()
+@require_perm("credit_risk:execute")
 def cancel_run(cr_run_id: str):
     from project import app_session
 
@@ -380,7 +381,7 @@ def cancel_run(cr_run_id: str):
 
 
 @credit_risk.get("/runs/<cr_run_id>/results")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_run_results(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
@@ -421,7 +422,7 @@ def get_run_results(cr_run_id: str):
 
 
 @credit_risk.delete("/runs/<cr_run_id>")
-@jwt_required()
+@require_perm("credit_risk:write")
 def delete_run(cr_run_id: str):
     from project import app_session
 
@@ -438,7 +439,7 @@ def delete_run(cr_run_id: str):
 
 
 @credit_risk.get("/runs/<cr_run_id>")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_run(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
@@ -452,7 +453,7 @@ def get_run(cr_run_id: str):
 
 
 @credit_risk.get("/runs/<cr_run_id>/logs")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_run_logs(cr_run_id: str):
     logs = (
         CreditRiskRunLog.query.filter_by(run_id=cr_run_id)
@@ -463,7 +464,7 @@ def get_run_logs(cr_run_id: str):
 
 
 @credit_risk.get("/runs/<cr_run_id>/client/<client_id>")
-@jwt_required()
+@require_perm("credit_risk:read")
 def get_client_result(cr_run_id: str, client_id: str):
     result = CreditRiskResult.query.filter_by(
         run_id=cr_run_id, client_id=client_id
@@ -482,7 +483,7 @@ def get_client_result(cr_run_id: str, client_id: str):
 
 
 @credit_risk.post("/ecl/v1")
-@jwt_required()
+@require_perm("credit_risk:read")
 def compute_ecl_v1():
     body = request.get_json(silent=True) or {}
     portfolio = body.get("portfolio", [])
@@ -515,7 +516,7 @@ def compute_ecl_v1():
 
 
 @credit_risk.post("/pd-lgd/v1")
-@jwt_required()
+@require_perm("credit_risk:read")
 def compute_pd_lgd_v1():
     body = request.get_json(silent=True) or {}
     run_ids = body.get("run_ids", [])

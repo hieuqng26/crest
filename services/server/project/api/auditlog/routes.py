@@ -2,19 +2,17 @@ from datetime import timedelta
 
 import pandas as pd
 from flask import Blueprint, jsonify, make_response, request
-from flask_jwt_extended import jwt_required
 from sqlalchemy import text
 
 from project.api.auditlog.models import AuditLog, log_audit
-from project.api.auth.utils import prevent_multiple_logins_per_user
+from project.api.auth.decorators import require_perm
 from project.api.utils import valid_date, validate_request
 
 auditlog = Blueprint("auditlog", __name__)
 
 
 @auditlog.route("/all", methods=["POST"], endpoint="get_all_logs")
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("auditlog:read")
 @validate_request(
     allowed_keys=[
         "page",
@@ -131,8 +129,7 @@ def get_all_logs():
 
 
 @auditlog.route("/email/<string:email>", methods=["GET"], endpoint="get_logs_by_user")
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("auditlog:read")
 @validate_request()
 def get_logs_by_user(email):
     """Query all jobs by email"""
@@ -155,8 +152,7 @@ def get_logs_by_user(email):
 
 
 @auditlog.route("/add", methods=["POST"])
-@jwt_required()
-@prevent_multiple_logins_per_user()
+@require_perm("auditlog:read")
 @validate_request(
     allowed_keys=[
         "email",
