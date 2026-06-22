@@ -17,7 +17,6 @@ def probe_app(app):
     return app
 
 
-@pytest.mark.xfail(reason="needs login from Task 7")
 @pytest.mark.parametrize(
     "role,status", [("viewer", 403), ("analyst", 200), ("sysadmin", 200)]
 )
@@ -31,7 +30,6 @@ def test_require_perm_gates_by_role(probe_app, make_user, role, status):
     assert resp.status_code == status
 
 
-@pytest.mark.xfail(reason="needs login from Task 7")
 def test_require_perm_requires_auth(probe_app):
     resp = probe_app.test_client().post("/api/probe/exec")
     assert resp.status_code == 401

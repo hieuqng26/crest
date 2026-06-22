@@ -60,8 +60,8 @@ class User(db.Model):
         email = email.strip()
         password = password.strip()
 
-        # validation on email - only alphanumeric, underscore, hyphen, and atmark
-        if (len(email) > 64) or not bool(re.match(r"^[a-zA-Z0-9_\-@]+$", email)):
+        # validation on email - only alphanumeric, underscore, hyphen, dot, and atmark
+        if (len(email) > 64) or not bool(re.match(r"^[a-zA-Z0-9_\-@.]+$", email)):
             raise ValueError("User name is not in a valid format")
 
         user = cls.query.filter_by(email=email).first()
