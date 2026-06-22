@@ -510,6 +510,7 @@ def delete_user(email):
         user = User.query.filter_by(email=email).first()
         if not user:
             raise Exception("User not found")
+        sessions.revoke_all_for_user(user.email)
         db.session.delete(user)
         db.session.commit()
 

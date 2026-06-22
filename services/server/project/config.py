@@ -23,6 +23,8 @@ class Config:
     )
     ALLOWED_ORIGINS = "*"
 
+    CACHE_TYPE = "SimpleCache"  # overridden to RedisCache in Dev/Prod
+
     # JWT — cookie transport, revocable sessions
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")  # required; no baked-in default
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(

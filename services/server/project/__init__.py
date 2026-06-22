@@ -144,7 +144,7 @@ def create_app():
             # use "set" instead of "add" to ensure only one origin
             response.headers.set("Access-Control-Allow-Origin", origin)
         response.headers.add(
-            "Access-Control-Allow-Headers", "Content-Type, Authorization"
+            "Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-TOKEN"
         )
         response.headers.add(
             "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"
