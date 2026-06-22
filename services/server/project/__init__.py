@@ -83,7 +83,7 @@ def create_app():
     # Import models so Alembic autogenerate can detect them
     from project.api.auditlog.models import AuditLog  # noqa: F401
     from project.api.auditlog.routes import auditlog
-    from project.api.auth.models import ActiveSession  # noqa: F401
+    from project.api.auth.models import UserSession  # noqa: F401
     from project.api.auth.routes import auth
     from project.api.calibrations import calibrations
     from project.api.credit_risk import credit_risk

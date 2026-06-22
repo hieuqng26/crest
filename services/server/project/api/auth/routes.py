@@ -11,7 +11,7 @@ from flask_jwt_extended import (
 
 from project import db
 from project.api.auditlog.models import log_audit
-from project.api.auth.models import add_session, delete_session, update_session
+
 from project.api.users.models import User
 from project.api.utils import validate_request
 from project.logger import get_logger
@@ -34,8 +34,7 @@ def login():
         # create jwt tokens
         access_token = create_access_token(identity=user.email)
 
-        # store active sessions
-        add_session(user.email, access_token)
+        # TODO(T7): create_session with new UserSession store
         refresh_token = create_refresh_token(identity=user.email)
         response = make_response(
             jsonify(
@@ -94,7 +93,7 @@ def login():
 def refresh_token():
     identity = get_jwt_identity()
     access_token = create_access_token(identity=identity)
-    update_session(identity, access_token)
+    # TODO(T7): revoke old session and create new one with UserSession store
     response = make_response(jsonify({"accessToken": access_token}), 200)
     response.set_cookie(
         "access_token", access_token, secure=True, httponly=True, samesite="Strict"
@@ -119,7 +118,7 @@ def refresh_token():
 def logout():
     # update user logout time
     email = get_jwt_identity()
-    delete_session(email)
+    # TODO(T7): revoke_all_for_user with new UserSession store
     user = User.query.filter_by(email=email).first()
     if user:
         user.last_logout = datetime.now(timezone.utc)
