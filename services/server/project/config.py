@@ -23,19 +23,21 @@ class Config:
     )
     ALLOWED_ORIGINS = "*"
 
-    # JWT
-    JWT_SECRET_KEY = os.getenv(
-        "JWT_SECRET_KEY",
-        "7688049fa6c6a355bae4a311b22df7b828c200f4ce002b9b30defdb5b35c316e",
-    )  # secrets.token_hex()
+    # JWT — cookie transport, revocable sessions
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")  # required; no baked-in default
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(
-        minutes=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES", 10))
+        minutes=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MIN", 15))
     )
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(
-        minutes=int(os.getenv("JWT_REFRESH_TOKEN_EXPIRES", 10))
+        hours=int(os.getenv("JWT_REFRESH_TOKEN_EXPIRES_H", 12))
     )
-    JWT_TOKEN_LOCATION = os.getenv("JWT_TOKEN_LOCATION", "headers").split(",")
-    JWT_COOKIE_SECURE = True
+    JWT_TOKEN_LOCATION = ["cookies"]
+    JWT_COOKIE_SAMESITE = "Strict"
+    JWT_COOKIE_SECURE = os.getenv("JWT_COOKIE_SECURE", "true").lower() == "true"
+    JWT_COOKIE_CSRF_PROTECT = True
+    JWT_ACCESS_COOKIE_PATH = "/api"
+    JWT_REFRESH_COOKIE_PATH = "/api/auth/refresh"
+    JWT_SESSION_COOKIE = False  # persist across browser restarts (until refresh expiry)
 
     # # Flask Session
     # SESSION_TYPE = 'redis'
@@ -55,10 +57,16 @@ class TestingConfig(Config):
     SQLALCHEMY_DATABASE_URI = "sqlite://"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = True
+    JWT_SECRET_KEY = "test-secret"
+    JWT_COOKIE_CSRF_PROTECT = False
+    JWT_COOKIE_SECURE = False
+    CACHE_TYPE = "SimpleCache"
 
 
 class DevelopmentConfig(Config):
     ALLOWED_ORIGINS = "*"
+    JWT_COOKIE_SECURE = os.getenv("JWT_COOKIE_SECURE", "false").lower() == "true"
+    CACHE_TYPE = "RedisCache"
     REDIS_USER = os.getenv("REDIS_USER", "default")
     REDIS_PASSWORD = urllib.parse.quote(os.getenv("REDIS_PASSWORD", ""))
     REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -68,6 +76,7 @@ class DevelopmentConfig(Config):
         f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     )
     REDIS_QUEUES = ["default"]
+    CACHE_REDIS_URL = REDIS_URL
 
     # Celery
     CELERY_BROKER_URL = REDIS_URL
@@ -131,6 +140,7 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     ALLOWED_ORIGINS = "*"
+    CACHE_TYPE = "RedisCache"
     REDIS_USER = os.getenv("REDIS_USER", "default")
     REDIS_PASSWORD = urllib.parse.quote(os.getenv("REDIS_PASSWORD", ""))
     REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -140,6 +150,7 @@ class ProductionConfig(Config):
         f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
     )
     REDIS_QUEUES = ["default"]
+    CACHE_REDIS_URL = REDIS_URL
 
     # Celery
     CELERY_BROKER_URL = REDIS_URL

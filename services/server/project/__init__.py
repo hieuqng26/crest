@@ -8,7 +8,6 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
-from flask_wtf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from project.config import Config, DevelopmentConfig, ProductionConfig, TestingConfig
@@ -42,14 +41,6 @@ def create_app():
     """
     app = Flask(__name__)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=4, x_host=4)
-    app.config["WTF_CSRF_ENABLED"] = (
-        os.getenv("WTF_CSRF_ENABLED", "FALSE").upper() == "TRUE"
-    )
-    app.config["WTF_CSRF_CHECK_DEFAULT"] = (
-        os.getenv("WTF_CSRF_CHECK_DEFAULT", "FALSE").upper() == "TRUE"
-    )
-    csrf = CSRFProtect()
-    csrf.init_app(app)
 
     # Choose the configuration
     if os.getenv("CONFIG_NAME") == "production":
@@ -76,21 +67,18 @@ def create_app():
         resources={r"/api/*": {"origins": allowed_origins}},
     )
 
-    # JWT
-    app.config["JWT_SECRET_KEY"] = Config.JWT_SECRET_KEY
-    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = Config.JWT_ACCESS_TOKEN_EXPIRES
-    app.config["JWT_REFRESH_TOKEN_EXPIRES"] = Config.JWT_REFRESH_TOKEN_EXPIRES
-    app.config["JWT_TOKEN_LOCATION"] = Config.JWT_TOKEN_LOCATION
+    # JWT (cookie mode) — values come from the active config object
     jwt = JWTManager(app)
+
+    from project.api.auth.jwt_callbacks import register_jwt_callbacks
+
+    register_jwt_callbacks(jwt)
 
     db.init_app(app)
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     jwt.init_app(app)
-    cache.init_app(
-        app,
-        config={"CACHE_TYPE": "RedisCache", "CACHE_REDIS_URL": app.config["REDIS_URL"]},
-    )
+    cache.init_app(app)
 
     # Import models so Alembic autogenerate can detect them
     from project.api.auditlog.models import AuditLog  # noqa: F401
@@ -146,8 +134,10 @@ def create_app():
 
     @app.after_request
     def after_request(response):
-        allowed_origins_env = os.getenv("CORS_ORIGIN")
-        allowed_origins = [s.strip() for s in allowed_origins_env.split(",")]
+        allowed_origins_env = os.getenv("CORS_ORIGIN", "")
+        allowed_origins = [
+            s.strip() for s in allowed_origins_env.split(",") if s.strip()
+        ]
         origin = request.headers.get("Origin")
         if origin in allowed_origins:
             # use "set" instead of "add" to ensure only one origin

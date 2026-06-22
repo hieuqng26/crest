@@ -1,9 +1,22 @@
 import os
+import sys
+import types
 
 import pytest
 
 os.environ["CONFIG_NAME"] = "testing"
 os.environ.setdefault("CORS_ORIGIN", "http://localhost:5173")
+
+# pyodbc is a native extension that requires unixodbc to be installed.
+# In the test environment the shared library is absent, so mock the module
+# before any blueprint imports trigger the top-level `import pyodbc`.
+if "pyodbc" not in sys.modules:
+    sys.modules["pyodbc"] = types.ModuleType("pyodbc")
+
+# Eagerly import the real `project` package here so that test_credit_risk.py's
+# `sys.modules.setdefault("project", types.ModuleType("project"))` call is a
+# no-op and doesn't replace the real package with a stub.
+import project  # noqa: E402, F401
 
 
 @pytest.fixture()
@@ -12,7 +25,9 @@ def app():
     from project.api.roles.defaults import ensure_default_roles
 
     app = create_app()
-    app.config.update(TESTING=True, JWT_COOKIE_CSRF_PROTECT=False, JWT_COOKIE_SECURE=False)
+    app.config.update(
+        TESTING=True, JWT_COOKIE_CSRF_PROTECT=False, JWT_COOKIE_SECURE=False
+    )
     with app.app_context():
         db.create_all()
         ensure_default_roles()
@@ -46,6 +61,8 @@ def make_user(app):
 @pytest.fixture()
 def login(client):
     def _login(email, password="Passw0rd!"):
-        return client.post("/api/auth/login", json={"email": email, "password": password})
+        return client.post(
+            "/api/auth/login", json={"email": email, "password": password}
+        )
 
     return _login
