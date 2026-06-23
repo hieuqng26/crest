@@ -99,10 +99,11 @@ onMounted(async () => {
         </p>
       </div>
       <Button
+        v-can="'credit_risk:execute'"
         label="Launch"
         icon="pi pi-play"
         :loading="submitting"
-        :disabled="!canLaunch || loadingInit"
+        :disabled="!canLaunch || loadingInit || submitting"
         @click="launch"
       />
     </header>
@@ -266,7 +267,7 @@ onMounted(async () => {
     </div>
 
     <div class="flex gap-2">
-      <Button label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || loadingInit" @click="launch" />
+      <Button v-can="'credit_risk:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || loadingInit || submitting" @click="launch" />
       <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'credit_risk_jobs' })" />
     </div>
 
