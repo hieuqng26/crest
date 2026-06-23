@@ -605,4 +605,10 @@ const downloadData = computed(() => {
   border-top: 1px solid var(--surface-border);
   padding: 0.6rem 0;
 }
+:deep(.bare-table-inner .p-paginator .p-dropdown) {
+  min-width: 4.5rem;
+}
+:deep(.bare-table-inner .p-paginator .p-dropdown .p-dropdown-label) {
+  padding-right: 0.5rem;
+}
 </style>
