@@ -17,52 +17,50 @@
 
     <!-- Users table -->
     <div class="panel">
-      <div class="bare-table">
-        <DataTable
-          ref="dt"
-          :value="users"
-          dataKey="id"
-          :paginator="true"
-          :rows="20"
-          :filters="filters"
-          removableSort
-          paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
-          :rowsPerPageOptions="[10, 20, 50]"
-          currentPageReportTemplate="Showing {first} to {last} of {totalRecords} users"
-          class="bare-table-inner"
-        >
-          <template #header>
-            <div class="flex align-items-center justify-content-between pb-2">
-              <span class="panel-section-label">Users</span>
-              <IconField iconPosition="left">
-                <InputIcon><i class="pi pi-search" /></InputIcon>
-                <InputText v-model="filters['global'].value" placeholder="Search…" />
-              </IconField>
+      <DataTable
+        ref="dt"
+        :value="users"
+        dataKey="id"
+        :paginator="true"
+        :rows="20"
+        :filters="filters"
+        removableSort
+        paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport RowsPerPageDropdown"
+        :rowsPerPageOptions="[10, 20, 50]"
+        currentPageReportTemplate="Showing {first} to {last} of {totalRecords} users"
+        class="bare-table-inner"
+      >
+        <template #header>
+          <div class="flex align-items-center justify-content-between pb-2">
+            <span class="panel-section-label">Users</span>
+            <IconField iconPosition="left">
+              <InputIcon><i class="pi pi-search" /></InputIcon>
+              <InputText v-model="filters['global'].value" placeholder="Search…" />
+            </IconField>
+          </div>
+        </template>
+
+        <Column field="email"         header="Email"           sortable style="min-width: 14rem" />
+        <Column field="name"          header="Name"            sortable style="min-width: 12rem" />
+        <Column field="role"          header="Role"            sortable style="min-width: 8rem" />
+        <Column field="registered_on" header="Registered"      sortable style="min-width: 10rem">
+          <template #body="{ data }">{{ formatDate(data.registered_on) }}</template>
+        </Column>
+        <Column field="status"        header="Status"          sortable style="min-width: 8rem">
+          <template #body="{ data }">
+            <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
+          </template>
+        </Column>
+        <Column :exportable="false" style="width: 7rem">
+          <template #body="{ data }">
+            <div class="flex gap-1 justify-content-end">
+              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" @click="onUpdateUser(data)" />
+              <Button icon="pi pi-trash"  text rounded size="small" severity="danger"    @click="onDeleteUser(data)" />
             </div>
           </template>
-
-          <Column field="email"         header="Email"           sortable style="min-width: 14rem" />
-          <Column field="name"          header="Name"            sortable style="min-width: 12rem" />
-          <Column field="role"          header="Role"            sortable style="min-width: 8rem" />
-          <Column field="registered_on" header="Registered"      sortable style="min-width: 10rem">
-            <template #body="{ data }">{{ formatDate(data.registered_on) }}</template>
-          </Column>
-          <Column field="status"        header="Status"          sortable style="min-width: 8rem">
-            <template #body="{ data }">
-              <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
-            </template>
-          </Column>
-          <Column :exportable="false" style="width: 7rem">
-            <template #body="{ data }">
-              <div class="flex gap-1 justify-content-end">
-                <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" @click="onUpdateUser(data)" />
-                <Button icon="pi pi-trash"  text rounded size="small" severity="danger"    @click="onDeleteUser(data)" />
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </div>
-  </div>
+        </Column>
+      </DataTable>
+    </div>
 
     <Dialog
       v-model:visible="showAddDialog"
@@ -549,7 +547,7 @@ const downloadData = computed(() => {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
   border-radius: 12px;
-  padding: 1.25rem 1.25rem 0;
+  padding: 1.25rem;
 }
 .panel-section-label {
   font-size: 0.7rem;
@@ -562,7 +560,6 @@ const downloadData = computed(() => {
 .action-btn { color: var(--text-color-secondary) !important; font-size: 0.85rem; }
 .action-btn:hover { color: var(--text-color) !important; background: var(--surface-hover) !important; }
 
-.bare-table { margin: 0 -1.25rem; }
 :deep(.bare-table-inner .p-datatable-thead > tr > th) {
   background: transparent;
   color: var(--text-color-secondary);
@@ -572,24 +569,24 @@ const downloadData = computed(() => {
   letter-spacing: 0.04em;
   border: 0;
   border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 1.25rem;
+  padding: 0.6rem 0.75rem;
 }
 :deep(.bare-table-inner .p-datatable-tbody > tr > td) {
   border: 0;
   border-bottom: 1px solid var(--surface-border);
-  padding: 0.75rem 1.25rem;
+  padding: 0.75rem 0.75rem;
   font-size: 0.875rem;
 }
 :deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 :deep(.bare-table-inner .p-datatable-header) {
   background: transparent;
   border: 0;
-  padding: 0 1.25rem 0.75rem;
+  padding: 0 0 0.75rem;
 }
 :deep(.bare-table-inner .p-paginator) {
   background: transparent;
   border: 0;
   border-top: 1px solid var(--surface-border);
-  padding: 0.6rem 1.25rem;
+  padding: 0.6rem 0;
 }
 </style>

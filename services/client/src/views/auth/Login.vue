@@ -27,7 +27,7 @@ const login = async () => {
   }
   await store
     .dispatch('login', { email: email.value, password: password.value })
-    .then(async (res) => { if (res.status === 200) router.push({ name: 'dashboard' }) })
+    .then(() => router.push({ name: 'dashboard' }))
     .catch((err) => {
       const msg = err.response?.data?.message || err.message
       toast.add({ severity: 'error', summary: 'Error', detail: msg, life: 5000 })
