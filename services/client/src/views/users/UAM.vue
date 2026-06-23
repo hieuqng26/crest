@@ -137,6 +137,7 @@
           v-model.trim="user.status"
           :options="['active', 'inactive']"
           aria-labelledby="basic"
+          class="status-toggle"
         />
       </div>
 
@@ -190,7 +191,8 @@
         <label for="role" class="block text-900 text-l font-medium mb-2"
           >Role</label
         >
-        <Dropdown id="role" v-model.trim="user.role" :options="roles" />
+        <Dropdown id="role" v-model.trim="user.role" :options="roles" :disabled="isSelf" />
+        <small v-if="isSelf" class="text-color-secondary">You cannot change your own role.</small>
       </div>
 
       <div class="field">
@@ -213,6 +215,7 @@
           v-model.trim="user.status"
           :options="['active', 'inactive']"
           aria-labelledby="basic"
+          class="status-toggle"
         />
       </div>
 
@@ -524,6 +527,8 @@ const getStatusLabel = (status) => {
   }
 }
 
+const isSelf = computed(() => store.getters.getCurrentUser?.email === user.value.email)
+
 const downloadData = computed(() => {
   if (users.value) {
     const data = JSON.parse(JSON.stringify(users.value))
@@ -583,6 +588,17 @@ const downloadData = computed(() => {
   border: 0;
   padding: 0 0 0.75rem;
 }
+:deep(.status-toggle .p-button:first-child.p-highlight) {
+  background: var(--green-500);
+  border-color: var(--green-500);
+  color: #fff;
+}
+:deep(.status-toggle .p-button:last-child.p-highlight) {
+  background: var(--surface-500);
+  border-color: var(--surface-500);
+  color: #fff;
+}
+
 :deep(.bare-table-inner .p-paginator) {
   background: transparent;
   border: 0;
