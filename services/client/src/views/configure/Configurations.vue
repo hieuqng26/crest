@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
 import { FilterMatchMode } from 'primevue/api'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
@@ -9,7 +10,10 @@ import { fmtDate } from '@/utils/datetime'
 
 const route = useRoute()
 const router = useRouter()
+const store = useStore()
 const toast = useToast()
+
+const canWrite = computed(() => store.getters.can('model_config:write'))
 
 const FAMILY_LABEL    = { classification: 'Classification', ensemble: 'Ensemble', regression: 'Regression', timeseries: 'Time Series', statistical: 'Statistical' }
 const FAMILY_SEVERITY = { classification: 'info', ensemble: 'warning', regression: 'success', timeseries: 'contrast', statistical: 'secondary' }
@@ -112,9 +116,10 @@ const filteredRows = computed(() =>
   )
 )
 
-// ---- Dialog (create + edit) ----
+// ---- Dialog (create + edit + view) ----
 const dialogVisible = ref(false)
 const editingId = ref(null)
+const viewOnly = ref(false)
 const form = ref({
   name: '',
   algorithm: null,
@@ -166,6 +171,7 @@ watch(() => form.value.algorithm, (algo, prev) => {
 })
 
 const openCreate = (presetAlgorithm = null) => {
+  viewOnly.value = false
   editingId.value = null
   const algo = presetAlgorithm || algorithmFilter.value || null
   const meta = registry.value.find(a => a.algorithm === algo)
@@ -181,7 +187,10 @@ const openCreate = (presetAlgorithm = null) => {
   dialogVisible.value = true
 }
 
+const openView = (cfg) => { viewOnly.value = true; openEdit(cfg) }
+
 const openEdit = (cfg) => {
+  viewOnly.value = false
   editingId.value = cfg.id
   const params = cfg.hyperparams_json ? JSON.parse(cfg.hyperparams_json) : {}
   const searchCfg = cfg.search_config_json ? JSON.parse(cfg.search_config_json) : null
@@ -388,10 +397,11 @@ onMounted(() => {
         <Column v-if="!selectMode" header="" style="width:12rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
-              <Button icon="pi pi-play"  text rounded size="small" v-tooltip.top="'Calibrate'" v-can="'calibration:execute'" @click="calibrate(data)" />
-              <Button icon="pi pi-pencil" text rounded size="small" v-tooltip.top="'Edit'"      v-can="'model_config:write'" @click="openEdit(data)" />
-              <Button icon="pi pi-copy"   text rounded size="small" v-tooltip.top="'Duplicate'" v-can="'model_config:write'" @click="onDuplicate(data)" />
-              <Button icon="pi pi-trash"  text rounded size="small" severity="danger" v-tooltip.top="'Delete'" v-can="'model_config:write'" @click="onDelete(data)" />
+              <Button icon="pi pi-play"   text rounded size="small" v-tooltip.top="'Calibrate'" v-can="'calibration:execute'" @click="calibrate(data)" />
+              <Button v-if="canWrite" icon="pi pi-pencil" text rounded size="small" v-tooltip.top="'Edit'"      @click="openEdit(data)" />
+              <Button v-else          icon="pi pi-eye"    text rounded size="small" v-tooltip.top="'View'"      @click="openView(data)" />
+              <Button icon="pi pi-copy"  text rounded size="small" v-tooltip.top="'Duplicate'" v-can="'model_config:write'" @click="onDuplicate(data)" />
+              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete'" v-can="'model_config:write'" @click="onDelete(data)" />
             </div>
           </template>
         </Column>
@@ -401,10 +411,12 @@ onMounted(() => {
     <!-- Create / Edit dialog -->
     <Dialog v-model:visible="dialogVisible" modal :style="{ width: 'min(56rem, 90vw)' }" :draggable="false">
       <template #header>
-        <div class="text-lg font-semibold">{{ editingId ? 'Edit Configuration' : 'New Configuration' }}</div>
+        <div class="text-lg font-semibold">
+          {{ viewOnly ? 'View Configuration' : editingId ? 'Edit Configuration' : 'New Configuration' }}
+        </div>
       </template>
 
-      <div class="flex flex-column gap-4" style="max-height: 70vh; overflow-y: auto; padding-right: 0.25rem">
+      <div class="flex flex-column gap-4" :style="{ maxHeight: '70vh', overflowY: 'auto', paddingRight: '0.25rem', pointerEvents: viewOnly ? 'none' : 'auto', userSelect: viewOnly ? 'none' : 'auto' }">
         <div class="flex flex-column gap-1">
           <label class="font-medium text-sm">Config Name</label>
           <InputText v-model="form.name" placeholder="e.g. PD_LR_2024_Q4" class="w-full" />
@@ -630,8 +642,9 @@ onMounted(() => {
       </div>
 
       <template #footer>
-        <Button label="Cancel" severity="secondary" text @click="dialogVisible = false" />
+        <Button label="Close" severity="secondary" text @click="dialogVisible = false" />
         <Button
+          v-if="!viewOnly"
           :label="editingId ? 'Save Changes' : 'Save Configuration'"
           icon="pi pi-save"
           :loading="saving"
