@@ -462,7 +462,7 @@ const filterPanel = ref(null)
     </div>
 
     <Menu ref="menuRef" :model="menuItems" popup />
-    <ConfirmDialog />
+
   </div>
 </template>
 

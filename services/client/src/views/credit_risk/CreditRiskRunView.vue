@@ -513,7 +513,7 @@ const levelColor = (level) =>
       </div>
     </div>
 
-    <ConfirmDialog />
+
   </div>
 </template>
 

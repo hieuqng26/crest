@@ -224,7 +224,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
     </div>
     </template><!-- end v-else (run loaded) -->
 
-    <ConfirmDialog />
+
   </div>
 </template>
 

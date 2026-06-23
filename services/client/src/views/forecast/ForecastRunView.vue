@@ -489,7 +489,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
       </div>
     </div>
 
-    <ConfirmDialog />
+
   </div>
 </template>
 
