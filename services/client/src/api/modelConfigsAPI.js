@@ -6,6 +6,7 @@ const modelConfigsAPI = {
   get:        (id)     => httpClient.get(`/model-configs/${id}`),
   create:     (body)   => httpClient.post('/model-configs/', body),
   update:     (id, body) => httpClient.patch(`/model-configs/${id}`, body),
+  refs:       (id)     => httpClient.get(`/model-configs/${id}/refs`),
   delete:     (id)     => httpClient.delete(`/model-configs/${id}`),
   bulkDelete: (ids)    => httpClient.post('/model-configs/bulk-delete', { ids }),
 }

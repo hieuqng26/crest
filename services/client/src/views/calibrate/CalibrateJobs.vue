@@ -365,7 +365,11 @@ const statusDot = (key) => STATUSES.find(s => s.key === key)?.dot ?? 'var(--surf
                 <span v-if="data.status === 'running'" class="status-dot-ping" :style="{ background: statusDot(data.status) }" />
               </span>
               <div class="line-height-3">
-                <div class="font-medium">{{ data.config_name }}</div>
+                <a
+                  class="font-medium text-color cursor-pointer hover:underline"
+                  v-tooltip.top="'View model configuration'"
+                  @click.stop="router.push({ name: 'configurations', query: { config_id: data.model_config_id } })"
+                >{{ data.config_name }}</a>
                 <div class="text-xs text-color-secondary font-mono">{{ data.run_id }}</div>
               </div>
             </div>

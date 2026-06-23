@@ -126,17 +126,25 @@ def update_config(config_id):
     return jsonify(result), 200
 
 
-def _check_config_refs(config_id):
-    """Return a 409 response if calibration runs reference this config, else None."""
-    run_count = CalibrationRun.query.filter_by(model_config_id=config_id).count()
-    if run_count:
-        return jsonify(
-            {
-                "message": f"Cannot delete: {run_count} calibration run(s) reference this configuration.",
-                "dependencies": {"calibration_runs": run_count},
-            }
-        ), 409
-    return None
+def _cal_refs_for(config_id: int):
+    return CalibrationRun.query.filter_by(model_config_id=config_id).all()
+
+
+@model_configs.get("/<int:config_id>/refs")
+@require_perm("model_config:read")
+def get_refs(config_id: int):
+    cfg = ModelConfig.query.filter_by(id=config_id).first()
+    if not cfg:
+        return jsonify({"error": "Not found"}), 404
+    runs = _cal_refs_for(config_id)
+    return jsonify(
+        {
+            "calibration_runs": [
+                {"run_id": r.run_id, "status": r.status, "target_col": r.target_col}
+                for r in runs
+            ]
+        }
+    ), 200
 
 
 @model_configs.delete("/<int:config_id>")
@@ -145,9 +153,14 @@ def delete_config(config_id):
     cfg = ModelConfig.query.filter_by(id=config_id).first()
     if not cfg:
         return jsonify({"error": "Not found"}), 404
-    conflict = _check_config_refs(config_id)
-    if conflict:
-        return conflict
+    refs = _cal_refs_for(config_id)
+    if refs:
+        return jsonify(
+            {
+                "message": f"Cannot delete: {len(refs)} calibration run(s) reference this configuration.",
+                "dependencies": {"calibration_runs": len(refs)},
+            }
+        ), 409
     with app_session() as session:
         session.delete(cfg)
     return "", 204
@@ -165,7 +178,7 @@ def bulk_delete_configs():
         cfg = ModelConfig.query.filter_by(id=cid).first()
         if not cfg:
             continue
-        if _check_config_refs(cid):
+        if _cal_refs_for(cid):
             blocked.append(cid)
             continue
         with app_session() as session:

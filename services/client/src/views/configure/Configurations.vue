@@ -96,8 +96,6 @@ const familyOptions = [
   { label: 'Statistical',    value: 'statistical' }
 ]
 
-onMounted(fetchConfigs)
-
 const algorithmFilter = ref(route.query.algorithm || null)
 const familyFilter = ref(null)
 const filters = ref({ global: { value: '', matchMode: FilterMatchMode.CONTAINS } })
@@ -264,13 +262,36 @@ const onDuplicate = async (cfg) => {
   }
 }
 
-const onDelete = async (cfg) => {
+// ---- Delete dialog ----
+const deleteDialog      = ref(false)
+const deleteTarget      = ref(null)
+const deleteRefs        = ref([])
+const deleteRefsLoading = ref(false)
+const deleteConfirming  = ref(false)
+
+async function openDeleteDialog(cfg) {
+  deleteTarget.value      = cfg
+  deleteRefs.value        = []
+  deleteDialog.value      = true
+  deleteRefsLoading.value = true
   try {
-    await deleteConfig(cfg.id)
-    toast.add({ severity: 'success', summary: 'Deleted', detail: cfg.name, life: 2000 })
+    const { data } = await modelConfigsAPI.refs(cfg.id)
+    deleteRefs.value = data.calibration_runs ?? []
+  } catch { /* non-critical */ }
+  finally { deleteRefsLoading.value = false }
+}
+
+async function confirmDelete() {
+  deleteConfirming.value = true
+  try {
+    await deleteConfig(deleteTarget.value.id)
+    deleteDialog.value = false
+    toast.add({ severity: 'success', summary: 'Deleted', detail: deleteTarget.value.name, life: 2000 })
   } catch (e) {
     const detail = e?.response?.data?.message ?? e?.response?.data?.error ?? e.message
     toast.add({ severity: 'error', summary: 'Delete failed', detail, life: 5000 })
+  } finally {
+    deleteConfirming.value = false
   }
 }
 
@@ -296,8 +317,14 @@ const bulkDelete = async () => {
   exitSelectMode()
 }
 
-onMounted(() => {
-  if (route.query.new === '1') openCreate(route.query.algorithm || null)
+onMounted(async () => {
+  await fetchConfigs()
+  if (route.query.new === '1') {
+    openCreate(route.query.algorithm || null)
+  } else if (route.query.config_id) {
+    const cfg = configs.value.find(c => c.id === Number(route.query.config_id))
+    if (cfg) openView(cfg)
+  }
 })
 </script>
 
@@ -403,7 +430,7 @@ onMounted(() => {
               <Button v-if="canWrite" icon="pi pi-pencil" text rounded size="small" v-tooltip.top="'Edit'"      @click="openEdit(data)" />
               <Button v-else          icon="pi pi-eye"    text rounded size="small" v-tooltip.top="'View'"      @click="openView(data)" />
               <Button icon="pi pi-copy"  text rounded size="small" v-tooltip.top="'Duplicate'" v-can="'model_config:write'" @click="onDuplicate(data)" />
-              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete'" v-can="'model_config:write'" @click="onDelete(data)" />
+              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete'" v-can="'model_config:write'" @click="openDeleteDialog(data)" />
             </div>
           </template>
         </Column>
@@ -654,10 +681,63 @@ onMounted(() => {
         />
       </template>
     </Dialog>
+
+    <!-- Delete confirm dialog -->
+    <Dialog v-model:visible="deleteDialog" modal :style="{ width: '32rem' }" :draggable="false" header="Delete configuration">
+      <div class="flex flex-column gap-3">
+        <p class="m-0 text-sm">
+          Are you sure you want to delete
+          <span class="font-semibold">{{ deleteTarget?.name }}</span>?
+          This cannot be undone.
+        </p>
+
+        <div v-if="deleteRefsLoading" class="flex align-items-center gap-2 text-sm text-color-secondary">
+          <i class="pi pi-spin pi-spinner" /> Checking dependencies…
+        </div>
+
+        <div v-else-if="deleteRefs.length" class="flex flex-column gap-2">
+          <div class="text-sm font-semibold text-red-400 flex align-items-center gap-2">
+            <i class="pi pi-exclamation-triangle" />
+            Cannot delete — referenced by {{ deleteRefs.length }} calibration job(s):
+          </div>
+          <div class="flex flex-column gap-1 pl-2">
+            <div v-for="run in deleteRefs" :key="run.run_id" class="flex align-items-center gap-2 text-sm">
+              <span class="dot-status" :style="{ background: { queued: '#60a5fa', running: '#facc15', success: '#34d399', failed: '#f87171' }[run.status] ?? 'var(--surface-400)' }" />
+              <a class="text-primary cursor-pointer hover:underline font-mono text-xs"
+                @click="router.push({ name: 'calibrate_run', params: { run_id: run.run_id } }); deleteDialog = false">
+                {{ run.run_id.slice(0, 16) }}…
+              </a>
+              <span class="text-xs text-color-secondary capitalize">({{ run.status }})</span>
+              <span v-if="run.target_col" class="text-xs text-color-secondary font-mono">· {{ run.target_col }}</span>
+            </div>
+          </div>
+          <p class="m-0 text-xs text-color-secondary">Delete those calibration jobs first, then retry.</p>
+        </div>
+      </div>
+
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="deleteDialog = false" />
+        <Button
+          label="Delete"
+          icon="pi pi-trash"
+          severity="danger"
+          :disabled="deleteRefsLoading || deleteRefs.length > 0"
+          :loading="deleteConfirming"
+          @click="confirmDelete"
+        />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
+.dot-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
 .section-label {
   font-size: 0.7rem;
   text-transform: uppercase;
