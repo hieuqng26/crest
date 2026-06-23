@@ -589,8 +589,8 @@ const downloadData = computed(() => {
   padding: 0 0 0.75rem;
 }
 :deep(.status-toggle .p-button:first-child.p-highlight) {
-  background: var(--green-500);
-  border-color: var(--green-500);
+  background: #16a34a;
+  border-color: #16a34a;
   color: #fff;
 }
 :deep(.status-toggle .p-button:last-child.p-highlight) {
