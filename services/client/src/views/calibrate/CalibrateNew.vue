@@ -372,7 +372,7 @@ onMounted(async () => {
     </div>
 
     <div class="flex gap-2">
-      <Button label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch" @click="launch" />
+      <Button v-can="'calibration:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || submitting" @click="launch" />
       <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'calibrate_jobs' })" />
     </div>
   </div>
