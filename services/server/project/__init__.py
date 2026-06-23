@@ -75,9 +75,13 @@ def create_app():
     # JWT (cookie mode) — values come from the active config object
     jwt = JWTManager(app)
 
-    from project.api.auth.jwt_callbacks import register_jwt_callbacks
+    from project.api.auth.jwt_callbacks import (
+        register_http_error_handlers,
+        register_jwt_callbacks,
+    )
 
     register_jwt_callbacks(jwt)
+    register_http_error_handlers(app)
 
     db.init_app(app)
     migrate.init_app(app, db)

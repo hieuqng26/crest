@@ -28,6 +28,10 @@ httpClient.interceptors.response.use(
     const original = error.config
     const status = error.response?.status
     const url = original?.url || ''
+    if (status === 403) {
+      error.message = error.response?.data?.message || "You don't have permission to perform this action."
+      return Promise.reject(error)
+    }
     if (status !== 401 || original._retry || url.includes('/auth/refresh') || url.includes('/auth/login')) {
       return Promise.reject(error)
     }
