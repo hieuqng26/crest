@@ -132,13 +132,15 @@
         <label for="status" class="block text-900 text-l font-medium mb-2"
           >Status</label
         >
-        <SelectButton
-          id="status"
-          v-model.trim="user.status"
-          :options="['active', 'inactive']"
-          aria-labelledby="basic"
-          class="status-toggle"
-        />
+        <div class="flex align-items-center gap-2">
+          <InputSwitch
+            :modelValue="user.status === 'active'"
+            @update:modelValue="(v) => user.status = v ? 'active' : 'inactive'"
+          />
+          <span :class="user.status === 'active' ? 'status-active' : 'status-inactive'">
+            {{ user.status === 'active' ? 'Active' : 'Inactive' }}
+          </span>
+        </div>
       </div>
 
       <template #footer>
@@ -210,13 +212,15 @@
         <label for="status" class="block text-900 text-l font-medium mb-2"
           >Status</label
         >
-        <SelectButton
-          id="status"
-          v-model.trim="user.status"
-          :options="['active', 'inactive']"
-          aria-labelledby="basic"
-          class="status-toggle"
-        />
+        <div class="flex align-items-center gap-2">
+          <InputSwitch
+            :modelValue="user.status === 'active'"
+            @update:modelValue="(v) => user.status = v ? 'active' : 'inactive'"
+          />
+          <span :class="user.status === 'active' ? 'status-active' : 'status-inactive'">
+            {{ user.status === 'active' ? 'Active' : 'Inactive' }}
+          </span>
+        </div>
       </div>
 
       <template #footer>
@@ -588,16 +592,8 @@ const downloadData = computed(() => {
   border: 0;
   padding: 0 0 0.75rem;
 }
-:deep(.status-toggle .p-button:first-child.p-highlight) {
-  background: #16a34a;
-  border-color: #16a34a;
-  color: #fff;
-}
-:deep(.status-toggle .p-button:last-child.p-highlight) {
-  background: var(--surface-500);
-  border-color: var(--surface-500);
-  color: #fff;
-}
+.status-active   { font-size: 0.875rem; font-weight: 500; color: #16a34a; }
+.status-inactive { font-size: 0.875rem; font-weight: 500; color: var(--text-color-secondary); }
 
 :deep(.bare-table-inner .p-paginator) {
   background: transparent;
