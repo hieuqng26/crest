@@ -269,7 +269,8 @@ const onDelete = async (cfg) => {
     await deleteConfig(cfg.id)
     toast.add({ severity: 'success', summary: 'Deleted', detail: cfg.name, life: 2000 })
   } catch (e) {
-    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    const detail = e?.response?.data?.message ?? e?.response?.data?.error ?? e.message
+    toast.add({ severity: 'error', summary: 'Delete failed', detail, life: 5000 })
   }
 }
 
@@ -289,7 +290,8 @@ const bulkDelete = async () => {
     const data = await bulkDeleteConfigs(selection.value.map(c => c.id))
     toast.add({ severity: 'success', summary: 'Deleted', detail: `${data.deleted} configuration${data.deleted !== 1 ? 's' : ''} deleted`, life: 3000 })
   } catch (e) {
-    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    const detail = e?.response?.data?.message ?? e?.response?.data?.error ?? e.message
+    toast.add({ severity: 'error', summary: 'Delete failed', detail, life: 5000 })
   }
   exitSelectMode()
 }

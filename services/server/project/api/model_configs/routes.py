@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from project import app_session
 from project.api.auth.decorators import require_perm
 from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
-from project.db_models.calibration_models import ModelConfig
+from project.db_models.calibration_models import CalibrationRun, ModelConfig
 from project.logger import get_logger
 
 from . import model_configs
@@ -126,13 +126,29 @@ def update_config(config_id):
     return jsonify(result), 200
 
 
+def _check_config_refs(config_id):
+    """Return a 409 response if calibration runs reference this config, else None."""
+    run_count = CalibrationRun.query.filter_by(model_config_id=config_id).count()
+    if run_count:
+        return jsonify(
+            {
+                "message": f"Cannot delete: {run_count} calibration run(s) reference this configuration.",
+                "dependencies": {"calibration_runs": run_count},
+            }
+        ), 409
+    return None
+
+
 @model_configs.delete("/<int:config_id>")
 @require_perm("model_config:write")
 def delete_config(config_id):
+    cfg = ModelConfig.query.filter_by(id=config_id).first()
+    if not cfg:
+        return jsonify({"error": "Not found"}), 404
+    conflict = _check_config_refs(config_id)
+    if conflict:
+        return conflict
     with app_session() as session:
-        cfg = ModelConfig.query.filter_by(id=config_id).first()
-        if not cfg:
-            return jsonify({"error": "Not found"}), 404
         session.delete(cfg)
     return "", 204
 
@@ -144,11 +160,23 @@ def bulk_delete_configs():
     if not ids:
         return jsonify({"error": "ids is required"}), 400
     deleted = 0
+    blocked = []
     for cid in ids:
+        cfg = ModelConfig.query.filter_by(id=cid).first()
+        if not cfg:
+            continue
+        if _check_config_refs(cid):
+            blocked.append(cid)
+            continue
         with app_session() as session:
-            cfg = ModelConfig.query.filter_by(id=cid).first()
-            if not cfg:
-                continue
             session.delete(cfg)
         deleted += 1
+    if blocked:
+        return jsonify(
+            {
+                "message": f"Deleted {deleted}, skipped {len(blocked)} config(s) with dependent calibration runs.",
+                "deleted": deleted,
+                "blocked": blocked,
+            }
+        ), 207
     return jsonify({"deleted": deleted}), 200
