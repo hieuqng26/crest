@@ -247,8 +247,12 @@ const saveConfig = async () => {
 const calibrate = (cfg) => router.push({ name: 'calibrate_new', query: { config_id: cfg.id } })
 
 const onDuplicate = async (cfg) => {
-  const row = await duplicateConfig(cfg)
-  toast.add({ severity: 'info', summary: 'Duplicated', detail: row.name, life: 2000 })
+  try {
+    const row = await duplicateConfig(cfg)
+    toast.add({ severity: 'info', summary: 'Duplicated', detail: row.name, life: 2000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.message, life: 5000 })
+  }
 }
 
 const onDelete = async (cfg) => {
@@ -384,10 +388,10 @@ onMounted(() => {
         <Column v-if="!selectMode" header="" style="width:12rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
-              <Button icon="pi pi-play"         text rounded size="small" v-tooltip.top="'Calibrate'" @click="calibrate(data)" />
-              <Button icon="pi pi-pencil"        text rounded size="small" v-tooltip.top="'Edit'"      @click="openEdit(data)" />
-              <Button icon="pi pi-copy"          text rounded size="small" v-tooltip.top="'Duplicate'" @click="onDuplicate(data)" />
-              <Button icon="pi pi-trash"         text rounded size="small" severity="danger" v-tooltip.top="'Delete'" @click="onDelete(data)" />
+              <Button icon="pi pi-play"  text rounded size="small" v-tooltip.top="'Calibrate'" v-can="'calibration:execute'" @click="calibrate(data)" />
+              <Button icon="pi pi-pencil" text rounded size="small" v-tooltip.top="'Edit'"      v-can="'model_config:write'" @click="openEdit(data)" />
+              <Button icon="pi pi-copy"   text rounded size="small" v-tooltip.top="'Duplicate'" v-can="'model_config:write'" @click="onDuplicate(data)" />
+              <Button icon="pi pi-trash"  text rounded size="small" severity="danger" v-tooltip.top="'Delete'" v-can="'model_config:write'" @click="onDelete(data)" />
             </div>
           </template>
         </Column>
