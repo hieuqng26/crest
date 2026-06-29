@@ -22,8 +22,9 @@ const router = createRouter({
         { path: '/datasets/:id',  name: 'dataset_view',  component: () => import('@/views/ingest/DatasetView.vue'), meta: { requiresAuth: true, requiresPerm: 'dataset:read' }, props: true },
 
         // Models
-        { path: '/models',         name: 'models',         component: () => import('@/views/configure/Models.vue'),         meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
-        { path: '/configurations', name: 'configurations', component: () => import('@/views/configure/Configurations.vue'), meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
+        { path: '/models',         name: 'models',               component: () => import('@/views/configure/Models.vue'),                         meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
+        { path: '/configurations', name: 'configurations',       component: () => import('@/views/configure/Configurations.vue'),                 meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
+        { path: '/segmentation',   name: 'segmentation_configs', component: () => import('@/views/segmentation/SegmentationConfigs.vue'),         meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
 
         // Calibrate
         { path: '/calibrate/new',    name: 'calibrate_new',  component: () => import('@/views/calibrate/CalibrateNew.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
