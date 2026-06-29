@@ -11,9 +11,11 @@ from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
+    CalibrationRunSegment,
     Dataset,
     Forecast,
     ModelConfig,
+    SegmentationConfig,
 )
 from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
@@ -93,29 +95,28 @@ def list_runs():
 @require_perm("calibration:execute")
 def create_run():
     body = request.get_json(silent=True) or {}
-    # Accept either dataset_ids (list) or the legacy dataset_id scalar
-    dataset_ids = body.get("dataset_ids") or []
-    if not dataset_ids:
-        primary_id = body.get("dataset_id")
-        if primary_id:
-            dataset_ids = [int(primary_id)]
-    dataset_ids = [int(i) for i in dataset_ids]
-    if not dataset_ids:
-        return jsonify({"error": "Missing: dataset_ids"}), 400
+    dataset_id = body.get("dataset_id")
+    if not dataset_id:
+        return jsonify({"error": "Missing: dataset_id"}), 400
 
     model_config_id = body.get("model_config_id")
     if not model_config_id:
         return jsonify({"error": "Missing: model_config_id"}), 400
 
-    ds = Dataset.query.get(dataset_ids[0])
+    ds = Dataset.query.get(int(dataset_id))
     cfg = ModelConfig.query.get(int(model_config_id))
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
     if not cfg:
         return jsonify({"error": "ModelConfig not found"}), 404
 
-    secondary_ids = dataset_ids[1:]
-    merge_steps = body.get("merge_steps") or []
+    segmentation_config_id = body.get("segmentation_config_id") or None
+    if segmentation_config_id:
+        seg_cfg = SegmentationConfig.query.get(int(segmentation_config_id))
+        if not seg_cfg:
+            return jsonify({"error": "SegmentationConfig not found"}), 404
+        segmentation_config_id = seg_cfg.id
+
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
 
@@ -154,10 +155,7 @@ def create_run():
             scaler=cfg.scaler,
             target_col=target_col,
             feature_cols_json=json.dumps(feature_cols),
-            secondary_dataset_ids_json=json.dumps(secondary_ids)
-            if secondary_ids
-            else None,
-            merge_steps_json=json.dumps(merge_steps) if merge_steps else None,
+            segmentation_config_id=segmentation_config_id,
         )
         session.add(run)
         session.flush()
@@ -181,6 +179,20 @@ def get_run(run_id):
     return jsonify(d), 200
 
 
+@calibrations.get("/<run_id>/segments")
+@jwt_required()
+def get_segments(run_id):
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    segs = (
+        CalibrationRunSegment.query.filter_by(calibration_run_id=run.id)
+        .order_by(CalibrationRunSegment.sector, CalibrationRunSegment.split_value)
+        .all()
+    )
+    return jsonify({"segments": [s.to_dict() for s in segs]}), 200
+
+
 @calibrations.get("/<run_id>/diagnostics")
 @require_perm("calibration:read")
 def get_diagnostics(run_id):
@@ -191,6 +203,29 @@ def get_diagnostics(run_id):
         return jsonify(
             {"error": f"Run is {run.status}, diagnostics not available"}
         ), 409
+
+    segment_key = request.args.get("segment_key")
+    if segment_key:
+        seg = CalibrationRunSegment.query.filter_by(
+            calibration_run_id=run.id, segment_key=segment_key
+        ).first()
+        if not seg:
+            return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
+        if seg.status != "success":
+            return jsonify({"error": f"Segment is {seg.status}"}), 409
+        metrics = json.loads(seg.val_metrics_json or "{}")
+        return jsonify(
+            {
+                "run_id": run_id,
+                "segment_key": segment_key,
+                "sector": seg.sector,
+                "split_value": seg.split_value,
+                "config_name": run.model_config.name if run.model_config else None,
+                "algorithm": run.model_config.algorithm if run.model_config else None,
+                "metrics": metrics,
+            }
+        ), 200
+
     metrics = json.loads(run.val_metrics_json or "{}")
     return jsonify(
         {
