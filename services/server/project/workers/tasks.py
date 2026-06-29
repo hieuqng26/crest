@@ -198,6 +198,81 @@ def _cv_search(
     }
 
 
+def _fit_segment(
+    df_group: "pd.DataFrame",
+    algorithm: str,
+    raw_params: dict,
+    search_cfg,
+    train_split_ratio: float,
+    scaler_name,
+    target_col: str,
+    feature_cols_json: list,
+    model_family: str,
+    artifact_key: str,
+    run_id: str,
+) -> tuple[dict, dict, str]:
+    """Fit one model on df_group, save artifact to MinIO, return (val_metrics, train_metrics, artifact_path)."""
+    candidate_cols = feature_cols_json or [
+        c for c in df_group.columns if c != target_col
+    ]
+    X_df = df_group[candidate_cols].select_dtypes(include=[np.number])
+    feature_cols = list(X_df.columns)
+    X = X_df.values
+    y = df_group[target_col].values
+
+    idx = np.arange(len(df_group))
+    idx_train, idx_val = train_test_split(
+        idx, test_size=round(1.0 - train_split_ratio, 4), random_state=42
+    )
+    X_train, X_val = X[idx_train], X[idx_val]
+    y_train, y_val = y[idx_train], y[idx_val]
+
+    scaler = _get_scaler(scaler_name)
+    if scaler:
+        X_train = scaler.fit_transform(X_train)
+        X_val = scaler.transform(X_val)
+
+    plugin_cls = get_model_class(algorithm)
+    plugin = plugin_cls()
+
+    if search_cfg and search_cfg.get("param_grid"):
+        search_result = _cv_search(
+            plugin_cls, raw_params, search_cfg, X_train, y_train, run_id
+        )
+        raw_params = search_result["best_params"]
+
+    params_obj = plugin_cls.param_schema(**raw_params)
+    plugin.fit(X_train, y_train, params_obj)
+
+    diag = plugin.diagnostics(X_val, y_val)
+    for key in ("feature_importance", "coef_table"):
+        if key in diag and feature_cols:
+            for i, entry in enumerate(diag[key]):
+                if i < len(feature_cols):
+                    entry["feature"] = feature_cols[i]
+
+    y_train_pred = plugin.predict(X_train)
+    try:
+        if model_family == "classification":
+            train_metrics = {"auc_roc": float(roc_auc_score(y_train, y_train_pred))}
+        else:
+            train_metrics = {
+                "r2": float(r2_score(y_train, y_train_pred)),
+                "rmse": float(np.sqrt(mean_squared_error(y_train, y_train_pred))),
+            }
+    except Exception:
+        train_metrics = {}
+
+    artifact_bytes = pickle.dumps(
+        {"model": plugin, "scaler": scaler, "feature_cols": feature_cols}
+    )
+    artifact_path = storage.upload_bytes(
+        artifact_key, artifact_bytes, "application/octet-stream"
+    )
+
+    return diag, train_metrics, artifact_path
+
+
 @celery_app.task(bind=True, name="run_calibration")
 def run_calibration(self, run_id: str):
     app = _make_flask_app()
@@ -224,8 +299,7 @@ def run_calibration(self, run_id: str):
         scaler_name = initial.scaler
         initial_target_col = initial.target_col
         initial_feature_cols_json = initial.feature_cols_json
-        secondary_dataset_ids = json.loads(initial.secondary_dataset_ids_json or "[]")
-        merge_steps = json.loads(initial.merge_steps_json or "[]")
+        initial_segmentation_config_id = initial.segmentation_config_id
 
         try:
             # --- 1. Mark running ---
@@ -268,58 +342,148 @@ def run_calibration(self, run_id: str):
                 run_id, 20, f"Loaded {len(df):,} rows · {len(df.columns)} columns"
             )
 
-            # --- 2b. Merge secondary datasets ---
-            if secondary_dataset_ids and merge_steps:
-                for step_idx, sec_id in enumerate(secondary_dataset_ids):
-                    sec_ds = Dataset.query.get(sec_id)
-                    if not sec_ds or not sec_ds.file_path:
-                        raise ValueError(
-                            f"Secondary dataset {sec_id} not found or has no file"
-                        )
-                    sec_bytes = storage.download_bytes(
-                        sec_ds.file_path.split("/", 1)[-1]
+            # --- 2b. Segmented or single-model path ---
+            if initial_segmentation_config_id:
+                from project.db_models.calibration_models import (
+                    CalibrationRunSegment,
+                    SegmentationConfig,
+                )
+
+                seg_cfg = SegmentationConfig.query.get(initial_segmentation_config_id)
+                rules = {
+                    r["sector"]: r
+                    for r in json.loads(seg_cfg.sector_rules_json or "[]")
+                }
+                default_split = seg_cfg.default_split
+                default_max = seg_cfg.max_segments
+                min_rows = 10
+
+                if "sector" not in df.columns:
+                    raise ValueError(
+                        "Dataset must contain a 'sector' column for segmented calibration"
                     )
-                    sec_ext = sec_ds.file_path.rsplit(".", 1)[-1].lower()
-                    sec_buf = io.BytesIO(sec_bytes)
-                    if sec_ext == "csv":
-                        sec_df = pd.read_csv(sec_buf)
-                    elif sec_ext == "xlsx":
-                        sec_df = pd.read_excel(sec_buf)
-                    elif sec_ext == "parquet":
-                        sec_df = pd.read_parquet(sec_buf)
+
+                total_sectors = df["sector"].nunique()
+                processed = 0
+                for sector, df_sector in df.groupby("sector"):
+                    rule = rules.get(sector, {})
+                    split_col = rule.get("split_by", default_split)
+                    max_seg = rule.get("max_segments", default_max)
+
+                    if split_col not in df_sector.columns:
+                        logger.warning(
+                            f"Sector '{sector}': split column '{split_col}' not found, skipping"
+                        )
+                        continue
+
+                    # Rank groups by EAD descending; fall back to row count if no ead col
+                    if "ead" in df_sector.columns:
+                        ead_ranks = (
+                            df_sector.groupby(split_col)["ead"]
+                            .sum()
+                            .sort_values(ascending=False)
+                        )
                     else:
-                        raise ValueError(
-                            f"Unsupported file type for secondary dataset: {sec_ext}"
+                        ead_ranks = (
+                            df_sector.groupby(split_col)
+                            .size()
+                            .sort_values(ascending=False)
                         )
 
-                    step = merge_steps[step_idx] if step_idx < len(merge_steps) else {}
-                    merge_type = step.get("type", "inner")
-                    join_keys = step.get("on") or []
+                    top_values = list(ead_ranks.index[:max_seg])
+                    rest_values = list(ead_ranks.index[max_seg:])
 
-                    if merge_type == "union":
-                        shared_cols = [c for c in df.columns if c in sec_df.columns]
-                        df = pd.concat(
-                            [df[shared_cols], sec_df[shared_cols]], ignore_index=True
+                    groups: dict[str, pd.DataFrame] = {
+                        v: df_sector[df_sector[split_col] == v] for v in top_values
+                    }
+                    if rest_values:
+                        groups["Others"] = df_sector[
+                            df_sector[split_col].isin(rest_values)
+                        ]
+
+                    for split_value, df_group in groups.items():
+                        seg_key = f"{sector}__{split_value}"
+                        seg_status = "success"
+                        seg_error = None
+                        seg_artifact_path = None
+                        seg_train_metrics = None
+                        seg_val_metrics = None
+                        seg_ead = (
+                            float(df_group["ead"].sum())
+                            if "ead" in df_group.columns
+                            else None
                         )
-                    else:
-                        how = (
-                            merge_type
-                            if merge_type in ("inner", "left", "outer", "right")
-                            else "inner"
-                        )
-                        if not join_keys:
-                            raise ValueError(
-                                f"Merge step {step_idx + 1}: no join keys specified for {how} join"
+
+                        if len(df_group) < min_rows:
+                            seg_status = "skipped"
+                            seg_error = f"Only {len(df_group)} rows (min {min_rows})"
+                        else:
+                            try:
+                                (
+                                    seg_val_metrics,
+                                    seg_train_metrics,
+                                    seg_artifact_path,
+                                ) = _fit_segment(
+                                    df_group,
+                                    algorithm,
+                                    dict(raw_params),
+                                    search_cfg,
+                                    train_split_ratio,
+                                    scaler_name,
+                                    target_col,
+                                    feature_cols_json,
+                                    model_family,
+                                    f"artifacts/{run_id}/segments/{seg_key}/model.pkl",
+                                    run_id,
+                                )
+                            except Exception as seg_exc:
+                                seg_status = "failed"
+                                seg_error = str(seg_exc)
+                                logger.warning(f"Segment {seg_key} failed: {seg_exc}")
+
+                        with app_session() as s:
+                            seg_row = CalibrationRunSegment(
+                                calibration_run_id=CalibrationRun.query.filter_by(
+                                    run_id=run_id
+                                )
+                                .first()
+                                .id,
+                                segment_key=seg_key,
+                                sector=sector,
+                                split_by=split_col,
+                                split_value=split_value,
+                                row_count=len(df_group),
+                                ead_total=seg_ead,
+                                artifact_path=seg_artifact_path,
+                                train_metrics_json=json.dumps(seg_train_metrics)
+                                if seg_train_metrics
+                                else None,
+                                val_metrics_json=json.dumps(seg_val_metrics)
+                                if seg_val_metrics
+                                else None,
+                                status=seg_status,
+                                error_message=seg_error,
                             )
-                        df = df.merge(sec_df, on=join_keys, how=how)
+                            s.add(seg_row)
 
+                    processed += 1
+                    pct = 20 + int(processed / total_sectors * 75)
                     _write_progress(
                         run_id,
-                        20 + step_idx + 1,
-                        f"Merged dataset {sec_ds.name} ({merge_type}) → {len(df):,} rows · {len(df.columns)} cols",
+                        pct,
+                        f"Trained sector '{sector}' ({processed}/{total_sectors})",
                     )
 
-            # --- 3. Feature prep ---
+                with app_session() as s:
+                    r = CalibrationRun.query.filter_by(run_id=run_id).first()
+                    r.status = "success"
+                    r.finished_at = datetime.now(timezone.utc)
+                    r.artifact_path = None  # segments table is the manifest
+                    s.add(r)
+                _write_progress(run_id, 100, "Segmented calibration completed")
+                return
+
+            # --- 3. Feature prep (single-model path) ---
             candidate_cols = feature_cols_json or [
                 c for c in df.columns if c != target_col
             ]
@@ -532,11 +696,13 @@ def run_forecast(self, run_id: str):
                 return
             cal_run = CalibrationRun.query.get(fr.calibration_run_id)
             ds = Dataset.query.get(fr.dataset_id)
-            if not cal_run or not cal_run.artifact_path:
-                raise ValueError("Calibration run artifact not found")
+            if not cal_run:
+                raise ValueError("Calibration run not found")
             if not ds or not ds.file_path:
                 raise ValueError(f"Dataset {fr.dataset_id} not found or has no file")
+            cal_run_id_int = cal_run.id
             artifact_path = cal_run.artifact_path
+            is_segmented = cal_run.segmentation_config_id is not None
             ds_file_path = ds.file_path
             fr.status = "running"
             fr.started_at = datetime.now(timezone.utc)
@@ -561,38 +727,6 @@ def run_forecast(self, run_id: str):
                 run_id, 20, f"Loaded {len(df):,} rows · {len(df.columns)} columns"
             )
 
-            _write_forecast_progress(run_id, 30, "Loading calibration model artifact…")
-            artifact_bytes = storage.download_bytes(artifact_path.split("/", 1)[-1])
-            artifact = pickle.loads(artifact_bytes)  # noqa: S301
-            plugin = artifact["model"]
-            scaler = artifact["scaler"]
-            feature_cols = artifact["feature_cols"]
-
-            missing_cols = [c for c in feature_cols if c not in df.columns]
-            if missing_cols:
-                raise ValueError(
-                    f"Forecast dataset is missing required feature columns: {missing_cols}"
-                )
-
-            _write_forecast_progress(run_id, 40, "Preparing features…")
-            X_df = df[feature_cols].select_dtypes(include=[np.number])
-            actual_feature_cols = list(X_df.columns)
-            missing_numeric = [c for c in feature_cols if c not in actual_feature_cols]
-            if missing_numeric:
-                raise ValueError(
-                    f"Feature columns are not numeric in forecast dataset: {missing_numeric}"
-                )
-            X = X_df.values
-
-            if scaler:
-                X = scaler.transform(X)
-
-            _write_forecast_progress(run_id, 55, "Applying model…")
-            predicted_arr = plugin.predict(X)
-
-            meta_col_set = set(actual_feature_cols)
-            meta_cols = [c for c in df.columns if c not in meta_col_set]
-
             def _coerce(v):
                 if v is None or isinstance(v, (str, bool)):
                     return v
@@ -602,17 +736,121 @@ def run_forecast(self, run_id: str):
                     return int(v)
                 return str(v)
 
+            if is_segmented:
+                from project.db_models.calibration_models import CalibrationRunSegment
+
+                _write_forecast_progress(run_id, 30, "Loading segment manifests…")
+                segments = CalibrationRunSegment.query.filter_by(
+                    calibration_run_id=cal_run_id_int, status="success"
+                ).all()
+                if not segments:
+                    raise ValueError(
+                        "No successful segments found for this calibration run"
+                    )
+
+                # Build lookup: segment_key → (artifact_path, split_by)
+                seg_map = {s.segment_key: s for s in segments}
+                # sector → split_by dimension
+                sector_split = {s.sector: s.split_by for s in segments}
+
+                artifact_cache: dict[str, dict] = {}
+
+                def _load_seg_artifact(apath: str) -> dict:
+                    if apath not in artifact_cache:
+                        ab = storage.download_bytes(apath.split("/", 1)[-1])
+                        artifact_cache[apath] = pickle.loads(ab)  # noqa: S301
+                    return artifact_cache[apath]
+
+                predicted_list = []
+                meta_rows = []
+                skipped = 0
+
+                for _, row in df.iterrows():
+                    sector = str(row.get("sector", ""))
+                    split_col = sector_split.get(sector)
+                    if split_col:
+                        split_val = str(row.get(split_col, ""))
+                        seg_key = f"{sector}__{split_val}"
+                        if seg_key not in seg_map:
+                            seg_key = f"{sector}__Others"
+                    else:
+                        seg_key = None
+
+                    if seg_key not in seg_map:
+                        predicted_list.append(None)
+                        skipped += 1
+                    else:
+                        seg = seg_map[seg_key]
+                        art = _load_seg_artifact(seg.artifact_path)
+                        feat_cols = art["feature_cols"]
+                        row_X = np.array(
+                            [[row.get(c, 0) for c in feat_cols]], dtype=float
+                        )
+                        if art["scaler"]:
+                            row_X = art["scaler"].transform(row_X)
+                        predicted_list.append(float(art["model"].predict(row_X)[0]))
+
+                    meta_rows.append(row)
+
+                if skipped:
+                    _write_forecast_progress(
+                        run_id, 68, f"Warning: {skipped} rows had no matching segment"
+                    )
+
+                meta_col_set: set[str] = set()
+                for seg in segments:
+                    art = _load_seg_artifact(seg.artifact_path)
+                    meta_col_set.update(art["feature_cols"])
+                meta_cols = [c for c in df.columns if c not in meta_col_set]
+
+            else:
+                if not artifact_path:
+                    raise ValueError("Calibration run artifact not found")
+                _write_forecast_progress(
+                    run_id, 30, "Loading calibration model artifact…"
+                )
+                artifact_bytes = storage.download_bytes(artifact_path.split("/", 1)[-1])
+                artifact = pickle.loads(artifact_bytes)  # noqa: S301
+                plugin = artifact["model"]
+                scaler = artifact["scaler"]
+                feature_cols = artifact["feature_cols"]
+
+                missing_cols = [c for c in feature_cols if c not in df.columns]
+                if missing_cols:
+                    raise ValueError(
+                        f"Forecast dataset is missing required feature columns: {missing_cols}"
+                    )
+
+                _write_forecast_progress(run_id, 40, "Preparing features…")
+                X_df = df[feature_cols].select_dtypes(include=[np.number])
+                actual_feature_cols = list(X_df.columns)
+                missing_numeric = [
+                    c for c in feature_cols if c not in actual_feature_cols
+                ]
+                if missing_numeric:
+                    raise ValueError(
+                        f"Feature columns are not numeric in forecast dataset: {missing_numeric}"
+                    )
+                X = X_df.values
+                if scaler:
+                    X = scaler.transform(X)
+
+                _write_forecast_progress(run_id, 55, "Applying model…")
+                predicted_arr = plugin.predict(X)
+                predicted_list = [
+                    float(v) if v is not None else None for v in predicted_arr.tolist()
+                ]
+                meta_col_set = set(actual_feature_cols)
+                meta_cols = [c for c in df.columns if c not in meta_col_set]
+
             meta_dict = {
                 col: [_coerce(v) for v in df[col].tolist()] for col in meta_cols
             }
-            client_ids_list = meta_dict.get("client_id", [None] * len(predicted_arr))
-            dates_list = meta_dict.get("date", [None] * len(predicted_arr))
+            client_ids_list = meta_dict.get("client_id", [None] * len(predicted_list))
+            dates_list = meta_dict.get("date", [None] * len(predicted_list))
             other_keys = [k for k in meta_cols if k not in ("client_id", "date")]
 
             _write_forecast_progress(run_id, 70, "Storing predictions…")
-            predicted_list = [
-                float(v) if v is not None else None for v in predicted_arr.tolist()
-            ]
 
             with app_session() as s:
                 r = ForecastRun.query.filter_by(run_id=run_id).first()
