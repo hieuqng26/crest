@@ -180,7 +180,7 @@ def get_run(run_id):
 
 
 @calibrations.get("/<run_id>/segments")
-@jwt_required()
+@require_perm("calibration:read")
 def get_segments(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:

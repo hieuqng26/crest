@@ -1,9 +1,10 @@
 import json
 
 from flask import jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
+from project.api.auth.decorators import require_perm
 from project.db_models.calibration_models import CalibrationRun, SegmentationConfig
 from project.logger import get_logger
 
@@ -13,14 +14,14 @@ logger = get_logger(__name__)
 
 
 @segmentation_configs.get("/")
-@jwt_required()
+@require_perm("model_config:read")
 def list_configs():
     rows = SegmentationConfig.query.order_by(SegmentationConfig.created_at.desc()).all()
     return jsonify([r.to_dict() for r in rows]), 200
 
 
 @segmentation_configs.post("/")
-@jwt_required()
+@require_perm("model_config:write")
 def create_config():
     body = request.get_json(silent=True) or {}
     if not body.get("name"):
@@ -52,7 +53,7 @@ def create_config():
 
 
 @segmentation_configs.get("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:read")
 def get_config(config_id):
     cfg = SegmentationConfig.query.filter_by(id=config_id).first()
     if not cfg:
@@ -61,7 +62,7 @@ def get_config(config_id):
 
 
 @segmentation_configs.patch("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:write")
 def update_config(config_id):
     body = request.get_json(silent=True) or {}
 
@@ -101,7 +102,7 @@ def update_config(config_id):
 
 
 @segmentation_configs.get("/<int:config_id>/refs")
-@jwt_required()
+@require_perm("model_config:read")
 def get_refs(config_id):
     cfg = SegmentationConfig.query.filter_by(id=config_id).first()
     if not cfg:
@@ -118,7 +119,7 @@ def get_refs(config_id):
 
 
 @segmentation_configs.delete("/<int:config_id>")
-@jwt_required()
+@require_perm("model_config:write")
 def delete_config(config_id):
     cfg = SegmentationConfig.query.filter_by(id=config_id).first()
     if not cfg:
