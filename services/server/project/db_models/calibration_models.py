@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from project import db
@@ -75,6 +76,41 @@ class ModelConfig(db.Model):
         )
 
 
+class SegmentationConfig(db.Model):
+    __tablename__ = "segmentation_configs"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    default_split = db.Column(db.String(16), nullable=False)  # 'subsector' | 'country'
+    max_segments = db.Column(db.Integer, nullable=False, default=5)
+    sector_rules_json = db.Column(
+        db.Text, nullable=True
+    )  # JSON [{sector, split_by, max_segments}]
+    created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+    )
+
+    calibration_runs = db.relationship(
+        "CalibrationRun", backref="segmentation_config", lazy=True
+    )
+
+    def to_dict(self):
+        return dict(
+            id=self.id,
+            name=self.name,
+            description=self.description,
+            default_split=self.default_split,
+            max_segments=self.max_segments,
+            sector_rules=json.loads(self.sector_rules_json)
+            if self.sector_rules_json
+            else [],
+            created_by=self.created_by,
+            created_at=self.created_at.isoformat() if self.created_at else None,
+        )
+
+
 class CalibrationRun(db.Model):
     __tablename__ = "calibration_runs"
 
@@ -108,12 +144,23 @@ class CalibrationRun(db.Model):
         db.Text, nullable=True
     )  # JSON list of int IDs
     merge_steps_json = db.Column(db.Text, nullable=True)  # JSON list of {type, on}
+    segmentation_config_id = db.Column(
+        db.Integer,
+        db.ForeignKey("segmentation_configs.id"),
+        nullable=True,
+    )
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
     )
     logs = db.relationship(
         "CalibrationRunLog", backref="calibration_run", cascade="all, delete", lazy=True
+    )
+    segments = db.relationship(
+        "CalibrationRunSegment",
+        backref="calibration_run",
+        lazy=True,
+        cascade="all, delete-orphan",
     )
 
     def to_dict(self):
@@ -138,6 +185,7 @@ class CalibrationRun(db.Model):
             scaler=self.scaler,
             target_col=self.target_col,
             feature_cols_json=self.feature_cols_json,
+            segmentation_config_id=self.segmentation_config_id,
         )
 
 
@@ -162,6 +210,52 @@ class CalibrationRunLog(db.Model):
             t=self.logged_at.strftime("%H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
+        )
+
+
+class CalibrationRunSegment(db.Model):
+    __tablename__ = "calibration_run_segments"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    calibration_run_id = db.Column(
+        db.Integer,
+        db.ForeignKey("calibration_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    segment_key = db.Column(db.String(256), nullable=False)  # "{sector}__{split_value}"
+    sector = db.Column(db.String(128), nullable=False)
+    split_by = db.Column(db.String(16), nullable=False)  # 'subsector' | 'country'
+    split_value = db.Column(db.String(128), nullable=False)  # actual value or "Others"
+    row_count = db.Column(db.Integer, nullable=True)
+    ead_total = db.Column(db.Float, nullable=True)
+    artifact_path = db.Column(db.String(1024), nullable=True)
+    train_metrics_json = db.Column(db.Text, nullable=True)
+    val_metrics_json = db.Column(db.Text, nullable=True)
+    status = db.Column(
+        db.String(32), nullable=False, default="pending"
+    )  # success|failed|skipped
+    error_message = db.Column(db.Text, nullable=True)
+
+    def to_dict(self):
+        return dict(
+            id=self.id,
+            calibration_run_id=self.calibration_run_id,
+            segment_key=self.segment_key,
+            sector=self.sector,
+            split_by=self.split_by,
+            split_value=self.split_value,
+            row_count=self.row_count,
+            ead_total=self.ead_total,
+            artifact_path=self.artifact_path,
+            train_metrics=json.loads(self.train_metrics_json)
+            if self.train_metrics_json
+            else None,
+            val_metrics=json.loads(self.val_metrics_json)
+            if self.val_metrics_json
+            else None,
+            status=self.status,
+            error_message=self.error_message,
         )
 
 
