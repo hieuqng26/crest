@@ -1,9 +1,34 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import calibrationsAPI from '@/api/calibrationsAPI'
 
-const props = defineProps({ run: { type: Object, required: true } })
+const props = defineProps({
+  run:        { type: Object, required: true },
+  segmentKey: { type: String, default: null },
+})
+
+const segmentDiag = ref(null)
+const loadingSegment = ref(false)
+
+watch(
+  () => props.segmentKey,
+  async (key) => {
+    if (!key) { segmentDiag.value = null; return }
+    loadingSegment.value = true
+    try {
+      const { data } = await calibrationsAPI.getDiagnostics(props.run.run_id, key)
+      segmentDiag.value = data.metrics ?? null
+    } catch {
+      segmentDiag.value = null
+    } finally {
+      loadingSegment.value = false
+    }
+  },
+  { immediate: true }
+)
 
 const diag = computed(() => {
+  if (props.segmentKey) return segmentDiag.value
   try { return JSON.parse(props.run.val_metrics_json || 'null') } catch { return null }
 })
 

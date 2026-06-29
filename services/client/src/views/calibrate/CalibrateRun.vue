@@ -10,6 +10,7 @@ import OverviewTab    from './runTabs/OverviewTab.vue'
 import ProgressTab    from './runTabs/ProgressTab.vue'
 import DiagnosticsTab from './runTabs/DiagnosticsTab.vue'
 import ForecastTab    from './runTabs/ForecastTab.vue'
+import SegmentsTab    from './runTabs/SegmentsTab.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,14 +43,18 @@ watch(() => run.value?.status, (s) => {
 })
 watch(runId, async () => { stopPolling(); await loadRun() })
 
-const TABS = [
+const isSegmented = computed(() => !!run.value?.segmentation_config_id)
+const activeSegmentKey = ref(null)
+
+const TABS = computed(() => [
   { key: 'overview',    label: 'Overview',    icon: 'pi pi-info-circle' },
   { key: 'progress',    label: 'Progress',    icon: 'pi pi-bolt' },
-  { key: 'diagnostics', label: 'Diagnostics', icon: 'pi pi-chart-bar' },
+  ...(isSegmented.value ? [{ key: 'segments', label: 'Segments', icon: 'pi pi-th-large' }] : []),
+  { key: 'diagnostics', label: activeSegmentKey.value ? `Diagnostics · ${activeSegmentKey.value}` : 'Diagnostics', icon: 'pi pi-chart-bar' },
   { key: 'forecast',    label: 'Backtesting', icon: 'pi pi-chart-line' }
-]
+])
 const activeKey = computed({
-  get: () => TABS.find(t => t.key === route.query.tab)?.key || 'overview',
+  get: () => TABS.value.find(t => t.key === route.query.tab)?.key || 'overview',
   set: (v) => router.replace({ query: { ...route.query, tab: v } })
 })
 
@@ -57,7 +62,13 @@ const diagnosticsDisabled = computed(() => run.value?.status !== 'success')
 const forecastDisabled    = computed(() => run.value?.status !== 'success')
 const tabDisabled = (key) =>
   (key === 'diagnostics' && diagnosticsDisabled.value) ||
+  (key === 'segments'    && run.value?.status !== 'success') ||
   (key === 'forecast' && forecastDisabled.value)
+
+const onSelectSegment = (segKey) => {
+  activeSegmentKey.value = segKey
+  activeKey.value = 'diagnostics'
+}
 
 const onRunUpdate = (next) => { run.value = next }
 
@@ -205,22 +216,38 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
 
     <!-- Tab body -->
     <div>
-      <OverviewTab    v-if="activeKey === 'overview'"    :run="run" />
-      <ProgressTab    v-else-if="activeKey === 'progress'"    :run="run" @update:run="onRunUpdate" />
-      <DiagnosticsTab v-else-if="activeKey === 'diagnostics' && !diagnosticsDisabled" :run="run" />
-      <ForecastTab    v-else-if="activeKey === 'forecast' && !forecastDisabled"        :run="run" />
+      <OverviewTab v-if="activeKey === 'overview'" :run="run" />
+      <ProgressTab v-else-if="activeKey === 'progress'" :run="run" @update:run="onRunUpdate" />
+      <SegmentsTab v-else-if="activeKey === 'segments' && run.status === 'success'" :run="run" @select-segment="onSelectSegment" />
 
-      <div v-else-if="activeKey === 'diagnostics'" class="empty-state">
-        <i class="pi pi-chart-bar text-3xl block mb-2 opacity-50" />
-        <p class="m-0 text-color-secondary">Diagnostics will appear once the run completes successfully.</p>
-      </div>
-      <div v-else-if="activeKey === 'forecast'" class="empty-state">
-        <i class="pi pi-chart-line text-3xl block mb-2 opacity-50" />
-        <p class="m-0 text-color-secondary">
-          <template v-if="run.status !== 'success'">Forecast becomes available once the run completes.</template>
-          <template v-else>Forecasts are only generated for time-series algorithms.</template>
-        </p>
-      </div>
+      <template v-else-if="activeKey === 'diagnostics'">
+        <div v-if="diagnosticsDisabled" class="empty-state">
+          <i class="pi pi-chart-bar text-3xl block mb-2 opacity-50" />
+          <p class="m-0 text-color-secondary">Diagnostics will appear once the run completes successfully.</p>
+        </div>
+        <template v-else>
+          <div v-if="activeSegmentKey" class="flex align-items-center gap-2 mb-3">
+            <button class="back-link" @click="activeSegmentKey = null; activeKey = 'segments'">
+              <i class="pi pi-arrow-left text-xs" />
+              <span>All segments</span>
+            </button>
+            <span class="text-color-secondary text-xs">·</span>
+            <span class="text-xs font-mono font-semibold">{{ activeSegmentKey }}</span>
+          </div>
+          <DiagnosticsTab :run="run" :segment-key="activeSegmentKey" />
+        </template>
+      </template>
+
+      <template v-else-if="activeKey === 'forecast'">
+        <div v-if="forecastDisabled" class="empty-state">
+          <i class="pi pi-chart-line text-3xl block mb-2 opacity-50" />
+          <p class="m-0 text-color-secondary">
+            <template v-if="run.status !== 'success'">Forecast becomes available once the run completes.</template>
+            <template v-else>Forecasts are only generated for time-series algorithms.</template>
+          </p>
+        </div>
+        <ForecastTab v-else :run="run" />
+      </template>
     </div>
     </template><!-- end v-else (run loaded) -->
 
