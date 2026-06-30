@@ -251,6 +251,28 @@ def _fit_segment(
                 if i < len(feature_cols):
                     entry["feature"] = feature_cols[i]
 
+    # Per-observation validation data for backtesting UI (mirrors non-segmented path)
+    def _cv(v):
+        if v is None or isinstance(v, (str, bool)):
+            return v
+        if isinstance(v, (float, np.floating)):
+            return float(v)
+        if isinstance(v, (int, np.integer)):
+            return int(v)
+        return str(v)
+
+    y_val_pred = plugin.predict(X_val)
+    df_val_group = df_group.iloc[idx_val].reset_index(drop=True)
+    meta_col_set = set(candidate_cols) | {target_col}
+    meta_cols_val = [c for c in df_val_group.columns if c not in meta_col_set]
+    diag["val_obs"] = {
+        "actual": [_cv(v) for v in y_val.tolist()],
+        "predicted": [_cv(v) for v in y_val_pred.tolist()],
+        "meta": {
+            col: [_cv(v) for v in df_val_group[col].tolist()] for col in meta_cols_val
+        },
+    }
+
     y_train_pred = plugin.predict(X_train)
     try:
         if model_family == "classification":
@@ -299,7 +321,9 @@ def run_calibration(self, run_id: str):
         scaler_name = initial.scaler
         initial_target_col = initial.target_col
         initial_feature_cols_json = initial.feature_cols_json
-        initial_segmentation_config_id = initial.segmentation_config_id
+        initial_seg_sectors_json = initial.seg_sectors_json
+        initial_seg_split_by = initial.seg_split_by
+        initial_seg_max_segments = initial.seg_max_segments
 
         try:
             # --- 1. Mark running ---
@@ -343,19 +367,12 @@ def run_calibration(self, run_id: str):
             )
 
             # --- 2b. Segmented or single-model path ---
-            if initial_segmentation_config_id:
-                from project.db_models.calibration_models import (
-                    CalibrationRunSegment,
-                    SegmentationConfig,
-                )
+            if initial_seg_sectors_json:
+                from project.db_models.calibration_models import CalibrationRunSegment
 
-                seg_cfg = SegmentationConfig.query.get(initial_segmentation_config_id)
-                rules = {
-                    r["sector"]: r
-                    for r in json.loads(seg_cfg.sector_rules_json or "[]")
-                }
-                default_split = seg_cfg.default_split
-                default_max = seg_cfg.max_segments
+                seg_sectors = json.loads(initial_seg_sectors_json)
+                default_split = initial_seg_split_by
+                default_max = initial_seg_max_segments
                 min_rows = 10
 
                 if "sector" not in df.columns:
@@ -363,12 +380,12 @@ def run_calibration(self, run_id: str):
                         "Dataset must contain a 'sector' column for segmented calibration"
                     )
 
-                total_sectors = df["sector"].nunique()
+                df_seg = df[df["sector"].isin(seg_sectors)]
+                total_sectors = len(seg_sectors)
                 processed = 0
-                for sector, df_sector in df.groupby("sector"):
-                    rule = rules.get(sector, {})
-                    split_col = rule.get("split_by", default_split)
-                    max_seg = rule.get("max_segments", default_max)
+                for sector, df_sector in df_seg.groupby("sector"):
+                    split_col = default_split
+                    max_seg = default_max
 
                     if split_col not in df_sector.columns:
                         logger.warning(
@@ -702,7 +719,7 @@ def run_forecast(self, run_id: str):
                 raise ValueError(f"Dataset {fr.dataset_id} not found or has no file")
             cal_run_id_int = cal_run.id
             artifact_path = cal_run.artifact_path
-            is_segmented = cal_run.segmentation_config_id is not None
+            is_segmented = cal_run.seg_sectors_json is not None
             ds_file_path = ds.file_path
             fr.status = "running"
             fr.started_at = datetime.now(timezone.utc)

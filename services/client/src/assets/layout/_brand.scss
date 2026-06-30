@@ -380,6 +380,97 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+ * Dropdown / MultiSelect — matches the reference design:
+ *   clean panel with shadow, rounded pill highlights, compact icons.
+ * Panel is body-appended so these must be global (no scoped styles).
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* ── Closed trigger ─────────────────────────────────────────────────── */
+.p-dropdown .p-dropdown-label,
+.p-multiselect .p-multiselect-label {
+  padding: 0.5rem 0.75rem !important;
+}
+
+/* Compact chevron */
+.p-dropdown .p-dropdown-trigger,
+.p-multiselect .p-multiselect-trigger {
+  width: 2.25rem !important;
+}
+
+/* Clear × — smaller so it doesn't dominate */
+.p-dropdown .p-dropdown-clear-icon,
+.p-multiselect .p-multiselect-clear-icon {
+  font-size: 0.625rem !important;
+  width: 0.625rem !important;
+  color: var(--text-color-muted) !important;
+}
+
+/* ── Panel overlay ─────────────────────────────────────────────────── */
+.p-dropdown-panel,
+.p-multiselect-panel {
+  background: var(--surface-card) !important;
+  border: 1px solid var(--surface-border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 4px 16px rgba(20, 20, 40, 0.10), 0 1px 4px rgba(20, 20, 40, 0.05) !important;
+  margin-top: 4px;
+}
+
+/* Panel header (filter row) */
+.p-dropdown-panel .p-dropdown-header,
+.p-multiselect-panel .p-multiselect-header {
+  background: var(--surface-card) !important;
+  border-bottom: 1px solid var(--surface-border) !important;
+  padding: 0.4rem 0.4rem !important;
+  border-radius: var(--radius-md) var(--radius-md) 0 0 !important;
+}
+
+/* Item list — inner padding so highlights don't bleed to panel edge */
+.p-dropdown-items,
+.p-multiselect-items {
+  padding: 0.3rem !important;
+}
+
+/* Items — rounded pill highlight */
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item,
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item {
+  border-radius: var(--radius-sm) !important;
+  padding: 0.55rem 0.75rem !important;
+  color: var(--text-color) !important;
+  margin: 1px 0 !important;
+}
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item:not(.p-disabled):hover,
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item:not(.p-disabled):hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-color) !important;
+}
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item.p-highlight,
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item.p-highlight {
+  background: var(--highlight-bg) !important;
+  color: var(--highlight-text-color) !important;
+}
+
+/* Empty message */
+.p-dropdown-panel .p-dropdown-items .p-dropdown-empty-message,
+.p-multiselect-panel .p-multiselect-items .p-multiselect-empty-message {
+  padding: 0.55rem 0.75rem !important;
+  color: var(--text-color-secondary) !important;
+}
+
+/* MultiSelect chip tokens */
+.p-multiselect-token {
+  background: var(--surface-ground) !important;
+  border: 1px solid var(--surface-border) !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--text-color) !important;
+  font-size: 0.8rem !important;
+  padding: 0.1rem 0.4rem !important;
+}
+.p-multiselect-token-icon {
+  font-size: 0.6rem !important;
+  color: var(--text-color-muted) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
  * Page chrome — main container rhythm
  * ───────────────────────────────────────────────────────────────────── */
 .layout-main-container {

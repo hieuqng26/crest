@@ -15,7 +15,6 @@ from project.db_models.calibration_models import (
     Dataset,
     Forecast,
     ModelConfig,
-    SegmentationConfig,
 )
 from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
@@ -110,12 +109,29 @@ def create_run():
     if not cfg:
         return jsonify({"error": "ModelConfig not found"}), 404
 
-    segmentation_config_id = body.get("segmentation_config_id") or None
-    if segmentation_config_id:
-        seg_cfg = SegmentationConfig.query.get(int(segmentation_config_id))
-        if not seg_cfg:
-            return jsonify({"error": "SegmentationConfig not found"}), 404
-        segmentation_config_id = seg_cfg.id
+    seg = body.get("segmentation") or None
+    seg_sectors_json = None
+    seg_split_by = None
+    seg_max_segments = None
+    if seg:
+        sectors = seg.get("sectors") or []
+        split_by = seg.get("split_by") or ""
+        max_segs = seg.get("max_segments")
+        if not sectors or not isinstance(sectors, list):
+            return jsonify(
+                {"error": "segmentation.sectors must be a non-empty list"}
+            ), 400
+        if split_by not in ("subsector", "country"):
+            return jsonify(
+                {"error": "segmentation.split_by must be 'subsector' or 'country'"}
+            ), 400
+        if not isinstance(max_segs, int) or not (2 <= max_segs <= 20):
+            return jsonify(
+                {"error": "segmentation.max_segments must be an integer 2–20"}
+            ), 400
+        seg_sectors_json = json.dumps(sectors)
+        seg_split_by = split_by
+        seg_max_segments = max_segs
 
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
@@ -155,7 +171,9 @@ def create_run():
             scaler=cfg.scaler,
             target_col=target_col,
             feature_cols_json=json.dumps(feature_cols),
-            segmentation_config_id=segmentation_config_id,
+            seg_sectors_json=seg_sectors_json,
+            seg_split_by=seg_split_by,
+            seg_max_segments=seg_max_segments,
         )
         session.add(run)
         session.flush()

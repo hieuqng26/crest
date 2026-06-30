@@ -6,11 +6,11 @@ import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import { getRun, statusSeverity, isTimeSeries } from './runUtils'
 import { fmtDate, duration } from '@/utils/datetime'
-import OverviewTab    from './runTabs/OverviewTab.vue'
-import ProgressTab    from './runTabs/ProgressTab.vue'
-import DiagnosticsTab from './runTabs/DiagnosticsTab.vue'
-import ForecastTab    from './runTabs/ForecastTab.vue'
-import SegmentsTab    from './runTabs/SegmentsTab.vue'
+import OverviewTab         from './runTabs/OverviewTab.vue'
+import DiagnosticsTab      from './runTabs/DiagnosticsTab.vue'
+import ForecastTab         from './runTabs/ForecastTab.vue'
+import SegmentsTab         from './runTabs/SegmentsTab.vue'
+import SegmentBacktestTab  from './runTabs/SegmentBacktestTab.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,14 +43,33 @@ watch(() => run.value?.status, (s) => {
 })
 watch(runId, async () => { stopPolling(); await loadRun() })
 
-const isSegmented = computed(() => !!run.value?.segmentation_config_id)
+const isSegmented = computed(() => !!run.value?.is_segmented)
 const activeSegmentKey = ref(null)
+
+// Load segment list from API once run succeeds (for the shared segment selector)
+const segments = ref([])
+watch(
+  [() => run.value?.status, isSegmented],
+  async ([status, segmented]) => {
+    if (status === 'success' && segmented && run.value) {
+      try {
+        const { data } = await calibrationsAPI.segments(run.value.run_id)
+        segments.value = (data.segments ?? []).filter(s => s.status === 'success')
+      } catch {
+        segments.value = []
+      }
+    }
+  },
+  { immediate: true }
+)
+const segmentOptions = computed(() =>
+  segments.value.map(s => ({ label: s.split_value, value: s.segment_key }))
+)
 
 const TABS = computed(() => [
   { key: 'overview',    label: 'Overview',    icon: 'pi pi-info-circle' },
-  { key: 'progress',    label: 'Progress',    icon: 'pi pi-bolt' },
   ...(isSegmented.value ? [{ key: 'segments', label: 'Segments', icon: 'pi pi-th-large' }] : []),
-  { key: 'diagnostics', label: activeSegmentKey.value ? `Diagnostics · ${activeSegmentKey.value}` : 'Diagnostics', icon: 'pi pi-chart-bar' },
+  { key: 'diagnostics', label: 'Diagnostics', icon: 'pi pi-chart-bar' },
   { key: 'forecast',    label: 'Backtesting', icon: 'pi pi-chart-line' }
 ])
 const activeKey = computed({
@@ -88,7 +107,7 @@ const rerun = async () => {
     const { data } = await calibrationsAPI.recalibrate(runId.value, {})
     run.value = data
     toast.add({ severity: 'info', summary: 'Re-run queued', detail: data.run_id, life: 2500 })
-    router.replace({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'progress' } })
+    router.replace({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'overview' } })
     startPolling()
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -214,10 +233,26 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
       </button>
     </nav>
 
+    <!-- Shared segment selector (shown above Diagnostics and Backtesting for segmented runs) -->
+    <div
+      v-if="isSegmented && run.status === 'success' && (activeKey === 'diagnostics' || activeKey === 'forecast') && segmentOptions.length > 0"
+      class="flex align-items-center gap-2 mb-4"
+    >
+      <span class="text-xs font-semibold uppercase text-color-secondary" style="letter-spacing:.05em">Segment</span>
+      <Dropdown
+        v-model="activeSegmentKey"
+        :options="segmentOptions"
+        optionLabel="label"
+        optionValue="value"
+        placeholder="All segments (aggregated)"
+        showClear
+        class="segment-filter-drop"
+      />
+    </div>
+
     <!-- Tab body -->
     <div>
       <OverviewTab v-if="activeKey === 'overview'" :run="run" />
-      <ProgressTab v-else-if="activeKey === 'progress'" :run="run" @update:run="onRunUpdate" />
       <SegmentsTab v-else-if="activeKey === 'segments' && run.status === 'success'" :run="run" @select-segment="onSelectSegment" />
 
       <template v-else-if="activeKey === 'diagnostics'">
@@ -225,27 +260,25 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
           <i class="pi pi-chart-bar text-3xl block mb-2 opacity-50" />
           <p class="m-0 text-color-secondary">Diagnostics will appear once the run completes successfully.</p>
         </div>
-        <template v-else>
-          <div v-if="activeSegmentKey" class="flex align-items-center gap-2 mb-3">
-            <button class="back-link" @click="activeSegmentKey = null; activeKey = 'segments'">
-              <i class="pi pi-arrow-left text-xs" />
-              <span>All segments</span>
-            </button>
-            <span class="text-color-secondary text-xs">·</span>
-            <span class="text-xs font-mono font-semibold">{{ activeSegmentKey }}</span>
-          </div>
-          <DiagnosticsTab :run="run" :segment-key="activeSegmentKey" />
-        </template>
+        <DiagnosticsTab v-else :run="run" :segment-key="activeSegmentKey" />
       </template>
 
       <template v-else-if="activeKey === 'forecast'">
         <div v-if="forecastDisabled" class="empty-state">
           <i class="pi pi-chart-line text-3xl block mb-2 opacity-50" />
-          <p class="m-0 text-color-secondary">
-            <template v-if="run.status !== 'success'">Forecast becomes available once the run completes.</template>
-            <template v-else>Forecasts are only generated for time-series algorithms.</template>
-          </p>
+          <p class="m-0 text-color-secondary">Backtesting becomes available once the run completes successfully.</p>
         </div>
+
+        <!-- Segmented: per-segment prediction accuracy view -->
+        <template v-else-if="isSegmented">
+          <div v-if="!activeSegmentKey" class="empty-state">
+            <i class="pi pi-filter text-3xl block mb-2 opacity-50" />
+            <p class="m-0 text-color-secondary">Select a segment above to view its backtesting results.</p>
+          </div>
+          <SegmentBacktestTab v-else :run="run" :segment-key="activeSegmentKey" />
+        </template>
+
+        <!-- Non-segmented: backtesting = forecast tab -->
         <ForecastTab v-else :run="run" />
       </template>
     </div>
@@ -360,4 +393,8 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
   border: 1px dashed var(--surface-border);
   border-radius: 12px;
 }
+
+.segment-filter-drop { min-width: 18rem; }
+:deep(.segment-filter-drop .p-dropdown-label) { font-size: 0.82rem; }
+:deep(.segment-filter-drop .p-dropdown-clear-icon) { color: var(--text-color-secondary); }
 </style>

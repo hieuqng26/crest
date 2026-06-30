@@ -101,7 +101,6 @@ def create_app():
     from project.api.forecast_runs import forecast_runs
     from project.api.forecasts import forecasts
     from project.api.model_configs import model_configs
-    from project.api.segmentation_configs import segmentation_configs
     from project.api.roles.models import Role  # noqa: F401
     from project.api.roles.models import RoleModel  # noqa: F401
     from project.api.roles.routes import roles_bp
@@ -114,7 +113,6 @@ def create_app():
         Dataset,
         Forecast,
         ModelConfig,
-        SegmentationConfig,
     )
     from project.db_models.credit_models import (
         CreditRiskForecastInput,  # noqa: F401
@@ -134,7 +132,6 @@ def create_app():
     app.register_blueprint(roles_bp, url_prefix="/api/roles")
     app.register_blueprint(datasets, url_prefix="/api/datasets")
     app.register_blueprint(model_configs, url_prefix="/api/model-configs")
-    app.register_blueprint(segmentation_configs, url_prefix="/api/segmentation-configs")
     app.register_blueprint(calibrations, url_prefix="/api/calibrations")
     app.register_blueprint(evaluations, url_prefix="/api/evaluations")
     app.register_blueprint(forecasts, url_prefix="/api/forecasts")

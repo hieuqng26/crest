@@ -76,41 +76,6 @@ class ModelConfig(db.Model):
         )
 
 
-class SegmentationConfig(db.Model):
-    __tablename__ = "segmentation_configs"
-
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.Text, nullable=True)
-    default_split = db.Column(db.String(16), nullable=False)  # 'subsector' | 'country'
-    max_segments = db.Column(db.Integer, nullable=False, default=5)
-    sector_rules_json = db.Column(
-        db.Text, nullable=True
-    )  # JSON [{sector, split_by, max_segments}]
-    created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
-    created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
-    )
-
-    calibration_runs = db.relationship(
-        "CalibrationRun", backref="segmentation_config", lazy=True
-    )
-
-    def to_dict(self):
-        return dict(
-            id=self.id,
-            name=self.name,
-            description=self.description,
-            default_split=self.default_split,
-            max_segments=self.max_segments,
-            sector_rules=json.loads(self.sector_rules_json)
-            if self.sector_rules_json
-            else [],
-            created_by=self.created_by,
-            created_at=self.created_at.isoformat() if self.created_at else None,
-        )
-
-
 class CalibrationRun(db.Model):
     __tablename__ = "calibration_runs"
 
@@ -144,11 +109,11 @@ class CalibrationRun(db.Model):
         db.Text, nullable=True
     )  # JSON list of int IDs
     merge_steps_json = db.Column(db.Text, nullable=True)  # JSON list of {type, on}
-    segmentation_config_id = db.Column(
-        db.Integer,
-        db.ForeignKey("segmentation_configs.id"),
-        nullable=True,
-    )
+    seg_sectors_json = db.Column(
+        db.Text, nullable=True
+    )  # JSON array of sector name strings
+    seg_split_by = db.Column(db.String(16), nullable=True)  # 'subsector' | 'country'
+    seg_max_segments = db.Column(db.Integer, nullable=True)
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
@@ -185,8 +150,17 @@ class CalibrationRun(db.Model):
             scaler=self.scaler,
             target_col=self.target_col,
             feature_cols_json=self.feature_cols_json,
-            segmentation_config_id=self.segmentation_config_id,
+            seg_sectors=json.loads(self.seg_sectors_json)
+            if self.seg_sectors_json
+            else None,
+            seg_split_by=self.seg_split_by,
+            seg_max_segments=self.seg_max_segments,
+            is_segmented=self.is_segmented,
         )
+
+    @property
+    def is_segmented(self):
+        return bool(self.seg_sectors_json)
 
 
 class CalibrationRunLog(db.Model):

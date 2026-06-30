@@ -14,6 +14,7 @@
 - Add client segmentation analysis
 - Develop PD model by logistic regression
 - Create staging ETL: transform bank's raw data, merge files, ...
+- Cleanup unused env variables
 
 ---
 

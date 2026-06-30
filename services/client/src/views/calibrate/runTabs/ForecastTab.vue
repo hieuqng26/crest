@@ -2,7 +2,10 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import calibrationsAPI from '@/api/calibrationsAPI'
 
-const props = defineProps({ run: { type: Object, required: true } })
+const props = defineProps({
+  run:        { type: Object, required: true },
+  segmentKey: { type: String, default: null },
+})
 
 const loading   = ref(true)
 const error     = ref(null)
@@ -28,6 +31,21 @@ onMounted(async () => {
 })
 
 const isClassification = computed(() => props.run?.model_family === 'classification')
+
+// ── Segment filter ────────────────────────────────────────────────────────────
+const segSector     = computed(() => props.segmentKey?.split('__')[0] ?? null)
+const segSplitValue = computed(() => props.segmentKey?.split('__').slice(1).join('__') ?? null)
+const splitByCol    = computed(() => props.run.seg_split_by ?? null)
+
+const segBaseIndices = computed(() => {
+  if (!props.segmentKey || !('sector' in (meta.value ?? {}))) return null
+  return actual.value.map((_, i) => i).filter(i => {
+    if (meta.value['sector']?.[i] !== segSector.value) return false
+    if (!segSplitValue.value) return true
+    const col = splitByCol.value ?? 'country'
+    return meta.value[col]?.[i] === segSplitValue.value
+  })
+})
 const hasDate          = computed(() => 'date'      in meta.value)
 const hasClientId      = computed(() => 'client_id' in meta.value)
 const hasCountry       = computed(() => 'country'   in meta.value)
@@ -71,6 +89,7 @@ watch(countryFilter, () => { clientIdFilter.value = null })
 
 // ── Raw pairs after filters (sorted by date or by actual) ─────────────────────
 const regressionPairs = computed(() => {
+  const baseSet = segBaseIndices.value
   let pairs = actual.value
     .map((a, i) => ({
       a,
@@ -79,8 +98,9 @@ const regressionPairs = computed(() => {
       date:       meta.value['date']?.[i]      ?? null,
       client_id:  meta.value['client_id']?.[i] ?? null,
       country:    meta.value['country']?.[i]   ?? null,
+      _i:         i,
     }))
-    .filter(({ a, p }) => a != null && p != null)
+    .filter(({ a, p, _i }) => a != null && p != null && (!baseSet || baseSet.includes(_i)))
 
   if (countryFilter.value)  pairs = pairs.filter(d => d.country   === countryFilter.value)
   if (clientIdFilter.value) pairs = pairs.filter(d => d.client_id === clientIdFilter.value)
@@ -245,8 +265,10 @@ const clsClientIdOptions = computed(() => {
 watch(clsCountryFilter, () => { clsClientIdFilter.value = null })
 
 const clsFilteredIndices = computed(() => {
+  const baseSet = segBaseIndices.value
   const indices = []
   actual.value.forEach((_, i) => {
+    if (baseSet && !baseSet.includes(i)) return
     const c = meta.value['client_id']?.[i]
     const co = meta.value['country']?.[i]
     if (clsCountryFilter.value  && co !== clsCountryFilter.value)  return
@@ -380,6 +402,15 @@ function downloadCsv(rows, filename) {
     </div>
 
     <template v-else>
+
+      <!-- Segment filter notice -->
+      <div v-if="segmentKey" class="flex align-items-center gap-2 mb-3 surface-ground border-round px-3 py-2">
+        <i class="pi pi-filter text-xs text-color-secondary" />
+        <span class="text-xs text-color-secondary">
+          Segment: <strong class="font-mono">{{ segmentKey }}</strong>
+          <template v-if="!('sector' in (meta ?? {}))"> — no sector column in data, showing all rows</template>
+        </span>
+      </div>
 
       <!-- ── Classification ────────────────────────────────────────────── -->
       <template v-if="isClassification">

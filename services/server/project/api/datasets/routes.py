@@ -204,6 +204,47 @@ def get_dataset(dataset_id):
     return jsonify(ds.to_dict()), 200
 
 
+@datasets.get("/<int:dataset_id>/sectors")
+@require_perm("dataset:read")
+def get_dataset_sectors(dataset_id):
+    ds = Dataset.query.filter_by(id=dataset_id).first()
+    if not ds or ds.status == "deleted":
+        return jsonify({"error": "Not found"}), 404
+    if not ds.file_path:
+        return jsonify({"sectors": []}), 200
+
+    try:
+        object_name = ds.file_path.split("/", 1)[-1]
+        ext = object_name.rsplit(".", 1)[-1].lower()
+        file_bytes = storage.download_bytes(object_name)
+        buf = io.BytesIO(file_bytes)
+        if ext == "csv":
+            df = pd.read_csv(buf, usecols=lambda c: c == "sector")
+        elif ext == "xlsx":
+            df = pd.read_excel(buf)
+            df = (
+                df[["sector"]]
+                if "sector" in df.columns
+                else pd.DataFrame({"sector": []})
+            )
+        elif ext == "parquet":
+            try:
+                df = pd.read_parquet(buf, columns=["sector"])
+            except Exception:
+                return jsonify({"sectors": []}), 200
+        else:
+            return jsonify({"sectors": []}), 200
+    except Exception as e:
+        logger.error(f"Failed to load dataset {dataset_id} for sectors: {e}")
+        return jsonify({"error": f"Could not load file: {e}"}), 500
+
+    if "sector" not in df.columns:
+        return jsonify({"sectors": []}), 200
+
+    sectors = sorted(df["sector"].dropna().astype(str).unique().tolist())
+    return jsonify({"sectors": sectors}), 200
+
+
 @datasets.delete("/<int:dataset_id>")
 @require_perm("dataset:write")
 def delete_dataset(dataset_id):

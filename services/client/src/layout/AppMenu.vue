@@ -18,7 +18,6 @@ const model = [
     items: [
       { label: 'Model Catalog',          to: { name: 'models' },               module: 'configure', perm: 'model_config:read' },
       { label: 'Model Configurations',   to: { name: 'configurations' },       module: 'configure', perm: 'model_config:read' },
-      { label: 'Segmentation Configs',   to: { name: 'segmentation_configs' }, module: 'configure', perm: 'model_config:read' },
       { label: 'New Calibration',        to: { name: 'calibrate_new' },        module: 'calibrate', perm: 'calibration:read' },
       { label: 'Calibration Jobs',       to: { name: 'calibrate_jobs' },       module: 'calibrate', perm: 'calibration:read' }
     ]

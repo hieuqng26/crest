@@ -31,6 +31,8 @@ const datasetsAPI = {
   query: (sql, name, description = '') =>
     httpClient.post('/datasets/query', { sql, name, description }),
 
+  sectors: (id) => httpClient.get(`/datasets/${id}/sectors`),
+
   // Rows endpoint — used by DatasetView lazy paginator
   // GET /api/datasets/:id/rows?offset=&limit=&sort=&order=&filter=
   rows: (id, { offset = 0, limit = 50, sort = null, order = null, filter = '' } = {}) => {
