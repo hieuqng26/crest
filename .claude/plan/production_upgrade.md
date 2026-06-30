@@ -26,8 +26,8 @@ Phases are *severity tiers*, not a strict schedule:
 
 ### [SEC] S1 — Hardcoded secrets & credentials committed to the repo — High / S
 **Evidence:**
-- `services/server/project/config.py:18` `SECRET_KEY` default, `:27` `JWT_SECRET_KEY` default (real-looking hex), `:89/:161` DB password `Ey@2024!`.
-- `docker-compose.prod.yml`: Redis `REDIS_PASSWORD=Ey@123!`, MSSQL `SA_PASSWORD=Supersecret@123!`, APM `SECRET_TOKEN=supersecret` (`config.py:124/198`).
+- `services/server/project/config.py:18` `SECRET_KEY` default, `:27` `JWT_SECRET_KEY` default (real-looking hex), `:89/:161` DB password `Ey@2026!`.
+- `docker-compose.prod.yml`: Redis `REDIS_PASSWORD=Ey@2026!`, MSSQL `SA_PASSWORD=Supersecret@123!`, APM `SECRET_TOKEN=supersecret` (`config.py:124/198`).
 - `services/client/.env` is tracked in git (`git ls-files`), unlike `env/.env.*` which are correctly gitignored.
 
 **Why it matters:** anyone with repo access has prod JWT-signing keys and DB/Redis passwords. A leaked `JWT_SECRET_KEY` lets an attacker forge tokens for any user.
