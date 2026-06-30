@@ -1,3 +1,22 @@
+- Add sector, subsector, country:
+    - Add columns to demo data
+    - For each sector user can choose to split the portfolio by subsector or country: typically there are 4-5 subsectors within a sector, if more than that, we model the main ones, then group the rest to "Others" subsector. Similarly, if splitting by countries, user can either model largest 5 countries (in terms of total exposure), group the rest to "Others", or group countries by regions, model 4-5 main regions, group the rest to "Others"
+    - Each subsector/country group is then calibrated with a model
+    - Remove ability to merge datasets, it is funky, we assume the input data is already merged: merge historical mev with historical financial data by date and country. The forecast data currently only has MEVs, but we should add: client_id, country, sector, subsector, base year, total assets, total long-term debts, total short-term debts
+    - Forecasting: perform forecasting using the model corresponding to sample's subsector/country
+
+- Test and verify all models
+- Add real data for mev and financial (refinitive)
+- Add model for panel data
+- Add customized models (with optimization)
+- Add outlier detection pipeline
+- Verify ECL and KMV core code
+- Add client segmentation analysis
+- Develop PD model by logistic regression
+- Create staging ETL: transform bank's raw data, merge files, ...
+
+---
+
 - [x] Results table in Forecast job and Backtesting's prediction table in Calibration job: show the row number "x to y" corresponding to the selected page
 - [x] Results table in Forecast: doesn't need the box on top of the datatable ("PREDICTIONS ... xxx rows")
 - [x] Rename sidebar items: Models' Configurations -> Model Configurations, Calibration's New Run -> New Calibration, All Jobs -> Calibration Jobs, Forecast's New Forecast Run -> New Forecast, All Jobs -> Forecast Jobs. Then group MODELS and CALIBRATION modules together, call it MODELS

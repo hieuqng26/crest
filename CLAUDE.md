@@ -87,7 +87,7 @@ matrix: `.claude/docs/architecture.md`.
   sent in a custom `X-CSRF-TOKEN` header, not via WTF forms). See `architecture.md` and
   `state_management.md` for full detail.
 - **Never expose** MLflow UI or Celery Flower to users.
-- **Git commits:** never add `Co-Authored-By` trailers.
+- **Git commits:** never add `Co-Authored-By` trailers. Only commit when I explicitly tell you to.
 - **Branch management:** whenever fixing a bug or adding a new feature, if it requires a lot of changes, create a new branch to work on.
 
 ## 6. Additional Documentation
