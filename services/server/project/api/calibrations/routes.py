@@ -177,15 +177,21 @@ def create_run():
                         }
                     ), 400
                 if "model_config_id" in override:
-                    override_cfg = ModelConfig.query.get(
-                        int(override["model_config_id"])
-                    )
+                    model_cfg_id = override["model_config_id"]
+                    if not isinstance(model_cfg_id, int):
+                        return jsonify(
+                            {
+                                "error": f"segmentation.sector_overrides['{sector_name}']"
+                                f".model_config_id must be an integer"
+                            }
+                        ), 400
+                    override_cfg = ModelConfig.query.get(model_cfg_id)
                     if not override_cfg:
                         return jsonify(
                             {
                                 "error": f"segmentation.sector_overrides"
                                 f"['{sector_name}'].model_config_id "
-                                f"{override['model_config_id']} not found"
+                                f"{model_cfg_id} not found"
                             }
                         ), 400
                 if "feature_cols" in override and not isinstance(

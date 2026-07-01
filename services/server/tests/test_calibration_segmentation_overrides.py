@@ -246,6 +246,30 @@ class TestCreateRunSectorOverridesAPI:
         )
         assert resp.status_code == 400
 
+    def test_rejects_none_model_config_id_in_override(
+        self, client, login, dataset_and_configs, mock_celery_task
+    ):
+        d = dataset_and_configs
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/",
+            json={
+                "dataset_id": d["dataset"].id,
+                "model_config_id": d["cfg_a"].id,
+                "target_col": "total_assets",
+                "segmentation": {
+                    "sectors": ["Financials"],
+                    "split_by": "subsector",
+                    "max_segments": 5,
+                    "sector_overrides": {"Financials": {"model_config_id": None}},
+                },
+            },
+        )
+        assert resp.status_code == 400
+        error_msg = resp.get_json()["error"]
+        assert "model_config_id" in error_msg
+        assert "must be an integer" in error_msg
+
     def test_accepts_valid_sector_overrides_and_stores_them(
         self, client, login, dataset_and_configs, mock_celery_task
     ):
