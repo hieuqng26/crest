@@ -198,6 +198,44 @@ def _cv_search(
     }
 
 
+def _resolve_sector_training_config(
+    sector: str,
+    overrides: dict,
+    default_split_by: str,
+    default_max_segments: int,
+    default_feature_cols: list,
+    default_model_config_id: int,
+    resolved_configs: dict[int, tuple[str, dict, str]],
+) -> dict:
+    """Resolve one sector's effective training config from its override entry
+    (if any) plus the run-level defaults. resolved_configs maps
+    model_config_id -> (algorithm, raw_params, model_family), pre-fetched for
+    every config id referenced anywhere (default + all overrides) so this
+    function never touches the DB — call it only after that pre-fetch.
+    """
+    o = overrides.get(sector, {})
+    split_by = o.get("split_by") or default_split_by
+    max_segments = o.get("max_segments") or default_max_segments
+    feature_cols = o.get("feature_cols") or default_feature_cols
+    cfg_id = o.get("model_config_id") or default_model_config_id
+    algorithm, raw_params, model_family = resolved_configs[cfg_id]
+    # Hyperparameter search is tuned for the run's default algorithm's
+    # parameter names; skip it for sectors overriding to a different model so
+    # we never grid-search over parameter names that belong to a different
+    # algorithm.
+    use_search = cfg_id == default_model_config_id
+    return {
+        "split_by": split_by,
+        "max_segments": max_segments,
+        "feature_cols": feature_cols,
+        "model_config_id": cfg_id,
+        "algorithm": algorithm,
+        "raw_params": dict(raw_params),
+        "model_family": model_family,
+        "use_search": use_search,
+    }
+
+
 def _fit_segment(
     df_group: "pd.DataFrame",
     algorithm: str,
@@ -324,6 +362,7 @@ def run_calibration(self, run_id: str):
         initial_seg_sectors_json = initial.seg_sectors_json
         initial_seg_split_by = initial.seg_split_by
         initial_seg_max_segments = initial.seg_max_segments
+        initial_seg_sector_overrides_json = initial.seg_sector_overrides_json
 
         try:
             # --- 1. Mark running ---
@@ -338,6 +377,29 @@ def run_calibration(self, run_id: str):
             ds = Dataset.query.get(dataset_id)
             cfg = ModelConfig.query.get(model_config_id)
             model_family = cfg.family  # extract before session can close
+
+            sector_overrides = json.loads(initial_seg_sector_overrides_json or "{}")
+            override_cfg_ids = {
+                v["model_config_id"]
+                for v in sector_overrides.values()
+                if v.get("model_config_id")
+            }
+            resolved_configs: dict[int, tuple[str, dict, str]] = {
+                model_config_id: (
+                    cfg.algorithm,
+                    json.loads(cfg.hyperparams_json or "{}"),
+                    model_family,
+                )
+            }
+            for cid in override_cfg_ids - {model_config_id}:
+                override_cfg = ModelConfig.query.get(cid)
+                if not override_cfg:
+                    raise ValueError(f"Model configuration {cid} not found")
+                resolved_configs[cid] = (
+                    override_cfg.algorithm,
+                    json.loads(override_cfg.hyperparams_json or "{}"),
+                    override_cfg.family,
+                )
 
             if not ds.file_path:
                 raise ValueError(
@@ -384,8 +446,17 @@ def run_calibration(self, run_id: str):
                 total_sectors = len(seg_sectors)
                 processed = 0
                 for sector, df_sector in df_seg.groupby("sector"):
-                    split_col = default_split
-                    max_seg = default_max
+                    sector_cfg = _resolve_sector_training_config(
+                        sector,
+                        sector_overrides,
+                        default_split,
+                        default_max,
+                        feature_cols_json,
+                        model_config_id,
+                        resolved_configs,
+                    )
+                    split_col = sector_cfg["split_by"]
+                    max_seg = sector_cfg["max_segments"]
 
                     if split_col not in df_sector.columns:
                         logger.warning(
@@ -442,14 +513,14 @@ def run_calibration(self, run_id: str):
                                     seg_artifact_path,
                                 ) = _fit_segment(
                                     df_group,
-                                    algorithm,
-                                    dict(raw_params),
-                                    search_cfg,
+                                    sector_cfg["algorithm"],
+                                    sector_cfg["raw_params"],
+                                    search_cfg if sector_cfg["use_search"] else None,
                                     train_split_ratio,
                                     scaler_name,
                                     target_col,
-                                    feature_cols_json,
-                                    model_family,
+                                    sector_cfg["feature_cols"],
+                                    sector_cfg["model_family"],
                                     f"artifacts/{run_id}/segments/{seg_key}/model.pkl",
                                     run_id,
                                 )
@@ -480,6 +551,7 @@ def run_calibration(self, run_id: str):
                                 else None,
                                 status=seg_status,
                                 error_message=seg_error,
+                                model_config_id=sector_cfg["model_config_id"],
                             )
                             s.add(seg_row)
 
