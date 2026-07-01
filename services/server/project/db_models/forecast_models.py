@@ -25,6 +25,8 @@ class ForecastRun(db.Model):
     error_message = db.Column(db.Text, nullable=True)
     progress = db.Column(db.Integer, nullable=False, default=0)
 
+    segment_key = db.Column(db.String(128), nullable=True)
+
     results = db.relationship(
         "ForecastRunResult", cascade="all, delete-orphan", lazy="dynamic"
     )
@@ -63,6 +65,7 @@ class ForecastRun(db.Model):
             finished_at=self.finished_at.isoformat() if self.finished_at else None,
             error_message=self.error_message,
             progress=self.progress,
+            segment_key=self.segment_key,
         )
 
 

@@ -68,9 +68,9 @@ const uploadName = ref('')
 const uploadKind = ref('calibration')
 
 const KIND_OPTIONS = [
-  { label: 'Calibration',  value: 'calibration' },
-  { label: 'Credit',       value: 'credit' },
-  { label: 'Forecast',     value: 'forecast' },
+  { label: 'Calibration', value: 'calibration' },
+  { label: 'Credit',      value: 'credit' },
+  { label: 'Forecast',    value: 'forecast' },
 ]
 
 const openUpload = () => {
@@ -286,7 +286,7 @@ const saveQuery = () => {
           <Dropdown v-model="uploadKind" :options="KIND_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
           <div class="text-xs text-color-secondary">
             <span v-if="uploadKind === 'calibration'">Used for model training and backtesting.</span>
-            <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis.</span>
+            <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis. Includes credit datasets and financial portfolio files.</span>
             <span v-else-if="uploadKind === 'forecast'">Feature data for generating forward-looking predictions.</span>
           </div>
         </div>

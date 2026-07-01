@@ -39,27 +39,34 @@ const runOptions = computed(() =>
 )
 
 // ── form state ────────────────────────────────────────────────────────────────
-const selectedDatasetId = ref(null)
-const exposure          = ref(1_000_000)
-const discountRate      = ref(0.05)
-const lifetimeHorizon   = ref(5)
-const submitting        = ref(false)
+const selectedDatasetId          = ref(null)
+const selectedFinancialDatasetId = ref(null)
+const exposure                   = ref(1_000_000)
+const discountRate               = ref(0.05)
+const lifetimeHorizon            = ref(5)
+const submitting                 = ref(false)
 
 const allInputsFilled = computed(() =>
   KMV_INPUTS.every(i => calInputs.value[i.key] != null)
 )
-const canLaunch = computed(() => selectedDatasetId.value != null && exposure.value > 0 && allInputsFilled.value)
+const canLaunch = computed(() =>
+  selectedDatasetId.value != null &&
+  selectedFinancialDatasetId.value != null &&
+  exposure.value > 0 &&
+  allInputsFilled.value
+)
 
 const launch = async () => {
   if (!canLaunch.value) return
   submitting.value = true
   try {
     const { data } = await creditRiskAPI.createRun({
-      dataset_id:       selectedDatasetId.value,
-      cal_inputs:       calInputs.value,
-      exposure:         exposure.value,
-      discount_rate:    discountRate.value,
-      lifetime_horizon: lifetimeHorizon.value,
+      dataset_id:                     selectedDatasetId.value,
+      financial_portfolio_dataset_id: selectedFinancialDatasetId.value,
+      cal_inputs:                     calInputs.value,
+      exposure:                       exposure.value,
+      discount_rate:                  discountRate.value,
+      lifetime_horizon:               lifetimeHorizon.value,
     })
     toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${data.run_id.slice(0, 8)}…`, life: 3000 })
     router.push({ name: 'credit_risk_jobs' })
@@ -134,6 +141,41 @@ onMounted(async () => {
             optionLabel="label"
             optionValue="value"
             placeholder="Select credit dataset"
+            :loading="loadingInit"
+            :disabled="loadingInit"
+            class="w-full"
+            filter
+          />
+          <div v-if="!loadingInit && creditDatasets.length === 0" class="text-xs text-color-secondary mt-1">
+            No credit datasets found. Go to
+            <a class="text-primary cursor-pointer" @click="router.push({ name: 'datasets' })">Datasets</a>
+            and upload a file with type "Credit".
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row" style="border-bottom: 0">
+        <div class="form-label">
+          <div class="font-medium text-sm">Financial Portfolio</div>
+          <div class="text-xs text-color-secondary mt-1">
+            Per-client balance-sheet and segment data. Must include
+            <span class="font-mono">client_id</span>,
+            <span class="font-mono">country</span>,
+            <span class="font-mono">sector</span>,
+            <span class="font-mono">subsector</span>,
+            <span class="font-mono">total_assets</span>,
+            <span class="font-mono">total_longterm_debts</span>,
+            <span class="font-mono">total_shortterm_debts</span>.
+            Used to route each client to the correct segment model.
+          </div>
+        </div>
+        <div class="form-input">
+          <Dropdown
+            v-model="selectedFinancialDatasetId"
+            :options="datasetOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select financial portfolio dataset"
             :loading="loadingInit"
             :disabled="loadingInit"
             class="w-full"

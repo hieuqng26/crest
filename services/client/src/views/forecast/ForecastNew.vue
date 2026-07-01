@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
@@ -28,16 +28,47 @@ const datasetOptions = computed(() =>
   }))
 )
 
-const selectedCalRunId  = ref(null)
-const selectedDatasetId = ref(null)
-const runName           = ref('')
-const submitting        = ref(false)
+const selectedCalRunId   = ref(null)
+const selectedDatasetId  = ref(null)
+const selectedSegmentKey = ref(null)
+const runName            = ref('')
+const submitting         = ref(false)
 
-const canLaunch = computed(() => selectedCalRunId.value != null && selectedDatasetId.value != null)
+// Segments for the selected calibration run (only when segmented)
+const segments        = ref([])
+const loadingSegments = ref(false)
 
 const selectedCalRun = computed(() =>
   calRuns.value.find(r => r.run_id === selectedCalRunId.value) ?? null
 )
+
+const isSegmented = computed(() => !!selectedCalRun.value?.seg_sectors_json)
+
+const segmentOptions = computed(() =>
+  segments.value
+    .filter(s => s.status === 'success')
+    .map(s => ({
+      label: `${s.sector}  ·  ${s.split_by}: ${s.split_value}`,
+      value: s.segment_key,
+    }))
+)
+
+watch(selectedCalRunId, async (runId) => {
+  selectedSegmentKey.value = null
+  segments.value = []
+  if (!runId || !isSegmented.value) return
+  loadingSegments.value = true
+  try {
+    const { data } = await calibrationsAPI.segments(runId)
+    segments.value = data?.segments ?? []
+  } catch {
+    // non-fatal — segment picker stays empty
+  } finally {
+    loadingSegments.value = false
+  }
+})
+
+const canLaunch = computed(() => selectedCalRunId.value != null && selectedDatasetId.value != null)
 
 const launch = async () => {
   if (!canLaunch.value) return
@@ -47,6 +78,7 @@ const launch = async () => {
       calibration_run_id: selectedCalRunId.value,
       dataset_id:         selectedDatasetId.value,
       name:               runName.value.trim() || null,
+      segment_key:        selectedSegmentKey.value || undefined,
     })
     toast.add({ severity: 'success', summary: 'Forecast run queued', life: 3000 })
     router.push({ name: 'forecast_jobs' })
@@ -130,6 +162,33 @@ onMounted(async () => {
             <span class="font-mono font-semibold">{{ selectedCalRun.target_col ?? '—' }}</span>
             <span class="text-color-secondary ml-3">Features: </span>
             <span class="font-mono">{{ selectedCalRun.feature_cols ?? 'auto-detected' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Segment picker: only shown for segmented calibration runs -->
+      <div v-if="isSegmented" class="form-row" style="border-bottom: 0">
+        <div class="form-label">
+          <div class="font-medium text-sm">Segment <span class="text-color-secondary font-normal">(optional)</span></div>
+          <div class="text-xs text-color-secondary mt-1">
+            Target a single segment's model. Leave blank to run all segments and route each client automatically.
+          </div>
+        </div>
+        <div class="form-input">
+          <Dropdown
+            v-model="selectedSegmentKey"
+            :options="segmentOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="All segments (default)"
+            :loading="loadingSegments"
+            :disabled="loadingSegments || segmentOptions.length === 0"
+            class="w-full"
+            showClear
+            filter
+          />
+          <div v-if="!loadingSegments && segmentOptions.length === 0" class="text-xs text-color-secondary mt-1">
+            No successful segments found for this calibration run.
           </div>
         </div>
       </div>

@@ -15,10 +15,12 @@ const toast = useToast()
 const selectedDatasetId = ref(null)
 const selectedDataset = computed(() => getDataset(selectedDatasetId.value) || null)
 const datasetOptions = computed(() =>
-  datasets.value.map(d => ({
-    label: `${d.name} (${d.row_count.toLocaleString()} rows · ${d.columns.length} cols)`,
-    value: d.id,
-  }))
+  datasets.value
+    .filter(d => d.kind === 'calibration')
+    .map(d => ({
+      label: `${d.name} (${d.row_count.toLocaleString()} rows · ${d.columns.length} cols)`,
+      value: d.id,
+    }))
 )
 
 // Sectors

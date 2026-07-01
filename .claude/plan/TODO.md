@@ -1,10 +1,19 @@
-- Add sector, subsector, country:
-    - Add columns to demo data
-    - For each sector user can choose to split the portfolio by subsector or country: typically there are 4-5 subsectors within a sector, if more than that, we model the main ones, then group the rest to "Others" subsector. Similarly, if splitting by countries, user can either model largest 5 countries (in terms of total exposure), group the rest to "Others", or group countries by regions, model 4-5 main regions, group the rest to "Others"
-    - Each subsector/country group is then calibrated with a model
-    - Remove ability to merge datasets, it is funky, we assume the input data is already merged: merge historical mev with historical financial data by date and country. The forecast data currently only has MEVs, but we should add: client_id, country, sector, subsector, base year, total assets, total long-term debts, total short-term debts
-    - Forecasting: perform forecasting using the model corresponding to sample's subsector/country
+- [x] Revise data and model:
+    - [x] Modify @services/server/project/data/test_data/demo_macro_forecast.csv :remove columns sector,subsector,base_year,total_assets,total_longterm_debts,total_shortterm_debts,country
+    - [x] When performing forecast job, we just use the MEVs the model required. That means each country/subsector model with generate 1 dataset of forecasts.
+    - [x] Create a new demo_financial_portfolio, with columns date,scenario,client_id,country,sector,subsector,base_year,total_assets,total_longterm_debts,total_shortterm_debts. base_year just put 2026 for all.
+    - [x] When performing the credit analysis, we would need to merge the demo_financial_portfolio with the demo_credit_portfolio by client_id and date, then merge with the corresponding forecast (right sector and subsector/country) by date. We then proceed with the KMV, ECL.
+    - [x] Frontend: segment picker in New Forecast Run form; financial portfolio dataset picker (required) in New Analysis form; financial_portfolio kind added to Datasets upload.
 
+- Create realistic demo data:
+    - I want you to create more realistic demo datasets. First, for @services/server/project/data/test_data/financials_macro_merged.csv , it should contains 10 sectors, each has 10 countries, and 4-6 subsectors. Per sector, per country/subsector, there should be around 300-500 samples, cover years from 1990 to 2026.
+    - Next, I want you to create a test to run the following workflow. Use @services/server/project/data/test_data/financials_macro_merged.csv for calibration, use model elasticnet (default configuration). Run 3 calibration jobs for total_assets, total_longterm_debts, total_shorterm_debts, and features inflation_rate, notional_gdp, unemployment_rate, coal_price, oil_price. For forecast jobs, run 3 calibration models on @services/server/project/data/test_data/demo_macro_forecast.csv . Lastly, for credit jobs, use @services/server/project/data/test_data/demo_credit_portfolio.csv and @services/server/project/data/test_data/demo_financial_portfolio.csv , with total_assets, total_longterm_debts, total_shorterm_debts are forecasted with 3 calibration models above. Test for all sectors, use subsector split, max segments is 5.
+    -  Then look at the fit, I want the fit is relatively good (R2 at least 20%, ideally 50% and above)
+    - Need to make sure end-to-end is producing correct results
+    
+- Add a shared component for data table that will be used across the application (unless we need a very customized one) for example in the dataset views, backtesting, forecast results. The table should clean, easy to read. It should have filters for each column. For categorical columns with less than 30 unique values, it should have dropdown (with search). It should also have sorting function for each column. Most importantly, it should has pagination and able to load large data seemlessly
+- Add ability to give the calibration a name
+- Redesign UI for every page
 - Test and verify all models
 - Add real data for mev and financial (refinitive)
 - Add model for panel data

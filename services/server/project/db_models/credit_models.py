@@ -47,6 +47,9 @@ class CreditRiskRun(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
+    financial_portfolio_dataset_id = db.Column(
+        db.Integer, db.ForeignKey("datasets.id"), nullable=True
+    )
     is_active = db.Column(db.Boolean, nullable=False, default=False)
     exposure = db.Column(db.Float, nullable=False)
     discount_rate = db.Column(db.Float, nullable=False, default=0.05)
@@ -74,6 +77,7 @@ class CreditRiskRun(db.Model):
             id=self.id,
             run_id=self.run_id,
             dataset_id=self.dataset_id,
+            financial_portfolio_dataset_id=self.financial_portfolio_dataset_id,
             forecast_inputs={
                 inp.slot: inp.forecast_run_uuid for inp in self.forecast_inputs_rel
             },

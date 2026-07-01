@@ -244,6 +244,13 @@ def create_run():
     if not ds:
         return jsonify({"error": "Dataset not found"}), 404
 
+    financial_portfolio_dataset_id = body.get("financial_portfolio_dataset_id")
+    if financial_portfolio_dataset_id:
+        fin_ds = Dataset.query.get(int(financial_portfolio_dataset_id))
+        if not fin_ds:
+            return jsonify({"error": "Financial portfolio dataset not found"}), 404
+        financial_portfolio_dataset_id = int(financial_portfolio_dataset_id)
+
     forecast_inputs = body.get("cal_inputs") or {}
     required_keys = {"total_assets", "short_term_debts", "long_term_debts"}
     missing = required_keys - {k for k, v in forecast_inputs.items() if v}
@@ -269,6 +276,7 @@ def create_run():
     cr = CreditRiskRun(
         run_id=cr_run_id,
         dataset_id=int(dataset_id),
+        financial_portfolio_dataset_id=financial_portfolio_dataset_id,
         is_active=False,
         exposure=float(body.get("exposure", 1_000_000)),
         discount_rate=float(body.get("discount_rate", 0.05)),

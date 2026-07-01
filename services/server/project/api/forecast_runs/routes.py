@@ -5,7 +5,11 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project.api.auth.decorators import require_perm
-from project.db_models.calibration_models import CalibrationRun, Dataset
+from project.db_models.calibration_models import (
+    CalibrationRun,
+    CalibrationRunSegment,
+    Dataset,
+)
 from project.db_models.credit_models import CreditRiskForecastInput, CreditRiskRun
 from project.db_models.forecast_models import (
     ForecastRun,
@@ -42,13 +46,35 @@ def create_run():
     if not dataset_id:
         return jsonify({"error": "dataset_id is required"}), 400
 
+    segment_key = body.get("segment_key") or None
+
     cal_run = CalibrationRun.query.filter_by(run_id=calibration_run_id).first()
     if not cal_run:
         return jsonify({"error": "Calibration run not found"}), 404
     if cal_run.status != "success":
         return jsonify({"error": "Calibration run must be in success status"}), 400
-    if not cal_run.artifact_path:
-        return jsonify({"error": "Calibration run has no saved model artifact"}), 400
+
+    if segment_key:
+        # Per-segment forecast run: validate the specific segment exists and succeeded
+        seg = CalibrationRunSegment.query.filter_by(
+            calibration_run_id=cal_run.id, segment_key=segment_key
+        ).first()
+        if not seg:
+            return jsonify(
+                {
+                    "error": f"Segment '{segment_key}' not found under this calibration run"
+                }
+            ), 404
+        if seg.status != "success":
+            return jsonify(
+                {"error": f"Segment '{segment_key}' has not completed successfully"}
+            ), 400
+    else:
+        # Standard run: segmented runs route per-row; non-segmented need top-level artifact
+        if not cal_run.seg_sectors_json and not cal_run.artifact_path:
+            return jsonify(
+                {"error": "Calibration run has no saved model artifact"}
+            ), 400
 
     ds = Dataset.query.get(int(dataset_id))
     if not ds:
@@ -67,6 +93,7 @@ def create_run():
         name=name,
         calibration_run_id=cal_run.id,
         dataset_id=int(dataset_id),
+        segment_key=segment_key,
         status="queued",
         triggered_by=identity,
         created_at=datetime.now(timezone.utc),
