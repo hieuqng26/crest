@@ -7,8 +7,16 @@ Run from services/server/:
 """
 
 import json
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture()
+def mock_celery_task():
+    """Mock the Celery task to avoid Redis dependency in tests."""
+    with patch("project.api.calibrations.routes.run_calibration.delay"):
+        yield
 
 
 @pytest.fixture()
@@ -171,3 +179,105 @@ class TestCalibrationRunSegmentModelConfigId:
             segment_key="Energy__Oil & Gas"
         ).first()
         assert fetched.to_dict()["model_config_id"] is None
+
+
+class TestCreateRunSectorOverridesAPI:
+    def test_rejects_override_for_sector_not_in_sectors_list(
+        self, client, login, dataset_and_configs, mock_celery_task
+    ):
+        d = dataset_and_configs
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/",
+            json={
+                "dataset_id": d["dataset"].id,
+                "model_config_id": d["cfg_a"].id,
+                "target_col": "total_assets",
+                "segmentation": {
+                    "sectors": ["Financials"],
+                    "split_by": "subsector",
+                    "max_segments": 5,
+                    "sector_overrides": {"Energy": {"max_segments": 8}},
+                },
+            },
+        )
+        assert resp.status_code == 400
+        assert "Energy" in resp.get_json()["error"]
+
+    def test_rejects_invalid_split_by_in_override(
+        self, client, login, dataset_and_configs, mock_celery_task
+    ):
+        d = dataset_and_configs
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/",
+            json={
+                "dataset_id": d["dataset"].id,
+                "model_config_id": d["cfg_a"].id,
+                "target_col": "total_assets",
+                "segmentation": {
+                    "sectors": ["Financials"],
+                    "split_by": "subsector",
+                    "max_segments": 5,
+                    "sector_overrides": {"Financials": {"split_by": "region"}},
+                },
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_rejects_unknown_model_config_id_in_override(
+        self, client, login, dataset_and_configs, mock_celery_task
+    ):
+        d = dataset_and_configs
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/",
+            json={
+                "dataset_id": d["dataset"].id,
+                "model_config_id": d["cfg_a"].id,
+                "target_col": "total_assets",
+                "segmentation": {
+                    "sectors": ["Financials"],
+                    "split_by": "subsector",
+                    "max_segments": 5,
+                    "sector_overrides": {"Financials": {"model_config_id": 999999}},
+                },
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_accepts_valid_sector_overrides_and_stores_them(
+        self, client, login, dataset_and_configs, mock_celery_task
+    ):
+        d = dataset_and_configs
+        cfg_b_id = d["cfg_b"].id  # Capture ID before session is detached
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/",
+            json={
+                "dataset_id": d["dataset"].id,
+                "model_config_id": d["cfg_a"].id,
+                "target_col": "total_assets",
+                "segmentation": {
+                    "sectors": ["Financials", "Energy"],
+                    "split_by": "subsector",
+                    "max_segments": 5,
+                    "sector_overrides": {
+                        "Financials": {
+                            "split_by": "country",
+                            "max_segments": 8,
+                            "model_config_id": cfg_b_id,
+                        }
+                    },
+                },
+            },
+        )
+        assert resp.status_code == 202, resp.get_json()
+        body = resp.get_json()
+        assert body["seg_sector_overrides"] == {
+            "Financials": {
+                "split_by": "country",
+                "max_segments": 8,
+                "model_config_id": cfg_b_id,
+            }
+        }

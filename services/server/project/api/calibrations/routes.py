@@ -113,6 +113,7 @@ def create_run():
     seg_sectors_json = None
     seg_split_by = None
     seg_max_segments = None
+    seg_sector_overrides_json = None
     if seg:
         sectors = seg.get("sectors") or []
         split_by = seg.get("split_by") or ""
@@ -132,6 +133,71 @@ def create_run():
         seg_sectors_json = json.dumps(sectors)
         seg_split_by = split_by
         seg_max_segments = max_segs
+
+        sector_overrides = seg.get("sector_overrides") or {}
+        if sector_overrides:
+            if not isinstance(sector_overrides, dict):
+                return jsonify(
+                    {"error": "segmentation.sector_overrides must be an object"}
+                ), 400
+            for sector_name, override in sector_overrides.items():
+                if sector_name not in sectors:
+                    return jsonify(
+                        {
+                            "error": f"segmentation.sector_overrides has an entry "
+                            f"for '{sector_name}', which is not in "
+                            f"segmentation.sectors"
+                        }
+                    ), 400
+                if not isinstance(override, dict):
+                    return jsonify(
+                        {
+                            "error": f"segmentation.sector_overrides['{sector_name}'] "
+                            f"must be an object"
+                        }
+                    ), 400
+                if "split_by" in override and override["split_by"] not in (
+                    "subsector",
+                    "country",
+                ):
+                    return jsonify(
+                        {
+                            "error": f"segmentation.sector_overrides['{sector_name}']"
+                            f".split_by must be 'subsector' or 'country'"
+                        }
+                    ), 400
+                if "max_segments" in override and (
+                    not isinstance(override["max_segments"], int)
+                    or not (2 <= override["max_segments"] <= 20)
+                ):
+                    return jsonify(
+                        {
+                            "error": f"segmentation.sector_overrides['{sector_name}']"
+                            f".max_segments must be an integer 2–20"
+                        }
+                    ), 400
+                if "model_config_id" in override:
+                    override_cfg = ModelConfig.query.get(
+                        int(override["model_config_id"])
+                    )
+                    if not override_cfg:
+                        return jsonify(
+                            {
+                                "error": f"segmentation.sector_overrides"
+                                f"['{sector_name}'].model_config_id "
+                                f"{override['model_config_id']} not found"
+                            }
+                        ), 400
+                if "feature_cols" in override and not isinstance(
+                    override["feature_cols"], list
+                ):
+                    return jsonify(
+                        {
+                            "error": f"segmentation.sector_overrides['{sector_name}']"
+                            f".feature_cols must be a list"
+                        }
+                    ), 400
+            seg_sector_overrides_json = json.dumps(sector_overrides)
 
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
@@ -174,6 +240,7 @@ def create_run():
             seg_sectors_json=seg_sectors_json,
             seg_split_by=seg_split_by,
             seg_max_segments=seg_max_segments,
+            seg_sector_overrides_json=seg_sector_overrides_json,
         )
         session.add(run)
         session.flush()
