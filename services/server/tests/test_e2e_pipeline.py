@@ -721,7 +721,7 @@ def _resolve_sector_training_config(
     o = overrides.get(sector, {})
     split_by = o.get("split_by") or default_split_by
     max_segments = o.get("max_segments") or default_max_segments
-    feature_cols = o.get("feature_cols") or default_feature_cols
+    feature_cols = o["feature_cols"] if "feature_cols" in o else default_feature_cols
     cfg_id = o.get("model_config_id") or default_model_config_id
     algorithm, raw_params, model_family = resolved_configs[cfg_id]
     use_search = cfg_id == default_model_config_id
@@ -818,3 +818,33 @@ class TestSectorOverrideResolution:
             resolved_configs=self.RESOLVED_CONFIGS,
         )
         assert result["feature_cols"] == ["oil_price", "coal_price"]
+
+    def test_sector_with_explicit_empty_feature_cols_is_honored(self):
+        overrides = {"Energy": {"feature_cols": []}}
+        result = _resolve_sector_training_config(
+            "Energy",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["feature_cols"] == [], (
+            "A present-but-empty feature_cols override means 'use all "
+            "non-target columns' and must not fall back to the run-level "
+            "default feature subset"
+        )
+
+    def test_sector_with_no_feature_cols_key_uses_default(self):
+        overrides = {"Energy": {"max_segments": 8}}
+        result = _resolve_sector_training_config(
+            "Energy",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["feature_cols"] == ["inflation_rate", "notional_gdp"]

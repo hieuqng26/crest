@@ -216,7 +216,7 @@ def _resolve_sector_training_config(
     o = overrides.get(sector, {})
     split_by = o.get("split_by") or default_split_by
     max_segments = o.get("max_segments") or default_max_segments
-    feature_cols = o.get("feature_cols") or default_feature_cols
+    feature_cols = o["feature_cols"] if "feature_cols" in o else default_feature_cols
     cfg_id = o.get("model_config_id") or default_model_config_id
     algorithm, raw_params, model_family = resolved_configs[cfg_id]
     # Hyperparameter search is tuned for the run's default algorithm's
