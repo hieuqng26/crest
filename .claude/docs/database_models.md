@@ -16,7 +16,15 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
   `dataset_id`→datasets, `model_config_id`→model_configs, `status`
   (`queued`/`running`/`success`/`failed`), `val_metrics_json`, `error_message`,
   `triggered_by`→users.email.
+  - `seg_sector_overrides_json` — sparse per-sector override of
+    segmentation settings/model/features: `{sector: {split_by?, max_segments?,
+    model_config_id?, feature_cols?}}`. Missing keys per sector fall back to the
+    run's own `seg_split_by`/`seg_max_segments`/`model_config_id`/`feature_cols_json`.
 - **`calibration_run_logs`** — `run_id`→calibration_runs.run_id, level/message/ts.
+- **`calibration_run_segments`** — segments of a calibration run (e.g., by sector &
+  subsector). `calibration_run_id`→calibration_runs.id.
+  - `model_config_id` — which ModelConfig actually trained
+    this segment (nullable; null for segments trained before this column existed).
 
 ### `forecast_models.py`
 - **`forecast_runs`** — applies a calibrated model to a forecast dataset. `run_id`

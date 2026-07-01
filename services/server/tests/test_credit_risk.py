@@ -485,7 +485,9 @@ class TestResultsSummarySelection:
 
         baseline_ecl = ecl_df[ecl_df["SCENARIO"] == "Baseline"].sort_values("YEAR")
         last_two = baseline_ecl.tail(2)
-        assert (last_two["ECL_12M"] == 0).all() and (last_two["ECL_Lifetime"] == 0).all(), (
+        assert (last_two["ECL_12M"] == 0).all() and (
+            last_two["ECL_Lifetime"] == 0
+        ).all(), (
             "Expected the last two ECL years to be zeroed by the LGD boundary artifact"
         )
 
