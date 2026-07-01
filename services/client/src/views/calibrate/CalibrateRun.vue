@@ -45,6 +45,7 @@ watch(runId, async () => { stopPolling(); await loadRun() })
 
 const isSegmented = computed(() => !!run.value?.is_segmented)
 const activeSegmentKey = ref(null)
+const activeSector = ref(null)
 
 // Load segment list from API once run succeeds (for the shared segment selector)
 const segments = ref([])
@@ -62,9 +63,27 @@ watch(
   },
   { immediate: true }
 )
-const segmentOptions = computed(() =>
-  segments.value.map(s => ({ label: s.split_value, value: s.segment_key }))
+const sectorOptions = computed(() =>
+  [...new Set(segments.value.map(s => s.sector))]
+    .sort()
+    .map(s => ({ label: s, value: s }))
 )
+const segmentOptions = computed(() =>
+  segments.value
+    .filter(s => !activeSector.value || s.sector === activeSector.value)
+    .map(s => ({ label: s.split_value, value: s.segment_key }))
+)
+const segmentPlaceholder = computed(() =>
+  activeSector.value ? `All ${activeSector.value} segments (aggregated)` : 'All segments (aggregated)'
+)
+
+// Narrowing the sector filter can drop the currently selected segment out of
+// the visible list — clear it rather than leaving a hidden selection active.
+watch(activeSector, () => {
+  if (activeSegmentKey.value && !segmentOptions.value.some(o => o.value === activeSegmentKey.value)) {
+    activeSegmentKey.value = null
+  }
+})
 
 const TABS = computed(() => [
   { key: 'overview',    label: 'Overview',    icon: 'pi pi-info-circle' },
@@ -85,6 +104,7 @@ const tabDisabled = (key) =>
   (key === 'forecast' && forecastDisabled.value)
 
 const onSelectSegment = (segKey) => {
+  activeSector.value = segments.value.find(s => s.segment_key === segKey)?.sector ?? null
   activeSegmentKey.value = segKey
   activeKey.value = 'diagnostics'
 }
@@ -233,18 +253,31 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
       </button>
     </nav>
 
-    <!-- Shared segment selector (shown above Diagnostics and Backtesting for segmented runs) -->
+    <!-- Shared sector/segment selector (shown above Diagnostics and Backtesting for segmented runs) -->
     <div
-      v-if="isSegmented && run.status === 'success' && (activeKey === 'diagnostics' || activeKey === 'forecast') && segmentOptions.length > 0"
-      class="flex align-items-center gap-2 mb-4"
+      v-if="isSegmented && run.status === 'success' && (activeKey === 'diagnostics' || activeKey === 'forecast') && segments.length > 0"
+      class="flex align-items-center gap-2 mb-4 flex-wrap"
     >
+      <template v-if="sectorOptions.length > 1">
+        <span class="text-xs font-semibold uppercase text-color-secondary" style="letter-spacing:.05em">Sector</span>
+        <Dropdown
+          v-model="activeSector"
+          :options="sectorOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="All sectors"
+          showClear
+          class="sector-filter-drop"
+        />
+      </template>
+
       <span class="text-xs font-semibold uppercase text-color-secondary" style="letter-spacing:.05em">Segment</span>
       <Dropdown
         v-model="activeSegmentKey"
         :options="segmentOptions"
         optionLabel="label"
         optionValue="value"
-        placeholder="All segments (aggregated)"
+        :placeholder="segmentPlaceholder"
         showClear
         class="segment-filter-drop"
       />
@@ -393,6 +426,10 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
   border: 1px dashed var(--surface-border);
   border-radius: 12px;
 }
+
+.sector-filter-drop { min-width: 12rem; }
+:deep(.sector-filter-drop .p-dropdown-label) { font-size: 0.82rem; }
+:deep(.sector-filter-drop .p-dropdown-clear-icon) { color: var(--text-color-secondary); }
 
 .segment-filter-drop { min-width: 18rem; }
 :deep(.segment-filter-drop .p-dropdown-label) { font-size: 0.82rem; }
