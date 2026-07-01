@@ -386,9 +386,15 @@ code, kbd, pre, .font-mono {
  * ───────────────────────────────────────────────────────────────────── */
 
 /* ── Closed trigger ─────────────────────────────────────────────────── */
+/* The label span also carries .p-inputtext, so the broad input border
+ * rule above re-applies a full border to it — its right edge shows up as
+ * a stray vertical line between the clear icon and the trigger chevron.
+ * The outer .p-dropdown/.p-multiselect already draws the visible border. */
 .p-dropdown .p-dropdown-label,
 .p-multiselect .p-multiselect-label {
   padding: 0.5rem 0.75rem !important;
+  border: none !important;
+  background: transparent !important;
 }
 
 /* Compact chevron */
