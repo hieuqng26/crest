@@ -58,17 +58,25 @@ watch(selectedSectors, (v) => {
 // their own values.
 const sectorOverrides = ref({})
 
+// Single source of truth for a "fresh, non-customized" override entry,
+// snapshotted from whatever the global defaults are AT CALL TIME. Reused by
+// the seed watcher, the customize-toggle handler, and the explicit reset
+// button so none of them can drift out of sync with each other.
+function makeDefaultOverride() {
+  return {
+    customized: false,
+    split_by: splitBy.value,
+    max_segments: maxSegments.value,
+    model_config_id: selectedConfig.value,
+    feature_cols: [...featureCols.value],
+  }
+}
+
 watch(selectedSectors, (sectors, prevSectors) => {
   const prev = prevSectors || []
   for (const sector of sectors) {
     if (!(sector in sectorOverrides.value)) {
-      sectorOverrides.value[sector] = {
-        customized: false,
-        split_by: splitBy.value,
-        max_segments: maxSegments.value,
-        model_config_id: selectedConfig.value,
-        feature_cols: [...featureCols.value],
-      }
+      sectorOverrides.value[sector] = makeDefaultOverride()
     }
   }
   for (const sector of prev) {
@@ -79,12 +87,20 @@ watch(selectedSectors, (sectors, prevSectors) => {
 })
 
 function resetSectorOverride(sector) {
-  sectorOverrides.value[sector] = {
-    customized: false,
-    split_by: splitBy.value,
-    max_segments: maxSegments.value,
-    model_config_id: selectedConfig.value,
-    feature_cols: [...featureCols.value],
+  sectorOverrides.value[sector] = makeDefaultOverride()
+}
+
+// Checked = user is about to see/edit the per-sector fields, so re-seed them
+// from the CURRENT live defaults before they become visible — otherwise a
+// stale snapshot from whenever the sector was first selected leaks into the
+// editable form (and, if left untouched, into the submit diff). Unchecking
+// just flips the flag back; the read-only summary already reads defaults
+// live, so nothing needs to be captured for that state.
+function onCustomizeToggle(sector, value) {
+  if (value) {
+    sectorOverrides.value[sector] = { ...makeDefaultOverride(), customized: true }
+  } else if (sectorOverrides.value[sector]) {
+    sectorOverrides.value[sector].customized = false
   }
 }
 
@@ -275,7 +291,8 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
           <div v-if="sectorOverrides[sector]" class="flex flex-column gap-3">
             <div class="flex align-items-center gap-2">
               <Checkbox
-                v-model="sectorOverrides[sector].customized"
+                :modelValue="sectorOverrides[sector].customized"
+                @update:modelValue="val => onCustomizeToggle(sector, val)"
                 :binary="true"
                 :inputId="`customize-${sector}`"
               />
