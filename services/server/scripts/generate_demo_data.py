@@ -3,14 +3,17 @@ Generate realistic synthetic demo data for the CREST platform.
 
 Produces four CSV files in project/data/test_data/:
   - financials_macro_merged.csv   ~185k rows, annual 1990-2026
-  - demo_credit_portfolio.csv     50 clients
-  - demo_macro_forecast.csv       750 rows (annual 2027-2031, 3 scenarios)
-  - demo_financial_portfolio.csv  750 rows (annual 2027-2031, 3 scenarios)
+  - demo_credit_portfolio.csv     1500 clients (~30/segment when segmenting by
+                                   subsector, ~15/segment when segmenting by country)
+  - demo_macro_forecast.csv       15 rows: portfolio-wide MEV scenario table
+                                   (annual 2027-2031 x 3 scenarios, no client_id)
+  - demo_financial_portfolio.csv  22500 rows (1500 clients x 5 years x 3 scenarios)
 
 Run from services/server/:
     python scripts/generate_demo_data.py
 """
 
+import hashlib
 import os
 import sys
 
@@ -18,6 +21,13 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _stable_hash(s: str) -> int:
+    """Deterministic string hash — Python's builtin hash() is randomized per-process
+    (PYTHONHASHSEED), which would make this script non-reproducible despite SEED."""
+    return int(hashlib.md5(s.encode("utf-8")).hexdigest(), 16)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -502,7 +512,7 @@ def generate_financials_macro_merged(
                 client_counter += CLIENTS_PER_COMBO
 
                 # Per-client multiplier: ±15% variation
-                combo_seed = abs(hash((sector, country, subsector))) % 100_000
+                combo_seed = _stable_hash(f"{sector}|{country}|{subsector}") % 100_000
                 combo_rng = np.random.default_rng(combo_seed)
                 client_mults = combo_rng.uniform(0.85, 1.15, size=CLIENTS_PER_COMBO)
 
@@ -567,75 +577,39 @@ def generate_financials_macro_merged(
 # ---------------------------------------------------------------------------
 
 
-def _pick_demo_clients(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Pick demo clients: 5 per sector (one per distinct subsector), spread across countries.
+CLIENTS_PER_SEGMENT_TRIPLE = 3  # per (sector, country, subsector) -> 30/segment when
+# segmenting by subsector (10 countries x 3), 15/segment when segmenting by country
+# (5 subsectors x 3).
 
-    Returns (primary_clients, secondary_clients) where:
-    - primary (50 rows): used for credit portfolio + macro forecast
-    - secondary (50 rows): second client per same combo, used in financial portfolio only
-      so the segment fallback test has 2 clients sharing the same (sector, subsector, country)
+
+def _pick_demo_clients(
+    df: pd.DataFrame, clients_per_triple: int = CLIENTS_PER_SEGMENT_TRIPLE
+) -> pd.DataFrame:
     """
-    primary = []
-    secondary = []
-    for sector in SECTORS:
-        sub_list = SUBSECTORS[sector]
-        for i, subsector in enumerate(sub_list[:5]):  # up to 5 subsectors
-            country = COUNTRIES[i % len(COUNTRIES)]
-            group = df[
-                (df["sector"] == sector)
-                & (df["subsector"] == subsector)
-                & (df["country"] == country)
-            ]
-            if group.empty:
-                continue
-            sorted_cids = group["client_id"].sort_values().unique()
-            cid = sorted_cids[0]
-            row_2026 = group[
-                (group["client_id"] == cid) & (group["date"] == "2026-01-01")
-            ]
-            if row_2026.empty:
-                continue
-            primary.append(
+    Pick demo clients for demo_credit_portfolio.csv / demo_financial_portfolio.csv:
+    `clients_per_triple` clients from every (sector, country, subsector) triple, drawn
+    from all 10 countries so each (sector, subsector) *segment* — the unit a segmented
+    calibration actually groups by — ends up with clients_per_triple x 10 clients.
+    """
+    df_2026 = df[df["date"] == "2026-01-01"]
+    selected = []
+    for (sector, country, subsector), group in df_2026.groupby(
+        ["sector", "country", "subsector"], observed=True
+    ):
+        top = group.sort_values("client_id").head(clients_per_triple)
+        for _, row in top.iterrows():
+            selected.append(
                 {
-                    "client_id": cid,
+                    "client_id": row["client_id"],
                     "sector": sector,
                     "subsector": subsector,
                     "country": country,
-                    "total_assets_2026": float(row_2026["total_assets"].iloc[0]),
-                    "total_longterm_debts_2026": float(
-                        row_2026["total_longterm_debts"].iloc[0]
-                    ),
-                    "total_shortterm_debts_2026": float(
-                        row_2026["total_shortterm_debts"].iloc[0]
-                    ),
+                    "total_assets_2026": float(row["total_assets"]),
+                    "total_longterm_debts_2026": float(row["total_longterm_debts"]),
+                    "total_shortterm_debts_2026": float(row["total_shortterm_debts"]),
                 }
             )
-            # Pick second client in same combo for financial portfolio (enables fallback test)
-            if len(sorted_cids) > 1:
-                cid2 = sorted_cids[1]
-                row2_2026 = group[
-                    (group["client_id"] == cid2) & (group["date"] == "2026-01-01")
-                ]
-                if not row2_2026.empty:
-                    secondary.append(
-                        {
-                            "client_id": cid2,
-                            "sector": sector,
-                            "subsector": subsector,
-                            "country": country,
-                            "total_assets_2026": float(
-                                row2_2026["total_assets"].iloc[0]
-                            ),
-                            "total_longterm_debts_2026": float(
-                                row2_2026["total_longterm_debts"].iloc[0]
-                            ),
-                            "total_shortterm_debts_2026": float(
-                                row2_2026["total_shortterm_debts"].iloc[0]
-                            ),
-                        }
-                    )
-    return pd.DataFrame(primary), pd.DataFrame(secondary)
+    return pd.DataFrame(selected)
 
 
 def generate_credit_portfolio(demo_clients: pd.DataFrame) -> pd.DataFrame:
@@ -709,7 +683,12 @@ def generate_credit_portfolio(demo_clients: pd.DataFrame) -> pd.DataFrame:
         mc = max(1e6, mc)
 
         vol = float(rng.uniform(0.20, 0.55))
-        rating = _rating_from_leverage(ltd_ratio[sector])
+        # Per-client leverage jitter (deterministic on client_id) so clients within the
+        # same sector/segment aren't all assigned the identical rating.
+        client_leverage = ltd_ratio[sector] * (
+            0.7 + (_stable_hash(row["client_id"]) % 600) / 1000.0
+        )  # +/-30% around the sector's base leverage
+        rating = _rating_from_leverage(client_leverage)
         base_rfr = rfr.get(country, 0.035)
         r = round(base_rfr + float(rng.normal(0, 0.003)), 4)
         r = max(0.001, min(0.15, r))
@@ -729,50 +708,48 @@ def generate_credit_portfolio(demo_clients: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+HOUSE_VIEW_COUNTRY = "USA"  # single macro scenario driver (DFAST/CCAR-style house view)
+
+
 def generate_macro_forecast(
-    demo_clients: pd.DataFrame,
     forecast_macro: dict[str, dict[int, dict[str, dict]]],
 ) -> pd.DataFrame:
-    """Generate demo_macro_forecast.csv (50 clients × 5 years × 3 scenarios = 750 rows)."""
+    """
+    Generate demo_macro_forecast.csv: a single portfolio-wide macro scenario table
+    (5 years x 3 scenarios = 15 rows). No client_id/sector/country — a forecast run
+    only needs the MEV feature columns a calibrated (segment) model requires, and the
+    resulting trajectory is applied uniformly to every client in the credit risk run.
+    """
     rows = []
-    for _, client_row in demo_clients.iterrows():
-        cid = client_row["client_id"]
-        country = client_row["country"]
-        for yr in FORECAST_YEARS:
-            for scen in SCENARIOS:
-                m = forecast_macro[country][yr][scen]
-                rows.append(
-                    {
-                        "date": f"1/1/{yr - 2000:02d}",
-                        "scenario": scen,
-                        "client_id": cid,
-                        "inflation_rate": m["inflation_rate"],
-                        "notional_gdp": m["notional_gdp"],
-                        "unemployment_rate": m["unemployment_rate"],
-                        "coal_price": m["coal_price"],
-                        "oil_price": m["oil_price"],
-                    }
-                )
+    for yr in FORECAST_YEARS:
+        for scen in SCENARIOS:
+            m = forecast_macro[HOUSE_VIEW_COUNTRY][yr][scen]
+            rows.append(
+                {
+                    "date": f"1/1/{yr - 2000:02d}",
+                    "scenario": scen,
+                    "inflation_rate": m["inflation_rate"],
+                    "notional_gdp": m["notional_gdp"],
+                    "unemployment_rate": m["unemployment_rate"],
+                    "coal_price": m["coal_price"],
+                    "oil_price": m["oil_price"],
+                }
+            )
     return pd.DataFrame(rows)
 
 
 def generate_financial_portfolio(
     demo_clients: pd.DataFrame,
-    secondary_clients: pd.DataFrame,
     forecast_macro: dict[str, dict[int, dict[str, dict]]],
 ) -> pd.DataFrame:
     """
-    Generate demo_financial_portfolio.csv.
-
-    Includes primary demo clients + secondary clients (one per combo) so that
-    the segment fallback test has 2 clients per (sector, subsector, country).
+    Generate demo_financial_portfolio.csv for every selected demo client.
     Financial values use the same linear model as training data.
     """
-    all_clients = pd.concat([demo_clients, secondary_clients], ignore_index=True)
     rows = []
     rng = np.random.default_rng(SEED + 300)
 
-    for _, client_row in all_clients.iterrows():
+    for _, client_row in demo_clients.iterrows():
         cid = client_row["client_id"]
         sector = client_row["sector"]
         country = client_row["country"]
@@ -780,7 +757,7 @@ def generate_financial_portfolio(
         sp = SECTOR_PARAMS[sector]
 
         # Use a fixed client multiplier (derived from client_id hash for reproducibility)
-        client_mult = 0.95 + (abs(hash(cid)) % 100) / 1000.0  # 0.95 to 1.05
+        client_mult = 0.95 + (_stable_hash(cid) % 100) / 1000.0  # 0.95 to 1.05
 
         for yr in FORECAST_YEARS:
             for scen in SCENARIOS:
@@ -844,10 +821,8 @@ def main():
     print(f"  Wrote {len(df_merged):,} rows → {path_merged}")
 
     print("Selecting demo clients...")
-    demo_clients, secondary_clients = _pick_demo_clients(df_merged)
-    print(
-        f"  Primary: {len(demo_clients)} clients, Secondary: {len(secondary_clients)} clients"
-    )
+    demo_clients = _pick_demo_clients(df_merged)
+    print(f"  Selected {len(demo_clients)} clients")
 
     print("Generating demo_credit_portfolio.csv...")
     credit_df = generate_credit_portfolio(demo_clients)
@@ -856,15 +831,13 @@ def main():
     print(f"  Wrote {len(credit_df)} rows → {path_credit}")
 
     print("Generating demo_macro_forecast.csv...")
-    macro_fc_df = generate_macro_forecast(demo_clients, forecast_macro)
+    macro_fc_df = generate_macro_forecast(forecast_macro)
     path_macro_fc = os.path.join(out_dir, "demo_macro_forecast.csv")
     macro_fc_df.to_csv(path_macro_fc, index=False)
     print(f"  Wrote {len(macro_fc_df)} rows → {path_macro_fc}")
 
     print("Generating demo_financial_portfolio.csv...")
-    fin_df = generate_financial_portfolio(
-        demo_clients, secondary_clients, forecast_macro
-    )
+    fin_df = generate_financial_portfolio(demo_clients, forecast_macro)
     path_fin = os.path.join(out_dir, "demo_financial_portfolio.csv")
     fin_df.to_csv(path_fin, index=False)
     print(f"  Wrote {len(fin_df)} rows → {path_fin}")
@@ -882,6 +855,16 @@ def main():
     print(f"Total clients: {df_merged['client_id'].nunique():,}")
     print(
         f"Demo client set covers all sectors: {set(demo_clients['sector'].unique()) == set(SECTORS)}"
+    )
+    clients_per_subsector_segment = demo_clients.groupby(["sector", "subsector"]).size()
+    clients_per_country_segment = demo_clients.groupby(["sector", "country"]).size()
+    print(
+        f"Clients per (sector, subsector) segment: min={clients_per_subsector_segment.min()}, "
+        f"median={clients_per_subsector_segment.median():.0f}"
+    )
+    print(
+        f"Clients per (sector, country) segment: min={clients_per_country_segment.min()}, "
+        f"median={clients_per_country_segment.median():.0f}"
     )
 
 

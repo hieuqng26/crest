@@ -148,6 +148,13 @@ def macro_forecast_df():
 
 
 @pytest.fixture(scope="module")
+def fin_df():
+    path = os.path.join(_DATA_DIR, "demo_financial_portfolio.csv")
+    assert os.path.exists(path), f"Missing: {path}"
+    return pd.read_csv(path)
+
+
+@pytest.fixture(scope="module")
 def pd_rating_df():
     return pd.DataFrame(
         [
@@ -305,11 +312,18 @@ class TestSegmentationLogic:
 
 
 class TestForecastPipeline:
-    """Train on one sector and apply to forecast dataset — validate predictions."""
+    """
+    Train on one segment and apply to the (portfolio-wide) forecast dataset.
+
+    demo_macro_forecast.csv carries no client_id/sector — it's a single MEV scenario
+    table (one row per date x scenario). A forecast run scores that table with one
+    segment's model, producing one trajectory that is applied to every client in
+    that segment during credit risk analysis (see TestKmvEclEndToEnd).
+    """
 
     @pytest.fixture(scope="class")
-    def energy_model(self, merged_df, macro_forecast_df):
-        """Train ElasticNet on Energy/Oil & Gas and return (plugin, scaler, energy_clients)."""
+    def energy_model(self, merged_df):
+        """Train ElasticNet on Energy/Oil & Gas and return (plugin, scaler)."""
         df_s = merged_df[
             (merged_df["sector"] == "Energy") & (merged_df["subsector"] == "Oil & Gas")
         ]
@@ -320,37 +334,28 @@ class TestForecastPipeline:
         Xt = scaler.fit_transform(X_train)
         plugin = ElasticNetPlugin()
         plugin.fit(Xt, y_train, ElasticNetParams(alpha=0.01))
-
-        # Identify Energy clients in macro forecast
-        credit_path = os.path.join(_DATA_DIR, "demo_credit_portfolio.csv")
-        credit_df = pd.read_csv(credit_path)
-        energy_clients = set(
-            credit_df[credit_df["sector"] == "Energy"]["client_id"].unique()
-        )
-        return plugin, scaler, energy_clients
+        return plugin, scaler
 
     def test_forecast_produces_predictions(self, energy_model, macro_forecast_df):
-        plugin, scaler, energy_clients = energy_model
-        df_fc = macro_forecast_df[macro_forecast_df["client_id"].isin(energy_clients)]
-        assert not df_fc.empty, "No Energy clients in macro forecast"
+        plugin, scaler = energy_model
+        assert not macro_forecast_df.empty, "Macro forecast dataset is empty"
 
-        X_fc = df_fc[FEATURES].values
+        X_fc = macro_forecast_df[FEATURES].values
         X_fc_s = scaler.transform(X_fc)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             preds = plugin.predict(X_fc_s)
 
-        assert len(preds) == len(df_fc), "Prediction count mismatch"
+        assert len(preds) == len(macro_forecast_df), "Prediction count mismatch"
         assert np.isfinite(preds).all(), "Non-finite predictions"
         assert (preds > 0).all(), "Negative asset predictions"
 
     def test_forecast_scenario_spread(self, energy_model, macro_forecast_df):
         """Baseline predictions should differ from Adverse (macro differs per scenario)."""
-        plugin, scaler, energy_clients = energy_model
-        df_fc = macro_forecast_df[macro_forecast_df["client_id"].isin(energy_clients)]
+        plugin, scaler = energy_model
 
-        base = df_fc[df_fc["scenario"] == "Baseline"]
-        adv = df_fc[df_fc["scenario"] == "Adverse"]
+        base = macro_forecast_df[macro_forecast_df["scenario"] == "Baseline"]
+        adv = macro_forecast_df[macro_forecast_df["scenario"] == "Adverse"]
         if base.empty or adv.empty:
             pytest.skip("Missing scenarios in macro forecast")
 
@@ -370,9 +375,6 @@ class TestForecastPipeline:
         self, merged_df, macro_forecast_df
     ):
         """Spot-check 3 sectors: train per top subsector, predict on forecast, all positive."""
-        credit_path = os.path.join(_DATA_DIR, "demo_credit_portfolio.csv")
-        credit_df = pd.read_csv(credit_path)
-
         for sector in ["Energy", "Technology", "Materials"]:
             df_s = merged_df[merged_df["sector"] == sector]
             top_sub = _top_subsectors(df_s, n=1)[0]
@@ -388,16 +390,7 @@ class TestForecastPipeline:
             plugin = ElasticNetPlugin()
             plugin.fit(Xt, y_train, ElasticNetParams(alpha=0.01))
 
-            sector_clients = set(
-                credit_df[credit_df["sector"] == sector]["client_id"].unique()
-            )
-            df_fc = macro_forecast_df[
-                macro_forecast_df["client_id"].isin(sector_clients)
-            ]
-            if df_fc.empty:
-                continue
-
-            X_fc_s = scaler.transform(df_fc[FEATURES].values)
+            X_fc_s = scaler.transform(macro_forecast_df[FEATURES].values)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 preds = plugin.predict(X_fc_s)
@@ -410,7 +403,15 @@ class TestForecastPipeline:
 
 
 class TestKmvEclEndToEnd:
-    """Validate KMV + ECL output correctness using real demo data."""
+    """
+    Validate KMV + ECL output correctness using real demo data.
+
+    demo_macro_forecast.csv is portfolio-wide (no client_id) — one segment's 3
+    calibrated models (total_assets/short_term_debts/long_term_debts) produce a
+    single trajectory per scenario/year, which is then applied uniformly to every
+    client in that segment (differentiated only by each client's own market_cap /
+    vol_equity / rating in the KMV com_info), mirroring run_credit_analysis.
+    """
 
     @pytest.fixture(scope="class")
     def trained_models(self, merged_df):
@@ -432,19 +433,15 @@ class TestKmvEclEndToEnd:
             models[target] = (plugin, scaler)
         return models
 
-    def _build_kmv_forecast(
-        self,
-        macro_df: pd.DataFrame,
-        cid: str,
-        trained_models: dict,
-    ) -> pd.DataFrame:
-        """Apply 3 models to forecast macro rows for one client → KMV-ready DataFrame."""
-        df_client = macro_df[macro_df["client_id"] == cid].copy()
-        df_client["YEAR"] = pd.to_datetime(df_client["date"], dayfirst=False).dt.year
+    @pytest.fixture(scope="class")
+    def segment_forecast(self, macro_forecast_df, trained_models) -> pd.DataFrame:
+        """Apply the 3 segment models to the portfolio-wide MEV table → KMV-ready DataFrame."""
+        df = macro_forecast_df.copy()
+        df["YEAR"] = pd.to_datetime(df["date"], dayfirst=False).dt.year
 
         rows = []
         for scen in ["Baseline", "Adverse", "Severely Adverse"]:
-            df_sc = df_client[df_client["scenario"] == scen].sort_values("YEAR")
+            df_sc = df[df["scenario"] == scen].sort_values("YEAR")
             if df_sc.empty:
                 continue
             X_fc = df_sc[FEATURES].values
@@ -467,10 +464,9 @@ class TestKmvEclEndToEnd:
                 )
         return pd.DataFrame(rows)
 
-    def test_kmv_output_structure(
-        self, credit_df, macro_forecast_df, pd_rating_df, trained_models
-    ):
-        """KMV produces expected columns and valid PD values for 3 clients."""
+    def test_kmv_output_structure(self, credit_df, segment_forecast, pd_rating_df):
+        """KMV produces expected columns and valid PD values for 3 clients sharing the segment forecast."""
+        assert segment_forecast["YEAR"].nunique() >= 2, "Need >=2 years for KMV"
         energy_clients = credit_df[credit_df["sector"] == "Energy"][
             "client_id"
         ].tolist()[:3]
@@ -488,13 +484,7 @@ class TestKmvEclEndToEnd:
             if com_info["rating"] not in pd_rating_df["Rating"].values:
                 continue
 
-            forecast_df = self._build_kmv_forecast(
-                macro_forecast_df, cid, trained_models
-            )
-            if forecast_df.empty or forecast_df["YEAR"].nunique() < 2:
-                continue
-
-            kmv_out = run_kmv(com_info, forecast_df, pd_rating_df)
+            kmv_out = run_kmv(com_info, segment_forecast, pd_rating_df)
 
             assert "DTD" in kmv_out.columns
             assert "PD" in kmv_out.columns
@@ -504,9 +494,7 @@ class TestKmvEclEndToEnd:
             assert kmv_out["PD"].between(0, 1).all(), f"PD out of [0,1] for {cid}"
             assert np.isfinite(kmv_out["DTD"]).all(), f"Non-finite DTD for {cid}"
 
-    def test_ecl_output_structure(
-        self, credit_df, macro_forecast_df, pd_rating_df, trained_models
-    ):
+    def test_ecl_output_structure(self, credit_df, segment_forecast, pd_rating_df):
         """ECL output has correct columns and ECL_Lifetime ≥ ECL_12M."""
         energy_clients = credit_df[credit_df["sector"] == "Energy"][
             "client_id"
@@ -525,13 +513,7 @@ class TestKmvEclEndToEnd:
             if com_info["rating"] not in pd_rating_df["Rating"].values:
                 continue
 
-            forecast_df = self._build_kmv_forecast(
-                macro_forecast_df, cid, trained_models
-            )
-            if forecast_df.empty or forecast_df["YEAR"].nunique() < 2:
-                continue
-
-            kmv_out = run_kmv(com_info, forecast_df, pd_rating_df)
+            kmv_out = run_kmv(com_info, segment_forecast, pd_rating_df)
             ecl_out = compute_ecl(kmv_out, exposure=1e3, r=float(row["risk_free_rate"]))
 
             assert "ECL_12M" in ecl_out.columns
@@ -545,11 +527,9 @@ class TestKmvEclEndToEnd:
                     f"ECL_Lifetime < ECL_12M for {cid}"
                 )
 
-    def test_full_end_to_end(
-        self, credit_df, macro_forecast_df, pd_rating_df, trained_models
-    ):
+    def test_full_end_to_end(self, credit_df, segment_forecast, pd_rating_df):
         """
-        Full pipeline for all Energy clients:
+        Full pipeline for all Energy clients, sharing one segment-level forecast:
           calibrate → forecast → KMV → ECL → assert output non-empty and valid.
         """
         energy_clients = credit_df[credit_df["sector"] == "Energy"][
@@ -570,14 +550,8 @@ class TestKmvEclEndToEnd:
             if com_info["rating"] not in pd_rating_df["Rating"].values:
                 continue
 
-            forecast_df = self._build_kmv_forecast(
-                macro_forecast_df, cid, trained_models
-            )
-            if forecast_df.empty or forecast_df["YEAR"].nunique() < 2:
-                continue
-
             try:
-                kmv_out = run_kmv(com_info, forecast_df, pd_rating_df)
+                kmv_out = run_kmv(com_info, segment_forecast, pd_rating_df)
                 ecl_out = compute_ecl(
                     kmv_out, exposure=1e3, r=float(row["risk_free_rate"])
                 )
@@ -588,6 +562,138 @@ class TestKmvEclEndToEnd:
         assert results, "No Energy clients processed successfully"
         print(
             f"\n  Processed {len(results)} Energy clients through full KMV+ECL pipeline"
+            " (shared segment-level forecast)"
         )
         for r in results:
             assert r["n_ecl_rows"] > 0, f"Empty ECL output for {r['client_id']}"
+
+
+# ---------------------------------------------------------------------------
+# TestMultiSegmentForecastRouting
+# ---------------------------------------------------------------------------
+
+
+class TestMultiSegmentForecastRouting:
+    """
+    Full round trip for the "run all segments, route per client" design:
+    train one ElasticNet model per (Energy) subsector, score every model against
+    the whole portfolio-wide macro_forecast_df (as run_forecast now does for a
+    segmented calibration), then route each client to its own subsector's
+    trajectory (as run_credit_analysis now does) and confirm clients in
+    different subsectors get different KMV/ECL outputs.
+    """
+
+    @pytest.fixture(scope="class")
+    def energy_subsector_forecasts(self, merged_df, macro_forecast_df):
+        """{subsector: segment_forecast_df} for every Energy subsector, mirroring
+        run_forecast's multi-segment branch (every segment scored against the same
+        MEV-only table)."""
+        df_energy = merged_df[merged_df["sector"] == "Energy"]
+        subsectors = sorted(df_energy["subsector"].unique())
+        assert len(subsectors) >= 2, "Need >=2 Energy subsectors for this test"
+
+        macro = macro_forecast_df.copy()
+        macro["YEAR"] = pd.to_datetime(macro["date"], dayfirst=False).dt.year
+
+        forecasts = {}
+        for subsector in subsectors:
+            df_seg = df_energy[df_energy["subsector"] == subsector]
+            models = {}
+            for target in TARGETS:
+                X = df_seg[FEATURES].values
+                y = df_seg[target].values
+                X_train, _, y_train, _ = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+                scaler = StandardScaler()
+                Xt = scaler.fit_transform(X_train)
+                plugin = ElasticNetPlugin()
+                plugin.fit(Xt, y_train, ElasticNetParams(alpha=0.01))
+                models[target] = (plugin, scaler)
+
+            rows = []
+            for scen in ["Baseline", "Adverse", "Severely Adverse"]:
+                df_sc = macro[macro["scenario"] == scen].sort_values("YEAR")
+                if df_sc.empty:
+                    continue
+                X_fc = df_sc[FEATURES].values
+                preds = {}
+                for target, (plugin, scaler) in models.items():
+                    X_s = scaler.transform(X_fc)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        preds[target] = plugin.predict(X_s)
+                for i, (_, row) in enumerate(df_sc.iterrows()):
+                    rows.append(
+                        {
+                            "YEAR": int(row["YEAR"]),
+                            "SCENARIO": scen,
+                            "Total_Asset": float(max(1.0, preds["total_assets"][i])),
+                            "CL": float(max(0.1, preds["total_shortterm_debts"][i])),
+                            "NonCL": float(max(0.1, preds["total_longterm_debts"][i])),
+                        }
+                    )
+            forecasts[subsector] = pd.DataFrame(rows)
+
+        return forecasts
+
+    def test_segments_produce_different_trajectories(self, energy_subsector_forecasts):
+        """Different subsectors' models must not all produce identical Total_Asset paths."""
+        totals = {
+            subsector: tuple(df.sort_values(["SCENARIO", "YEAR"])["Total_Asset"])
+            for subsector, df in energy_subsector_forecasts.items()
+        }
+        distinct = set(totals.values())
+        assert len(distinct) > 1, (
+            "All Energy subsectors produced identical forecasts — routing would be a no-op"
+        )
+
+    def test_clients_routed_to_own_subsector_get_distinct_kmv_output(
+        self, credit_df, fin_df, energy_subsector_forecasts, pd_rating_df
+    ):
+        """
+        Route each Energy client to its own subsector's forecast (replicating
+        run_credit_analysis._lookup_forecast) and confirm different subsectors'
+        clients produce different DTD/PD trajectories, not one uniform result.
+        """
+        fin_meta = fin_df[["client_id", "sector", "subsector"]].drop_duplicates(
+            subset=["client_id"]
+        )
+        energy_clients = credit_df[credit_df["sector"] == "Energy"][
+            "client_id"
+        ].tolist()
+        assert len(energy_clients) >= 2
+
+        dtd_by_client = {}
+        for cid in energy_clients:
+            credit_row = credit_df[credit_df["client_id"] == cid].iloc[0]
+            com_info = {
+                "E0": float(credit_row["market_cap"]) / 1e6,
+                "r": float(credit_row["risk_free_rate"]),
+                "volE": float(credit_row["vol_equity"]),
+                "rating": str(credit_row["rating"]),
+            }
+            if com_info["rating"] not in pd_rating_df["Rating"].values:
+                continue
+
+            fin_row = fin_meta[fin_meta["client_id"] == cid]
+            if fin_row.empty:
+                continue
+            subsector = fin_row.iloc[0]["subsector"]
+
+            # Segment routing: exact subsector match (mirrors _resolve_segment_key)
+            segment_forecast = energy_subsector_forecasts.get(subsector)
+            if segment_forecast is None or segment_forecast["YEAR"].nunique() < 2:
+                continue
+
+            kmv_out = run_kmv(com_info, segment_forecast, pd_rating_df)
+            dtd_by_client[cid] = tuple(
+                round(v, 6) for v in kmv_out.sort_values(["SCENARIO", "YEAR"])["DTD"]
+            )
+
+        assert len(dtd_by_client) >= 2, "Need >=2 routed clients to compare"
+        distinct_dtd = set(dtd_by_client.values())
+        assert len(distinct_dtd) > 1, (
+            f"All routed clients produced identical DTD trajectories: {dtd_by_client} "
+            "— segment routing is not differentiating clients"
+        )

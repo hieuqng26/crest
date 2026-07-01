@@ -25,12 +25,12 @@ const datasetOptions = computed(() =>
 
 // Sectors
 const availableSectors = ref([])
-const selectedSector = ref(null)
+const selectedSectors = ref([])
 const loadingSectors = ref(false)
 
 watch(selectedDatasetId, async (id) => {
   availableSectors.value = []
-  selectedSector.value = null
+  selectedSectors.value = []
   splitBy.value = 'subsector'
   maxSegments.value = 5
   if (!id) return
@@ -45,8 +45,8 @@ watch(selectedDatasetId, async (id) => {
   }
 })
 
-watch(selectedSector, (v) => {
-  if (!v) {
+watch(selectedSectors, (v) => {
+  if (!v || v.length === 0) {
     splitBy.value = 'subsector'
     maxSegments.value = 5
   }
@@ -102,8 +102,8 @@ const launch = async () => {
       model_config_id: selectedConfig.value,
       target_col:     targetCol.value,
       feature_cols:   featureCols.value,
-      segmentation:   selectedSector.value
-        ? { sectors: [selectedSector.value], split_by: splitBy.value, max_segments: maxSegments.value }
+      segmentation:   selectedSectors.value.length > 0
+        ? { sectors: selectedSectors.value, split_by: splitBy.value, max_segments: maxSegments.value }
         : null,
     }
     const { data } = await calibrationsAPI.create(payload)
@@ -150,25 +150,26 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
 
     <!-- 2. Sectors (shown only when dataset has a sector column) -->
     <div v-if="selectedDatasetId && (availableSectors.length > 0 || loadingSectors)" class="surface-card border-round shadow-1 p-4 mb-4">
-      <h3 class="text-base font-semibold m-0 mb-1">Sector</h3>
+      <h3 class="text-base font-semibold m-0 mb-1">Sectors</h3>
       <p class="text-xs text-color-secondary m-0 mb-3">
-        Choose a sector to segment. Leave unset to train a single model on all data.
+        Choose one or more sectors to segment. Leave empty to train a single model on all data.
       </p>
       <div v-if="loadingSectors" class="flex align-items-center gap-2 text-color-secondary text-sm">
         <i class="pi pi-spin pi-spinner" /> Loading sectors…
       </div>
-      <Dropdown
+      <MultiSelect
         v-else
-        v-model="selectedSector"
+        v-model="selectedSectors"
         :options="availableSectors"
         placeholder="No segmentation — single model"
-        showClear
+        display="chip"
         class="w-full"
+        filter
       />
     </div>
 
-    <!-- 3. Segmentation settings (shown only when a sector is selected) -->
-    <div v-if="selectedSector !== null" class="surface-card border-round shadow-1 p-4 mb-4">
+    <!-- 3. Segmentation settings (shown only when at least one sector is selected) -->
+    <div v-if="selectedSectors.length > 0" class="surface-card border-round shadow-1 p-4 mb-4">
       <h3 class="text-base font-semibold m-0 mb-1">Segmentation</h3>
       <p class="text-xs text-color-secondary m-0 mb-3">
         Each selected sector will be split by the chosen dimension. The top N groups by EAD are trained individually; the rest are collapsed into "Others".
