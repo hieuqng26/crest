@@ -259,6 +259,25 @@ code, kbd, pre, .font-mono {
   background: var(--surface-hover);
 }
 
+/* SelectButton: unselected options must not inherit the primary button's
+ * forced white text — otherwise they render as a blank box on this theme's
+ * light unselected background (see .claude/bugs/ for other theme gotchas). */
+.p-selectbutton .p-button:not(.p-highlight) {
+  background: transparent;
+  border: 1px solid var(--surface-border);
+  color: var(--text-color);
+}
+.p-selectbutton .p-button:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  border-color: var(--text-color-muted);
+  color: var(--text-color);
+}
+.p-selectbutton .p-button.p-highlight {
+  background: var(--button-primary-bg);
+  border: 1px solid var(--button-primary-bg);
+  color: var(--button-primary-text);
+}
+
 /* ─────────────────────────────────────────────────────────────────────
  * Inputs — light surface with subtle border, yellow on focus
  * ───────────────────────────────────────────────────────────────────── */

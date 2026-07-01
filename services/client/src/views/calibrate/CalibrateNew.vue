@@ -52,6 +52,50 @@ watch(selectedSectors, (v) => {
   }
 })
 
+// Per-sector overrides: keyed by sector name. `customized: false` means the
+// sector inherits splitBy/maxSegments/selectedConfig/featureCols live (read
+// at submit time, not copied in) — only `customized: true` sectors carry
+// their own values.
+const sectorOverrides = ref({})
+
+watch(selectedSectors, (sectors, prevSectors) => {
+  const prev = prevSectors || []
+  for (const sector of sectors) {
+    if (!(sector in sectorOverrides.value)) {
+      sectorOverrides.value[sector] = {
+        customized: false,
+        split_by: splitBy.value,
+        max_segments: maxSegments.value,
+        model_config_id: selectedConfig.value,
+        feature_cols: [...featureCols.value],
+      }
+    }
+  }
+  for (const sector of prev) {
+    if (!sectors.includes(sector)) {
+      delete sectorOverrides.value[sector]
+    }
+  }
+})
+
+function resetSectorOverride(sector) {
+  sectorOverrides.value[sector] = {
+    customized: false,
+    split_by: splitBy.value,
+    max_segments: maxSegments.value,
+    model_config_id: selectedConfig.value,
+    feature_cols: [...featureCols.value],
+  }
+}
+
+function sectorSummary(sector) {
+  const o = sectorOverrides.value[sector]
+  if (!o?.customized) return 'Default'
+  const cfgName = configs.value.find(c => c.id === o.model_config_id)?.name ?? '—'
+  const splitLabel = o.split_by === 'country' ? 'Country' : 'Subsector'
+  return `${splitLabel} · ${cfgName} · ${o.feature_cols.length || 'all'} features`
+}
+
 // Segmentation settings
 const splitBy = ref('subsector')
 const maxSegments = ref(5)
@@ -97,13 +141,35 @@ const launch = async () => {
   }
   submitting.value = true
   try {
+    const sectorOverridesPayload = {}
+    for (const sector of selectedSectors.value) {
+      const o = sectorOverrides.value[sector]
+      if (!o?.customized) continue
+      const diff = {}
+      if (o.split_by !== splitBy.value) diff.split_by = o.split_by
+      if (o.max_segments !== maxSegments.value) diff.max_segments = o.max_segments
+      if (o.model_config_id !== selectedConfig.value) diff.model_config_id = o.model_config_id
+      const sameFeatures =
+        o.feature_cols.length === featureCols.value.length &&
+        o.feature_cols.every(c => featureCols.value.includes(c))
+      if (!sameFeatures) diff.feature_cols = o.feature_cols
+      if (Object.keys(diff).length) sectorOverridesPayload[sector] = diff
+    }
+
     const payload = {
       dataset_id:     selectedDatasetId.value,
       model_config_id: selectedConfig.value,
       target_col:     targetCol.value,
       feature_cols:   featureCols.value,
       segmentation:   selectedSectors.value.length > 0
-        ? { sectors: selectedSectors.value, split_by: splitBy.value, max_segments: maxSegments.value }
+        ? {
+            sectors: selectedSectors.value,
+            split_by: splitBy.value,
+            max_segments: maxSegments.value,
+            ...(Object.keys(sectorOverridesPayload).length
+              ? { sector_overrides: sectorOverridesPayload }
+              : {}),
+          }
         : null,
     }
     const { data } = await calibrationsAPI.create(payload)
@@ -172,9 +238,10 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
     <div v-if="selectedSectors.length > 0" class="surface-card border-round shadow-1 p-4 mb-4">
       <h3 class="text-base font-semibold m-0 mb-1">Segmentation</h3>
       <p class="text-xs text-color-secondary m-0 mb-3">
-        Each selected sector will be split by the chosen dimension. The top N groups by EAD are trained individually; the rest are collapsed into "Others".
+        Set the defaults applied to every selected sector, then optionally customize
+        individual sectors below.
       </p>
-      <div class="flex flex-column gap-4">
+      <div class="flex flex-column gap-4 mb-4">
         <div class="flex flex-column gap-2">
           <label class="text-xs font-semibold uppercase text-color-secondary">Split By</label>
           <SelectButton
@@ -182,6 +249,7 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
             :options="[{ label: 'Subsector', value: 'subsector' }, { label: 'Country', value: 'country' }]"
             optionLabel="label"
             optionValue="value"
+            aria-labelledby="split-by-label"
           />
         </div>
         <div class="flex flex-column gap-2" style="max-width: 14rem">
@@ -189,6 +257,85 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
           <InputNumber v-model="maxSegments" :min="2" :max="20" showButtons class="w-full" />
         </div>
       </div>
+
+      <div class="text-xs font-semibold uppercase text-color-secondary mb-2">Per-Sector Overrides</div>
+      <Accordion>
+        <AccordionTab v-for="sector in selectedSectors" :key="sector">
+          <template #header>
+            <div class="flex align-items-center justify-content-between w-full pr-3">
+              <span>{{ sector }}</span>
+              <Tag
+                :value="sectorSummary(sector)"
+                :severity="sectorOverrides[sector]?.customized ? 'info' : 'secondary'"
+                class="text-xs ml-2"
+              />
+            </div>
+          </template>
+
+          <div v-if="sectorOverrides[sector]" class="flex flex-column gap-3">
+            <div class="flex align-items-center gap-2">
+              <Checkbox
+                v-model="sectorOverrides[sector].customized"
+                :binary="true"
+                :inputId="`customize-${sector}`"
+              />
+              <label :for="`customize-${sector}`" class="text-sm">Customize this sector</label>
+              <Button
+                v-if="sectorOverrides[sector].customized"
+                label="Reset to default"
+                link
+                size="small"
+                class="ml-auto text-xs"
+                @click="resetSectorOverride(sector)"
+              />
+            </div>
+
+            <div v-if="!sectorOverrides[sector].customized" class="surface-ground border-round p-3 text-xs text-color-secondary">
+              Split by <strong>{{ splitBy }}</strong>, max <strong>{{ maxSegments }}</strong> segments,
+              model <strong>{{ configs.find(c => c.id === selectedConfig)?.name ?? '—' }}</strong>,
+              <strong>{{ featureCols.length || 'all' }}</strong> feature(s).
+            </div>
+
+            <div v-else class="flex flex-column gap-4">
+              <div class="flex flex-column gap-2">
+                <label class="text-xs font-semibold uppercase text-color-secondary">Split By</label>
+                <SelectButton
+                  v-model="sectorOverrides[sector].split_by"
+                  :options="[{ label: 'Subsector', value: 'subsector' }, { label: 'Country', value: 'country' }]"
+                  optionLabel="label"
+                  optionValue="value"
+                />
+              </div>
+              <div class="flex flex-column gap-2" style="max-width: 14rem">
+                <label class="text-xs font-semibold uppercase text-color-secondary">Max Segments</label>
+                <InputNumber v-model="sectorOverrides[sector].max_segments" :min="2" :max="20" showButtons class="w-full" />
+              </div>
+              <div class="flex flex-column gap-2">
+                <label class="text-xs font-semibold uppercase text-color-secondary">Model Configuration</label>
+                <Dropdown
+                  v-model="sectorOverrides[sector].model_config_id"
+                  :options="configOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Select model configuration"
+                  class="w-full"
+                />
+              </div>
+              <div class="flex flex-column gap-2">
+                <label class="text-xs font-semibold uppercase text-color-secondary">Feature Columns</label>
+                <MultiSelect
+                  v-model="sectorOverrides[sector].feature_cols"
+                  :options="featureOptions"
+                  placeholder="All non-target columns"
+                  display="chip"
+                  class="w-full"
+                  filter
+                />
+              </div>
+            </div>
+          </div>
+        </AccordionTab>
+      </Accordion>
     </div>
 
     <!-- 4. Model configuration -->
