@@ -70,7 +70,9 @@ def create_run():
                 {"error": f"Segment '{segment_key}' has not completed successfully"}
             ), 400
     else:
-        # Standard run: segmented runs route per-row; non-segmented need top-level artifact
+        # No segment_key: segmented runs score every trained segment against the
+        # forecast dataset (one trajectory per segment); non-segmented runs need the
+        # top-level artifact.
         if not cal_run.seg_sectors_json and not cal_run.artifact_path:
             return jsonify(
                 {"error": "Calibration run has no saved model artifact"}
@@ -282,7 +284,6 @@ def get_results(run_id: str):
     )
     result = [
         {
-            "client_id": r.client_id,
             "date": r.date,
             "predicted": r.predicted,
             "meta": r.meta_json,

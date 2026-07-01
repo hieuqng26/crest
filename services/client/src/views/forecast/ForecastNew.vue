@@ -42,7 +42,7 @@ const selectedCalRun = computed(() =>
   calRuns.value.find(r => r.run_id === selectedCalRunId.value) ?? null
 )
 
-const isSegmented = computed(() => !!selectedCalRun.value?.seg_sectors_json)
+const isSegmented = computed(() => !!selectedCalRun.value?.is_segmented)
 
 const segmentOptions = computed(() =>
   segments.value
@@ -171,7 +171,9 @@ onMounted(async () => {
         <div class="form-label">
           <div class="font-medium text-sm">Segment <span class="text-color-secondary font-normal">(optional)</span></div>
           <div class="text-xs text-color-secondary mt-1">
-            Target a single segment's model. Leave blank to run all segments and route each client automatically.
+            Leave blank to score every segment's model against this dataset — credit risk
+            analysis automatically applies the matching segment to each client. Pick one
+            here only to test a single segment's model in isolation.
           </div>
         </div>
         <div class="form-input">
@@ -206,9 +208,12 @@ onMounted(async () => {
         <div class="form-label">
           <div class="font-medium text-sm">Dataset</div>
           <div class="text-xs text-color-secondary mt-1">
-            Must contain the same feature columns used during calibration.
-            Include <span class="font-mono">client_id</span> and <span class="font-mono">date</span> columns
-            so predictions can be matched to clients and years in the credit risk analysis.
+            Must contain the same feature (MEV) columns used during calibration, plus a
+            <span class="font-mono">date</span> column. No client_id is needed — each
+            client is scored with its own segment's model during credit risk analysis
+            (or the single model, if this calibration isn't segmented). A
+            <span class="font-mono">scenario</span> column lets you carry Baseline/Adverse/
+            Severely Adverse paths through in one dataset.
           </div>
         </div>
         <div class="form-input">

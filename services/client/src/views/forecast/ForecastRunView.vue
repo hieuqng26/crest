@@ -459,8 +459,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
             <template #empty>
               <div class="text-center py-5 text-color-secondary text-sm">No results yet.</div>
             </template>
-            <Column field="client_id" header="Client ID" style="min-width: 10rem" />
-            <Column field="date"      header="Date"      style="min-width: 8rem" />
+            <Column field="date" header="Date" style="min-width: 8rem" />
             <Column header="Predicted" style="min-width: 10rem">
               <template #body="{ data }">
                 <span class="font-mono">{{ data.predicted != null ? data.predicted.toFixed(4) : '—' }}</span>

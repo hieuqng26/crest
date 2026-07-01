@@ -403,3 +403,131 @@ class TestFullPipeline:
             assert not kmv[col].isnull().any(), f"NaN in kmv[{col!r}]"
         for col in ("ECL_12M", "ECL_Lifetime"):
             assert not ecl[col].isnull().any(), f"NaN in ecl[{col!r}]"
+
+
+# ---------------------------------------------------------------------------
+# TestResultsSummarySelection
+#
+# run_kmv/compute_ecl leave the final forecast year structurally degenerate:
+# kmv.py's _kmv_step hardcodes LGD=0 for the last year (no forward year to
+# project into), and since ecl.py's ECL_12M is a one-year-forward-shifted
+# calculation, that zero LGD cascades into the *second*-to-last year's ECL
+# too. project.api.credit_risk.routes.get_run_results summarises each client
+# onto one (year, scenario) snapshot for the Results tab — these tests pin
+# that it picks a non-degenerate year and keeps PD/LGD/ECL/stage consistent
+# to that same snapshot, replicating that endpoint's selection + staging
+# logic (which can't be imported directly — it's Flask-blueprint-coupled).
+# ---------------------------------------------------------------------------
+
+
+def _client_stage(latest_kmv, first_kmv, rating_to_category, n_categories):
+    """Mirrors _client_stage in project/api/credit_risk/routes.py."""
+    if not latest_kmv or not n_categories:
+        return None
+    cur_cat = rating_to_category.get(latest_kmv.get("Rating"))
+    if cur_cat is None:
+        return None
+    if cur_cat >= n_categories - 1:
+        return 3
+    base_cat = rating_to_category.get((first_kmv or {}).get("Rating"))
+    if base_cat is not None and cur_cat - base_cat >= 2:
+        return 2
+    return 1
+
+
+def _summarize_client(kmv_rows, ecl_rows, rating_to_category, n_categories):
+    """Mirrors the per-client summary block in get_run_results()."""
+    baseline_kmv = [
+        k for k in kmv_rows if str(k.get("SCENARIO", "")).lower() == "baseline"
+    ] or kmv_rows
+    baseline_ecl = [
+        e for e in ecl_rows if str(e.get("SCENARIO", "")).lower() == "baseline"
+    ] or ecl_rows
+    first_kmv = min(baseline_kmv, key=lambda k: k.get("YEAR", 0), default=None)
+
+    non_boundary_ecl = [
+        e for e in baseline_ecl if e.get("ECL_12M") or e.get("ECL_Lifetime")
+    ]
+    ecl_match = max(
+        non_boundary_ecl or baseline_ecl, key=lambda e: e.get("YEAR", 0), default=None
+    )
+
+    latest_kmv = None
+    if ecl_match:
+        latest_kmv = next(
+            (k for k in baseline_kmv if k.get("YEAR") == ecl_match.get("YEAR")), None
+        )
+    if latest_kmv is None:
+        latest_kmv = max(baseline_kmv, key=lambda k: k.get("YEAR", 0), default=None)
+
+    return {
+        "stage": _client_stage(latest_kmv, first_kmv, rating_to_category, n_categories),
+        "pd": latest_kmv.get("PD") if latest_kmv else None,
+        "lgd": latest_kmv.get("LGD") if latest_kmv else None,
+        "ecl": ecl_match.get("ECL_Lifetime") if ecl_match else None,
+        "scenario": (ecl_match or latest_kmv or {}).get("SCENARIO"),
+        "year": (ecl_match or latest_kmv or {}).get("YEAR"),
+    }
+
+
+class TestResultsSummarySelection:
+    def test_last_forecast_year_is_structurally_degenerate(self, pd_rating_df):
+        """Documents the boundary artifact this selection logic exists to route around."""
+        forecast = _contiguous_forecast("C0001", base_year=2027, n_years=5)
+        com_info = {"E0": 5e9, "volE": 0.25, "r": 0.03, "rating": "A1"}
+        kmv_df, ecl_df = _run_pipeline(com_info, forecast, pd_rating_df)
+
+        baseline_kmv = kmv_df[kmv_df["SCENARIO"] == "Baseline"].sort_values("YEAR")
+        assert baseline_kmv.iloc[-1]["LGD"] == 0, (
+            "Expected the last KMV year's LGD to be the known trailing-zero artifact "
+            "— if this changed, the selection logic below may no longer be needed"
+        )
+
+        baseline_ecl = ecl_df[ecl_df["SCENARIO"] == "Baseline"].sort_values("YEAR")
+        last_two = baseline_ecl.tail(2)
+        assert (last_two["ECL_12M"] == 0).all() and (last_two["ECL_Lifetime"] == 0).all(), (
+            "Expected the last two ECL years to be zeroed by the LGD boundary artifact"
+        )
+
+    def test_summary_skips_degenerate_years(self, pd_rating_df):
+        forecast = _contiguous_forecast("C0001", base_year=2027, n_years=5)
+        com_info = {"E0": 5e9, "volE": 0.25, "r": 0.03, "rating": "A1"}
+        kmv_df, ecl_df = _run_pipeline(com_info, forecast, pd_rating_df)
+
+        rating_to_category = dict(zip(pd_rating_df["Rating"], pd_rating_df["Category"]))
+        n_categories = len(rating_to_category)
+
+        summary = _summarize_client(
+            kmv_df.to_dict("records"),
+            ecl_df.to_dict("records"),
+            rating_to_category,
+            n_categories,
+        )
+
+        max_year = int(kmv_df["YEAR"].max())
+        assert summary["year"] < max_year, (
+            f"Summary picked the degenerate last year ({max_year}) instead of skipping it"
+        )
+        assert summary["ecl"] not in (None, 0), "ECL should not be the boundary zero"
+        assert summary["lgd"] not in (None, 0), "LGD should not be the boundary zero"
+        assert summary["pd"] is not None
+        assert summary["stage"] in (1, 2, 3)
+
+    def test_summary_falls_back_when_every_year_is_zero(self, pd_rating_df):
+        """Single-year forecast: everything is boundary-degenerate — must not crash,
+        and should fall back to the raw latest year rather than returning nothing."""
+        forecast = _contiguous_forecast("C0001", base_year=2027, n_years=2)
+        com_info = {"E0": 5e9, "volE": 0.25, "r": 0.03, "rating": "A1"}
+        kmv_df, ecl_df = _run_pipeline(com_info, forecast, pd_rating_df)
+
+        rating_to_category = dict(zip(pd_rating_df["Rating"], pd_rating_df["Category"]))
+        n_categories = len(rating_to_category)
+
+        summary = _summarize_client(
+            kmv_df.to_dict("records"),
+            ecl_df.to_dict("records"),
+            rating_to_category,
+            n_categories,
+        )
+        assert summary["year"] is not None
+        assert summary["pd"] is not None

@@ -79,7 +79,6 @@ class ForecastRunResult(db.Model):
         nullable=False,
         index=True,
     )
-    client_id = db.Column(db.String(64), nullable=True)
     date = db.Column(db.String(32), nullable=True)
     predicted = db.Column(db.Float, nullable=True)
     meta_json = db.Column(db.Text, nullable=True)

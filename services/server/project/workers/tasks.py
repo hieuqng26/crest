@@ -754,9 +754,48 @@ def run_forecast(self, run_id: str):
                     return int(v)
                 return str(v)
 
+            def _score_segment(
+                seg_artifact_path: str, seg_key: str
+            ) -> tuple[list, list]:
+                """Score one segment's model against every row of df.
+
+                Returns (predicted_list, meta_rows) where meta_rows are per-row dicts
+                of non-feature columns, each tagged with segment_key so credit risk
+                analysis can later route each client to the matching segment.
+                """
+                seg_bytes = storage.download_bytes(seg_artifact_path.split("/", 1)[-1])
+                seg_artifact = pickle.loads(seg_bytes)  # noqa: S301
+                feature_cols = seg_artifact["feature_cols"]
+                missing_cols = [c for c in feature_cols if c not in df.columns]
+                if missing_cols:
+                    raise ValueError(
+                        f"Forecast dataset missing required feature columns for "
+                        f"segment '{seg_key}': {missing_cols}"
+                    )
+                X_df = df[feature_cols].select_dtypes(include=[np.number])
+                actual_feature_cols = list(X_df.columns)
+                non_numeric = [c for c in feature_cols if c not in actual_feature_cols]
+                if non_numeric:
+                    raise ValueError(
+                        f"Feature columns are not numeric in forecast dataset: {non_numeric}"
+                    )
+                X = X_df.values
+                if seg_artifact["scaler"]:
+                    X = seg_artifact["scaler"].transform(X)
+                preds = seg_artifact["model"].predict(X)
+
+                meta_cols = [c for c in df.columns if c not in set(actual_feature_cols)]
+                meta_rows = df[meta_cols].to_dict("records")
+                for r in meta_rows:
+                    r["segment_key"] = seg_key
+
+                predicted = [
+                    float(v) if v is not None else None for v in preds.tolist()
+                ]
+                return predicted, meta_rows
+
             if segment_key:
-                # Per-segment forecast: load the specific segment artifact directly.
-                # The forecast dataset only needs MEV columns — no sector routing required.
+                # Score one named segment against the whole forecast dataset.
                 from project.db_models.calibration_models import CalibrationRunSegment
 
                 _write_forecast_progress(
@@ -771,178 +810,53 @@ def run_forecast(self, run_id: str):
                     raise ValueError(
                         f"Segment '{segment_key}' not found or has not succeeded"
                     )
-                seg_artifact_bytes = storage.download_bytes(
-                    seg.artifact_path.split("/", 1)[-1]
-                )
-                seg_artifact = pickle.loads(seg_artifact_bytes)  # noqa: S301
-                feature_cols = seg_artifact["feature_cols"]
-                missing_cols = [c for c in feature_cols if c not in df.columns]
-                if missing_cols:
-                    raise ValueError(
-                        f"Forecast dataset missing required feature columns: {missing_cols}"
-                    )
+                # Extract the scalar now — _write_forecast_progress() closes db.session,
+                # which would expire/detach this ORM object before we read its attribute.
+                seg_artifact_path = seg.artifact_path
                 _write_forecast_progress(run_id, 45, "Preparing features…")
-                X_df = df[feature_cols].select_dtypes(include=[np.number])
-                actual_feature_cols = list(X_df.columns)
-                non_numeric = [c for c in feature_cols if c not in actual_feature_cols]
-                if non_numeric:
-                    raise ValueError(
-                        f"Feature columns are not numeric in forecast dataset: {non_numeric}"
-                    )
-                X = X_df.values
-                if seg_artifact["scaler"]:
-                    X = seg_artifact["scaler"].transform(X)
-                _write_forecast_progress(run_id, 60, "Applying segment model…")
-                predicted_arr = seg_artifact["model"].predict(X)
-                predicted_list = [
-                    float(v) if v is not None else None for v in predicted_arr.tolist()
-                ]
-                meta_col_set = set(actual_feature_cols)
-                meta_cols = [c for c in df.columns if c not in meta_col_set]
+                predicted_list, meta_rows = _score_segment(
+                    seg_artifact_path, segment_key
+                )
+                _write_forecast_progress(run_id, 60, "Applied segment model")
 
             elif is_segmented:
+                # Score every trained segment against the whole (MEV-only,
+                # portfolio-wide) forecast dataset — one trajectory per segment.
+                # Credit risk analysis applies the matching segment's trajectory to
+                # each client based on that client's own sector/subsector/country.
                 from project.db_models.calibration_models import CalibrationRunSegment
 
                 _write_forecast_progress(run_id, 30, "Loading segment manifests…")
-                _raw_segments = CalibrationRunSegment.query.filter_by(
+                segments = CalibrationRunSegment.query.filter_by(
                     calibration_run_id=cal_run_id_int, status="success"
                 ).all()
-                if not _raw_segments:
+                if not segments:
                     raise ValueError(
                         "No successful segments found for this calibration run"
                     )
+                # Extract scalars now — _write_forecast_progress() closes db.session,
+                # which would expire/detach these ORM objects before we read them below.
+                segment_refs = [(s.artifact_path, s.segment_key) for s in segments]
 
-                # Extract all scalar values now, before any app_session() call
-                # expires the ORM objects (SQLAlchemy detached-instance guard).
-                segments = [
-                    {
-                        "segment_key": s.segment_key,
-                        "artifact_path": s.artifact_path,
-                        "sector": s.sector,
-                        "split_by": s.split_by,
-                        "split_value": s.split_value,
-                    }
-                    for s in _raw_segments
-                ]
-
-                # Build lookup: segment_key → segment dict
-                seg_map = {s["segment_key"]: s for s in segments}
-                # sector → split_by column name
-                sector_split = {s["sector"]: s["split_by"] for s in segments}
-
-                expected_sectors = sorted(sector_split.keys())
                 _write_forecast_progress(
                     run_id,
                     35,
-                    f"Segments loaded: {len(segments)} — sectors: {expected_sectors}",
+                    f"Scoring {len(df):,} forecast rows with {len(segment_refs)} segment "
+                    "models — credit risk applies the matching segment per client.",
                 )
-
-                # Validate that the forecast dataset has the sector column
-                if "sector" not in df.columns:
-                    raise ValueError(
-                        f"Forecast dataset is missing the 'sector' column. "
-                        f"Expected sectors: {expected_sectors}"
-                    )
-
-                ds_sectors = sorted(df["sector"].dropna().unique().tolist())
-                _write_forecast_progress(
-                    run_id, 38, f"Dataset sectors found: {ds_sectors}"
-                )
-
-                # Log expected segment keys and which split_by column is needed
-                seg_keys_preview = sorted(seg_map.keys())[:10]
-                _write_forecast_progress(
-                    run_id, 40, f"Segment keys (up to 10): {seg_keys_preview}"
-                )
-                # For each sector that appears in both the dataset and the segments,
-                # check whether the required split_by column is present.
-                for sec, split_col_name in sector_split.items():
-                    if sec in ds_sectors:
-                        if split_col_name not in df.columns:
-                            _write_forecast_progress(
-                                run_id,
-                                42,
-                                f"WARNING: sector '{sec}' needs split column "
-                                f"'{split_col_name}' which is missing from the forecast dataset",
-                            )
-                        else:
-                            sample_vals = sorted(
-                                df.loc[df["sector"] == sec, split_col_name]
-                                .dropna()
-                                .astype(str)
-                                .unique()
-                                .tolist()
-                            )[:8]
-                            _write_forecast_progress(
-                                run_id,
-                                43,
-                                f"Sector '{sec}' split column '{split_col_name}' "
-                                f"values in dataset: {sample_vals}",
-                            )
-
-                artifact_cache: dict[str, dict] = {}
-
-                def _load_seg_artifact(apath: str) -> dict:
-                    if apath not in artifact_cache:
-                        ab = storage.download_bytes(apath.split("/", 1)[-1])
-                        artifact_cache[apath] = pickle.loads(ab)  # noqa: S301
-                    return artifact_cache[apath]
-
-                # Build per-sector fallback: any segment key for that sector,
-                # used when neither the exact split_val nor "Others" matches.
-                sector_fallback: dict[str, str] = {}
-                for s in segments:
-                    if s["sector"] not in sector_fallback:
-                        sector_fallback[s["sector"]] = s["segment_key"]
-
                 predicted_list = []
                 meta_rows = []
-                skipped = 0
-
-                for _, row in df.iterrows():
-                    sector = str(row.get("sector", ""))
-                    split_col = sector_split.get(sector)
-                    if split_col:
-                        split_val = str(row.get(split_col, ""))
-                        seg_key = f"{sector}__{split_val}"
-                        if seg_key not in seg_map:
-                            seg_key = f"{sector}__Others"
-                        if seg_key not in seg_map:
-                            # Fall back to any trained segment for this sector
-                            seg_key = sector_fallback.get(sector)
-                    else:
-                        seg_key = None
-
-                    if seg_key not in seg_map:
-                        predicted_list.append(None)
-                        skipped += 1
-                    else:
-                        seg = seg_map[seg_key]
-                        art = _load_seg_artifact(seg["artifact_path"])
-                        feat_cols = art["feature_cols"]
-                        row_X = np.array(
-                            [[row.get(c, 0) for c in feat_cols]], dtype=float
-                        )
-                        if art["scaler"]:
-                            row_X = art["scaler"].transform(row_X)
-                        predicted_list.append(float(art["model"].predict(row_X)[0]))
-
-                    meta_rows.append(row)
-
-                matched = len(predicted_list) - skipped
-                if skipped:
+                for i, (seg_artifact_path, seg_key) in enumerate(segment_refs):
+                    seg_preds, seg_meta_rows = _score_segment(
+                        seg_artifact_path, seg_key
+                    )
+                    predicted_list.extend(seg_preds)
+                    meta_rows.extend(seg_meta_rows)
                     _write_forecast_progress(
                         run_id,
-                        68,
-                        f"Warning: {skipped}/{len(predicted_list)} rows had no matching segment "
-                        f"({matched} matched)",
+                        35 + round(55 * (i + 1) / len(segment_refs)),
+                        f"Scored segment '{seg_key}' ({i + 1}/{len(segment_refs)})",
                     )
-
-                meta_col_set: set[str] = set()
-                for seg in segments:
-                    art = _load_seg_artifact(seg["artifact_path"])
-                    meta_col_set.update(art["feature_cols"])
-                meta_cols = [c for c in df.columns if c not in meta_col_set]
 
             else:
                 if not artifact_path:
@@ -983,13 +897,14 @@ def run_forecast(self, run_id: str):
                 ]
                 meta_col_set = set(actual_feature_cols)
                 meta_cols = [c for c in df.columns if c not in meta_col_set]
+                meta_rows = df[meta_cols].to_dict("records")
 
-            meta_dict = {
-                col: [_coerce(v) for v in df[col].tolist()] for col in meta_cols
-            }
-            client_ids_list = meta_dict.get("client_id", [None] * len(predicted_list))
-            dates_list = meta_dict.get("date", [None] * len(predicted_list))
-            other_keys = [k for k in meta_cols if k not in ("client_id", "date")]
+            dates_list = [r.get("date") for r in meta_rows]
+            other_keys_set: set[str] = set()
+            for r in meta_rows:
+                other_keys_set.update(k for k in r if k != "date")
+            other_keys = sorted(other_keys_set)
+            meta_dict = {k: [_coerce(r.get(k)) for r in meta_rows] for k in other_keys}
 
             _write_forecast_progress(run_id, 70, "Storing predictions…")
 
@@ -998,9 +913,6 @@ def run_forecast(self, run_id: str):
                 result_rows = [
                     {
                         "forecast_run_id": r.id,
-                        "client_id": str(client_ids_list[i])
-                        if client_ids_list[i] is not None
-                        else None,
                         "date": str(dates_list[i])
                         if dates_list[i] is not None
                         else None,
@@ -1126,7 +1038,6 @@ def run_credit_analysis(self, cr_run_id: str):
                 )
 
             # Optionally load financial portfolio and merge to get country/sector/subsector
-            fin_df_indexed: dict[str, dict] = {}
             if financial_portfolio_dataset_id:
                 fin_ds_name, fin_df = _load_df_from_dataset(
                     financial_portfolio_dataset_id
@@ -1142,8 +1053,6 @@ def run_credit_analysis(self, cr_run_id: str):
                 fin_meta = fin_df[
                     ["client_id", "country", "sector", "subsector"]
                 ].drop_duplicates(subset=["client_id"])
-                # Build segment index keyed by client_id for fallback lookup
-                fin_df_indexed = fin_meta.set_index("client_id").to_dict("index")
                 # Only add columns from financial portfolio not already in credit portfolio
                 new_fin_cols = ["client_id"] + [
                     c
@@ -1165,14 +1074,30 @@ def run_credit_analysis(self, cr_run_id: str):
             _cr_log(cr_run_id, f"Loaded {n_clients} clients from dataset", progress=2)
 
             # 3. Build per-variable forecast indices from the 3 required forecast runs.
-            #    Each key maps to {client_id: {year: value}}.
+            #    idx_map[ctx][scenario][year] = predicted, where ctx is:
+            #      - a segment_key (calibration was segmented — the forecast run scored
+            #        every trained segment against the MEV-only dataset)
+            #      - None (single portfolio-wide trajectory, non-segmented calibration)
+            from project.db_models.calibration_models import (
+                CalibrationRun,
+                CalibrationRunSegment,
+            )
+
             REQUIRED_INPUTS = ("total_assets", "short_term_debts", "long_term_debts")
             missing_inputs = [k for k in REQUIRED_INPUTS if not forecast_inputs.get(k)]
             if missing_inputs:
                 raise ValueError(f"Missing required forecast inputs: {missing_inputs}")
 
-            # forecast_by_var[key][client_id][scenario][year] = predicted
-            forecast_by_var: dict[str, dict[str, dict[str, dict[int, float]]]] = {}
+            forecast_by_var: dict[
+                str, dict[str | None, dict[str, dict[int, float]]]
+            ] = {}
+            # forecast_segmentation[key] = {
+            #   "split_by": {sector: 'subsector'|'country'},
+            #   "top_values": {sector: {trained split_value, ...}},  # includes "Others"
+            #   "fallback": {sector: any segment_key for that sector},
+            # }
+            forecast_segmentation: dict[str, dict] = {}
+
             for key in REQUIRED_INPUTS:
                 fr_run_uuid = forecast_inputs[key]
                 fr = ForecastRun.query.filter_by(run_id=fr_run_uuid).first()
@@ -1189,27 +1114,70 @@ def run_credit_analysis(self, cr_run_id: str):
                     raise ValueError(
                         f"Forecast run for '{key}' ({fr_run_uuid[:8]}…) has no results"
                     )
-                idx_map: dict[str, dict[str, dict[int, float]]] = {}
+
+                seg_info = {"split_by": {}, "top_values": {}, "fallback": {}}
+                cal_run_for_key = CalibrationRun.query.get(fr.calibration_run_id)
+                if cal_run_for_key and cal_run_for_key.seg_sectors_json:
+                    cal_segments = CalibrationRunSegment.query.filter_by(
+                        calibration_run_id=cal_run_for_key.id, status="success"
+                    ).all()
+                    for s in cal_segments:
+                        seg_info["split_by"][s.sector] = s.split_by
+                        seg_info["top_values"].setdefault(s.sector, set()).add(
+                            s.split_value
+                        )
+                        seg_info["fallback"].setdefault(s.sector, s.segment_key)
+                forecast_segmentation[key] = seg_info
+
+                idx_map: dict[str | None, dict[str, dict[int, float]]] = {}
                 for row in fr_rows:
-                    cid = str(row.client_id) if row.client_id else None
-                    if cid is None:
-                        continue
                     meta = json.loads(row.meta_json or "{}")
+                    ctx = meta.get("segment_key")
                     scen = str(meta.get("scenario", "Baseline"))
                     try:
                         yr = int(pd.to_datetime(str(row.date)).year)
                     except Exception:
                         yr = int(str(row.date)[:4]) if row.date else 2024
                     if row.predicted is not None:
-                        idx_map.setdefault(cid, {}).setdefault(scen, {})[yr] = float(
+                        idx_map.setdefault(ctx, {}).setdefault(scen, {})[yr] = float(
                             row.predicted
                         )
                 forecast_by_var[key] = idx_map
+
+                ctx_desc = (
+                    f"{len(idx_map)} segments"
+                    if seg_info["split_by"]
+                    else "portfolio-wide"
+                )
                 _cr_log(
                     cr_run_id,
-                    f"Loaded '{key}' forecast from run {fr_run_uuid[:8]}…"
-                    f" ({len(idx_map)} clients)",
+                    f"Loaded '{key}' forecast from run {fr_run_uuid[:8]}… ({ctx_desc})",
                 )
+
+            def _resolve_segment_key(
+                seg_info: dict, sector: str, subsector: str, country: str
+            ) -> str | None:
+                split_by = seg_info["split_by"].get(sector)
+                if not split_by:
+                    return None
+                split_val = subsector if split_by == "subsector" else country
+                top_vals = seg_info["top_values"].get(sector, set())
+                if split_val in top_vals:
+                    return f"{sector}__{split_val}"
+                if "Others" in top_vals:
+                    return f"{sector}__Others"
+                return seg_info["fallback"].get(sector)
+
+            def _lookup_forecast(
+                key: str, sector: str, subsector: str, country: str
+            ) -> dict:
+                seg_info = forecast_segmentation[key]
+                var_map = forecast_by_var[key]
+                if seg_info["split_by"]:
+                    target = _resolve_segment_key(seg_info, sector, subsector, country)
+                    if target and target in var_map:
+                        return var_map[target]
+                return var_map.get(None, {})
 
             # 4. Load PD ratings
             pd_rating_df = _pd_rating_df(curve)
@@ -1227,22 +1195,6 @@ def run_credit_analysis(self, cr_run_id: str):
             result_batch: list[CreditRiskResult] = []
             failed_clients = 0
 
-            # Pre-build a segment → representative client_id map for the fallback lookup.
-            # Segment key: (sector, subsector, country). Used when a client is absent from
-            # the forecast results but another client in the same segment is present.
-            _segment_to_cid: dict[tuple, str] = {}
-            if fin_df_indexed:
-                for _cid, _meta in fin_df_indexed.items():
-                    _seg = (
-                        str(_meta.get("sector", "")),
-                        str(_meta.get("subsector", "")),
-                        str(_meta.get("country", "")),
-                    )
-                    if _seg not in _segment_to_cid and any(
-                        _cid in forecast_by_var[k] for k in forecast_by_var
-                    ):
-                        _segment_to_cid[_seg] = _cid
-
             for idx, row in enumerate(clients_list):
                 client_id = str(row["client_id"])
                 com_info = {
@@ -1252,36 +1204,26 @@ def run_credit_analysis(self, cr_run_id: str):
                     "rating": str(row["rating"]),
                 }
 
+                sector = str(row.get("sector") or "")
+                subsector = str(row.get("subsector") or "")
+                country = str(row.get("country") or "")
+
                 # Build forecast DataFrame from the 3 calibrated variable indices.
+                # If the calibration was segmented, route this client to its own
+                # segment's trajectory (by sector + subsector/country); otherwise use
+                # the single portfolio-wide trajectory.
                 # If forecast data contains multiple scenarios (e.g. Baseline / Adverse /
                 # Severely Adverse), use them directly; fall back to a single "Baseline"
                 # with artificial growth multipliers when the data has no scenario dimension.
-                ta_by_scen = forecast_by_var["total_assets"].get(client_id, {})
-                cl_by_scen = forecast_by_var["short_term_debts"].get(client_id, {})
-                nc_by_scen = forecast_by_var["long_term_debts"].get(client_id, {})
-
-                # If no per-client forecast and we have financial portfolio context,
-                # use a representative client from the same (sector, subsector, country) segment.
-                # Always derive the segment key from fin_df_indexed for consistent taxonomy.
-                if not (ta_by_scen or cl_by_scen or nc_by_scen) and fin_df_indexed:
-                    fin_info = fin_df_indexed.get(client_id, {})
-                    seg_key = (
-                        str(fin_info.get("sector", "")),
-                        str(fin_info.get("subsector", "")),
-                        str(fin_info.get("country", "")),
-                    )
-                    rep_cid = _segment_to_cid.get(seg_key)
-                    if rep_cid:
-                        ta_by_scen = forecast_by_var["total_assets"].get(rep_cid, {})
-                        cl_by_scen = forecast_by_var["short_term_debts"].get(
-                            rep_cid, {}
-                        )
-                        nc_by_scen = forecast_by_var["long_term_debts"].get(rep_cid, {})
-                        _cr_log(
-                            cr_run_id,
-                            f"Client {client_id}: using segment representative '{rep_cid}' "
-                            f"for forecast lookup ({seg_key})",
-                        )
+                ta_by_scen = _lookup_forecast(
+                    "total_assets", sector, subsector, country
+                )
+                cl_by_scen = _lookup_forecast(
+                    "short_term_debts", sector, subsector, country
+                )
+                nc_by_scen = _lookup_forecast(
+                    "long_term_debts", sector, subsector, country
+                )
 
                 all_scens = sorted(set(ta_by_scen) & set(cl_by_scen) & set(nc_by_scen))
                 if not all_scens:

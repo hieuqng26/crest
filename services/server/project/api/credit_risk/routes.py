@@ -388,6 +388,35 @@ def cancel_run(cr_run_id: str):
     return jsonify(result), 200
 
 
+def _client_stage(
+    latest_kmv: dict | None,
+    first_kmv: dict | None,
+    rating_to_category: dict[str, int],
+    n_categories: int,
+) -> int | None:
+    """
+    Simplified IFRS 9 staging proxy (SICR = significant increase in credit risk):
+      - Stage 3 (credit-impaired): rating falls in the worst 2 categories of the curve.
+      - Stage 2 (SICR): rating has downgraded by >=2 categories vs the first forecast year.
+      - Stage 1 (performing): otherwise.
+    This compares rating *category* (ordinal rank on the PD curve), not raw PD, since
+    categories are already ordered worst-to-best consistently across curves. It is a
+    proxy, not a full origination-vs-current-date IFRS 9 assessment — see
+    .claude/docs for the caveat before relying on it for regulatory reporting.
+    """
+    if not latest_kmv or not n_categories:
+        return None
+    cur_cat = rating_to_category.get(latest_kmv.get("Rating"))
+    if cur_cat is None:
+        return None
+    if cur_cat >= n_categories - 1:
+        return 3
+    base_cat = rating_to_category.get((first_kmv or {}).get("Rating"))
+    if base_cat is not None and cur_cat - base_cat >= 2:
+        return 2
+    return 1
+
+
 @credit_risk.get("/runs/<cr_run_id>/results")
 @require_perm("credit_risk:read")
 def get_run_results(cr_run_id: str):
@@ -404,25 +433,61 @@ def get_run_results(cr_run_id: str):
     )
     total = CreditRiskResult.query.filter_by(run_id=cr_run_id).count()
 
+    pd_rating_df = _pd_rating_df(cr.curve)
+    rating_to_category = dict(zip(pd_rating_df["Rating"], pd_rating_df["Category"]))
+    n_categories = len(rating_to_category)
+
     rows = []
     for r in results:
+        kmv_rows = json.loads(r.kmv_json or "[]")
         ecl_rows = json.loads(r.ecl_json or "[]")
-        # Summarise: grab the Baseline scenario's latest-year ECL stage
-        baseline = [
+
+        baseline_kmv = [
+            k for k in kmv_rows if str(k.get("SCENARIO", "")).lower() == "baseline"
+        ] or kmv_rows
+        baseline_ecl = [
             e for e in ecl_rows if str(e.get("SCENARIO", "")).lower() == "baseline"
+        ] or ecl_rows
+        first_kmv = min(baseline_kmv, key=lambda k: k.get("YEAR", 0), default=None)
+
+        # compute_ecl()'s final forecast year has no forward year to project into, so
+        # ECL_12M/ECL_Lifetime are structurally zero there (see ecl.py's trailing
+        # np.append(..., 0.0)) — and since ECL_12M is a one-year-forward-shifted
+        # calculation, that zero LGD cascades into the second-to-last year too. Pick
+        # the most recent year with a genuinely computed ECL so the summary isn't
+        # built from a degenerate boundary row; fall back to the raw latest year if
+        # every row is zero (e.g. a single-year forecast).
+        non_boundary_ecl = [
+            e for e in baseline_ecl if e.get("ECL_12M") or e.get("ECL_Lifetime")
         ]
-        if not baseline:
-            baseline = ecl_rows
-        latest = max(baseline, key=lambda e: e.get("YEAR", 0), default=None)
+        ecl_match = max(
+            non_boundary_ecl or baseline_ecl,
+            key=lambda e: e.get("YEAR", 0),
+            default=None,
+        )
+
+        # Read PD/LGD/Rating from the same (year, scenario) as the ECL figure so the
+        # whole summary row describes one consistent point in time.
+        latest_kmv = None
+        if ecl_match:
+            latest_kmv = next(
+                (k for k in baseline_kmv if k.get("YEAR") == ecl_match.get("YEAR")),
+                None,
+            )
+        if latest_kmv is None:
+            latest_kmv = max(baseline_kmv, key=lambda k: k.get("YEAR", 0), default=None)
+
         rows.append(
             {
                 "client_id": r.client_id,
-                "stage": latest.get("STAGE") if latest else None,
-                "pd": latest.get("PD") if latest else None,
-                "lgd": latest.get("LGD") if latest else None,
-                "ecl": latest.get("ECL") if latest else None,
-                "scenario": latest.get("SCENARIO") if latest else None,
-                "year": latest.get("YEAR") if latest else None,
+                "stage": _client_stage(
+                    latest_kmv, first_kmv, rating_to_category, n_categories
+                ),
+                "pd": latest_kmv.get("PD") if latest_kmv else None,
+                "lgd": latest_kmv.get("LGD") if latest_kmv else None,
+                "ecl": ecl_match.get("ECL_Lifetime") if ecl_match else None,
+                "scenario": (ecl_match or latest_kmv or {}).get("SCENARIO"),
+                "year": (ecl_match or latest_kmv or {}).get("YEAR"),
             }
         )
 
