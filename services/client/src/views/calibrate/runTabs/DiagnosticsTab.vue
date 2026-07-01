@@ -262,7 +262,7 @@ const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%
       </div>
     </div>
 
-    <!-- Feature importance / Coefficients + Confusion matrix -->
+    <!-- Feature importance / Coefficients + Confusion matrix (classification) / Q-Q plot (regression) -->
     <div class="charts-grid">
       <div v-if="fiData" class="chart-card">
         <div class="chart-title">Feature Importance</div>
@@ -314,6 +314,13 @@ const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%
           </div>
         </div>
       </div>
+
+      <div v-if="qqChartData" class="chart-card">
+        <div class="chart-title">Q-Q Plot <span style="font-weight:400;color:var(--text-color-secondary);font-size:0.72rem">(residuals vs normal distribution — points on the line indicate normality)</span></div>
+        <div class="chart-body">
+          <Chart type="scatter" :data="qqChartData" :options="qqOptions" style="height:100%;width:100%" />
+        </div>
+      </div>
     </div>
 
     <!-- Regression-specific plots -->
@@ -330,12 +337,6 @@ const cmPct = (v) => cmTotal.value ? ((v / cmTotal.value) * 100).toFixed(1) + '%
           <div class="chart-body">
             <Chart type="bar" :data="residHistData" :options="residHistOptions" style="height:100%;width:100%" />
           </div>
-        </div>
-      </div>
-      <div v-if="qqChartData" class="chart-card">
-        <div class="chart-title">Q-Q Plot <span style="font-weight:400;color:var(--text-color-secondary);font-size:0.72rem">(residuals vs normal distribution — points on the line indicate normality)</span></div>
-        <div class="chart-body">
-          <Chart type="scatter" :data="qqChartData" :options="qqOptions" style="height:100%;width:100%" />
         </div>
       </div>
     </template>
