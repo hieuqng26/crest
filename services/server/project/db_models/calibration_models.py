@@ -114,6 +114,9 @@ class CalibrationRun(db.Model):
     )  # JSON array of sector name strings
     seg_split_by = db.Column(db.String(16), nullable=True)  # 'subsector' | 'country'
     seg_max_segments = db.Column(db.Integer, nullable=True)
+    seg_sector_overrides_json = db.Column(
+        db.Text, nullable=True
+    )  # JSON: {sector: {split_by?, max_segments?, model_config_id?, feature_cols?}}
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
@@ -155,6 +158,9 @@ class CalibrationRun(db.Model):
             else None,
             seg_split_by=self.seg_split_by,
             seg_max_segments=self.seg_max_segments,
+            seg_sector_overrides=json.loads(self.seg_sector_overrides_json)
+            if self.seg_sector_overrides_json
+            else None,
             is_segmented=self.is_segmented,
         )
 
@@ -201,6 +207,9 @@ class CalibrationRunSegment(db.Model):
     sector = db.Column(db.String(128), nullable=False)
     split_by = db.Column(db.String(16), nullable=False)  # 'subsector' | 'country'
     split_value = db.Column(db.String(128), nullable=False)  # actual value or "Others"
+    model_config_id = db.Column(
+        db.Integer, db.ForeignKey("model_configs.id"), nullable=True
+    )
     row_count = db.Column(db.Integer, nullable=True)
     ead_total = db.Column(db.Float, nullable=True)
     artifact_path = db.Column(db.String(1024), nullable=True)
@@ -219,6 +228,7 @@ class CalibrationRunSegment(db.Model):
             sector=self.sector,
             split_by=self.split_by,
             split_value=self.split_value,
+            model_config_id=self.model_config_id,
             row_count=self.row_count,
             ead_total=self.ead_total,
             artifact_path=self.artifact_path,

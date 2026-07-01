@@ -380,13 +380,6 @@ Append to `services/server/tests/test_calibration_segmentation_overrides.py`:
 
 ```python
 class TestCreateRunSectorOverridesAPI:
-    def _login_headers(self, client, login, dataset_and_configs):
-        resp = login(dataset_and_configs["user"].email)
-        csrf = resp.headers.get("X-CSRF-TOKEN") or client.get_cookie(
-            "csrf_access_token"
-        )
-        return {"X-CSRF-TOKEN": csrf.value} if csrf else {}
-
     def test_rejects_override_for_sector_not_in_sectors_list(
         self, client, login, dataset_and_configs
     ):

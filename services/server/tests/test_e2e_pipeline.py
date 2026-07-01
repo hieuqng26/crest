@@ -697,3 +697,154 @@ class TestMultiSegmentForecastRouting:
             f"All routed clients produced identical DTD trajectories: {dtd_by_client} "
             "— segment routing is not differentiating clients"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestSectorOverrideResolution
+#
+# Mirrors _resolve_sector_training_config in project/workers/tasks.py.
+# Replicated (not imported) because tasks.py pulls in Celery/MinIO/Flask at
+# import time — same convention as _resolve_segment_key/_client_stage
+# elsewhere in this test suite.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_sector_training_config(
+    sector,
+    overrides,
+    default_split_by,
+    default_max_segments,
+    default_feature_cols,
+    default_model_config_id,
+    resolved_configs,
+):
+    o = overrides.get(sector, {})
+    split_by = o.get("split_by") or default_split_by
+    max_segments = o.get("max_segments") or default_max_segments
+    feature_cols = o["feature_cols"] if "feature_cols" in o else default_feature_cols
+    cfg_id = o.get("model_config_id") or default_model_config_id
+    algorithm, raw_params, model_family = resolved_configs[cfg_id]
+    use_search = cfg_id == default_model_config_id
+    return {
+        "split_by": split_by,
+        "max_segments": max_segments,
+        "feature_cols": feature_cols,
+        "model_config_id": cfg_id,
+        "algorithm": algorithm,
+        "raw_params": dict(raw_params),
+        "model_family": model_family,
+        "use_search": use_search,
+    }
+
+
+class TestSectorOverrideResolution:
+    RESOLVED_CONFIGS = {
+        1: ("ElasticNet", {"alpha": 1.0, "l1_ratio": 0.5}, "regression"),
+        2: ("RandomForest", {"n_estimators": 200}, "regression"),
+    }
+
+    def test_sector_with_no_override_uses_defaults(self):
+        result = _resolve_sector_training_config(
+            "Energy",
+            {},
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["split_by"] == "subsector"
+        assert result["max_segments"] == 5
+        assert result["feature_cols"] == ["inflation_rate", "notional_gdp"]
+        assert result["algorithm"] == "ElasticNet"
+        assert result["use_search"] is True
+
+    def test_sector_with_partial_override_falls_back_for_missing_keys(self):
+        overrides = {"Financials": {"max_segments": 8}}
+        result = _resolve_sector_training_config(
+            "Financials",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["max_segments"] == 8  # overridden
+        assert result["split_by"] == "subsector"  # fell back to default
+        assert result["algorithm"] == "ElasticNet"  # fell back to default
+
+    def test_sector_with_different_model_skips_hyperparameter_search(self):
+        overrides = {"Financials": {"model_config_id": 2}}
+        result = _resolve_sector_training_config(
+            "Financials",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["algorithm"] == "RandomForest"
+        assert result["raw_params"] == {"n_estimators": 200}
+        assert result["use_search"] is False, (
+            "Overriding to a different algorithm must skip hyperparameter "
+            "search — the run's search grid is tuned for the default "
+            "algorithm's parameter names"
+        )
+
+    def test_sector_with_same_model_config_id_as_default_uses_search(self):
+        overrides = {"Financials": {"model_config_id": 1}}
+        result = _resolve_sector_training_config(
+            "Financials",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["use_search"] is True
+
+    def test_sector_with_feature_cols_override(self):
+        overrides = {"Energy": {"feature_cols": ["oil_price", "coal_price"]}}
+        result = _resolve_sector_training_config(
+            "Energy",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["feature_cols"] == ["oil_price", "coal_price"]
+
+    def test_sector_with_explicit_empty_feature_cols_is_honored(self):
+        overrides = {"Energy": {"feature_cols": []}}
+        result = _resolve_sector_training_config(
+            "Energy",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["feature_cols"] == [], (
+            "A present-but-empty feature_cols override means 'use all "
+            "non-target columns' and must not fall back to the run-level "
+            "default feature subset"
+        )
+
+    def test_sector_with_no_feature_cols_key_uses_default(self):
+        overrides = {"Energy": {"max_segments": 8}}
+        result = _resolve_sector_training_config(
+            "Energy",
+            overrides,
+            default_split_by="subsector",
+            default_max_segments=5,
+            default_feature_cols=["inflation_rate", "notional_gdp"],
+            default_model_config_id=1,
+            resolved_configs=self.RESOLVED_CONFIGS,
+        )
+        assert result["feature_cols"] == ["inflation_rate", "notional_gdp"]

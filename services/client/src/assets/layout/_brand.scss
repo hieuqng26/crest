@@ -259,6 +259,29 @@ code, kbd, pre, .font-mono {
   background: var(--surface-hover);
 }
 
+/* SelectButton: rules need !important to override the broader .p-button:not(...)
+ * primary-button rule (higher chained :not() specificity). The theme's
+ * .p-highlight::before white pill must also be neutralized. */
+.p-selectbutton .p-button:not(.p-highlight) {
+  background: transparent !important;
+  border: 1px solid var(--surface-border) !important;
+  color: var(--text-color) !important;
+}
+.p-selectbutton .p-button:not(.p-highlight):hover {
+  background: var(--surface-hover) !important;
+  border-color: var(--text-color-muted) !important;
+  color: var(--text-color) !important;
+}
+.p-selectbutton .p-button.p-highlight {
+  background: var(--button-primary-bg) !important;
+  border: 1px solid var(--button-primary-bg) !important;
+  color: var(--button-primary-text) !important;
+}
+.p-selectbutton .p-button.p-highlight::before {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 /* ─────────────────────────────────────────────────────────────────────
  * Inputs — light surface with subtle border, yellow on focus
  * ───────────────────────────────────────────────────────────────────── */
