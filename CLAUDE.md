@@ -76,7 +76,7 @@ matrix: `.claude/docs/architecture.md`.
   existing one. Failed jobs keep their traceback in `error_message` — never swallow.
 - **Don't break serialised model pickles** in MinIO — version new plugins instead.
 - **Deletes are dependency-checked** (FK, no cascade): block with 409 + dep list, do
-  not auto-cascade. See `.claude/skills/delete-with-refs.md`.
+  not auto-cascade.
 - **Auth & RBAC:** cookie-based revocable sessions (httpOnly access + refresh cookies, CSRF
   tokens). All `/api/*` routes except `/api/auth/login` and `/api/ping` require
   `@jwt_required()`. Fine-grained permissions use `@require_perm("domain:action")` from
@@ -104,11 +104,14 @@ matrix: `.claude/docs/architecture.md`.
 - [conventions.md](.claude/docs/conventions.md) — Python & Vue code style / formatting.
 
 **`.claude/skills/`** — reusable procedures:
-- [add-api-domain.md](.claude/skills/add-api-domain.md),
-  [add-frontend-page.md](.claude/skills/add-frontend-page.md),
-  [add-db-migration.md](.claude/skills/add-db-migration.md),
-  [add-model-plugin.md](.claude/skills/add-model-plugin.md),
-  [delete-with-refs.md](.claude/skills/delete-with-refs.md).
+- [frontend-design](.claude/skills/frontend-design/SKILL.md) — aesthetic direction,
+  typography, and distinctive UI/visual design choices.
+- [mcp-builder](.claude/skills/mcp-builder/SKILL.md) — building MCP servers (Python
+  FastMCP / Node TypeScript SDK) that expose external APIs as tools.
+- [skill-creator](.claude/skills/skill-creator/SKILL.md) — creating, editing, and
+  evaluating Claude skills.
+- [webapp-testing](.claude/skills/webapp-testing/SKILL.md) — Playwright-based testing
+  and debugging of local web apps (screenshots, console/network logs).
 
 **`.claude/bugs/`** — fixed-bug patterns (read before touching the same area):
 - [fk-constraint-on-delete.md](.claude/bugs/fk-constraint-on-delete.md),
