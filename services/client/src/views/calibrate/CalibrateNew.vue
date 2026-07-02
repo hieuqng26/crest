@@ -230,51 +230,129 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
       </div>
     </div>
 
-    <!-- 2. Sectors (shown only when dataset has a sector column) -->
-    <div v-if="selectedDatasetId && (availableSectors.length > 0 || loadingSectors)" class="surface-card border-round shadow-1 p-4 mb-4">
-      <h3 class="text-base font-semibold m-0 mb-1">Sectors</h3>
+    <!-- 2. Sectors & Target -->
+    <div class="surface-card border-round shadow-1 p-4 mb-4">
+      <h3 class="text-base font-semibold m-0 mb-1">Sectors &amp; Target</h3>
       <p class="text-xs text-color-secondary m-0 mb-3">
-        Choose one or more sectors to segment. Leave empty to train a single model on all data.
+        Choose sectors to segment (optional) and the variable to predict — the same target
+        applies across every sector.
       </p>
-      <div v-if="loadingSectors" class="flex align-items-center gap-2 text-color-secondary text-sm">
-        <i class="pi pi-spin pi-spinner" /> Loading sectors…
-      </div>
-      <MultiSelect
-        v-else
-        v-model="selectedSectors"
-        :options="availableSectors"
-        placeholder="No segmentation — single model"
-        display="chip"
-        class="w-full"
-        filter
-      />
-    </div>
-
-    <!-- 3. Segmentation settings (shown only when at least one sector is selected) -->
-    <div v-if="selectedSectors.length > 0" class="surface-card border-round shadow-1 p-4 mb-4">
-      <h3 class="text-base font-semibold m-0 mb-1">Segmentation</h3>
-      <p class="text-xs text-color-secondary m-0 mb-3">
-        Set the defaults applied to every selected sector, then optionally customize
-        individual sectors below.
-      </p>
-      <div class="flex flex-column gap-4 mb-4">
-        <div class="flex flex-column gap-2">
-          <label class="text-xs font-semibold uppercase text-color-secondary">Split By</label>
-          <SelectButton
-            v-model="splitBy"
-            :options="[{ label: 'Subsector', value: 'subsector' }, { label: 'Country', value: 'country' }]"
-            optionLabel="label"
-            optionValue="value"
-            aria-labelledby="split-by-label"
+      <div class="flex flex-column gap-4">
+        <div v-if="selectedDatasetId && (availableSectors.length > 0 || loadingSectors)" class="flex flex-column gap-2">
+          <label class="text-xs font-semibold uppercase text-color-secondary">Sectors</label>
+          <div v-if="loadingSectors" class="flex align-items-center gap-2 text-color-secondary text-sm">
+            <i class="pi pi-spin pi-spinner" /> Loading sectors…
+          </div>
+          <MultiSelect
+            v-else
+            v-model="selectedSectors"
+            :options="availableSectors"
+            placeholder="No segmentation — single model"
+            display="chip"
+            class="w-full"
+            filter
           />
         </div>
-        <div class="flex flex-column gap-2" style="max-width: 14rem">
-          <label class="text-xs font-semibold uppercase text-color-secondary">Max Segments per Sector</label>
-          <InputNumber v-model="maxSegments" :min="2" :max="20" showButtons class="w-full" />
+
+        <div class="flex flex-column gap-2">
+          <label class="text-xs font-semibold uppercase text-color-secondary">Target Column</label>
+          <Dropdown
+            v-model="targetCol"
+            :options="columnOptions"
+            placeholder="Select target column"
+            :disabled="columnOptions.length === 0"
+            class="w-full"
+            filter
+          />
+          <span v-if="columnOptions.length === 0" class="text-xs text-color-secondary">
+            Select a dataset first.
+          </span>
         </div>
       </div>
+    </div>
 
-      <div class="text-xs font-semibold uppercase text-color-secondary mb-2">Per-Sector Overrides</div>
+    <!-- 3. Defaults: segmentation, model, features -->
+    <div class="surface-card border-round shadow-1 p-4 mb-4">
+      <h3 class="text-base font-semibold m-0 mb-1">Defaults</h3>
+      <p class="text-xs text-color-secondary m-0 mb-3">
+        Applied to every sector unless customized below.
+      </p>
+      <div class="flex flex-column gap-4">
+        <template v-if="selectedSectors.length > 0">
+          <div class="flex flex-column gap-2">
+            <label id="split-by-label" class="text-xs font-semibold uppercase text-color-secondary">Split By</label>
+            <SelectButton
+              v-model="splitBy"
+              :options="[{ label: 'Subsector', value: 'subsector' }, { label: 'Country', value: 'country' }]"
+              optionLabel="label"
+              optionValue="value"
+              aria-labelledby="split-by-label"
+            />
+          </div>
+          <div class="flex flex-column gap-2" style="max-width: 14rem">
+            <label class="text-xs font-semibold uppercase text-color-secondary">Max Segments per Sector</label>
+            <InputNumber v-model="maxSegments" :min="2" :max="20" showButtons class="w-full" />
+          </div>
+        </template>
+
+        <div class="flex flex-column gap-2">
+          <label class="text-xs font-semibold uppercase text-color-secondary">Model Configuration</label>
+          <Dropdown
+            v-model="selectedConfig"
+            :options="configOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select model configuration"
+            class="w-full"
+          />
+          <div v-if="selectedConfigMeta" class="surface-ground border-round p-3 flex flex-wrap align-items-center gap-3">
+            <div class="flex flex-column">
+              <span class="text-xs text-color-secondary uppercase">Algorithm</span>
+              <span class="font-mono text-sm">{{ selectedConfigMeta.algorithm }}</span>
+            </div>
+            <div class="flex flex-column">
+              <span class="text-xs text-color-secondary uppercase">Split</span>
+              <span class="font-mono text-sm">{{ Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }} / {{ 100 - Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }}</span>
+            </div>
+            <div v-if="selectedConfigMeta.scaler" class="flex flex-column">
+              <span class="text-xs text-color-secondary uppercase">Scaler</span>
+              <span class="font-mono text-sm">{{ selectedConfigMeta.scaler }}</span>
+            </div>
+            <Tag v-if="algorithmMeta" :value="algorithmMeta.family" severity="secondary" class="text-xs ml-auto" />
+          </div>
+          <span v-if="configOptions.length === 0" class="text-xs text-color-secondary">
+            No configurations saved yet — create one in the Models module.
+          </span>
+        </div>
+
+        <div class="flex flex-column gap-2">
+          <label class="text-xs font-semibold uppercase text-color-secondary">Feature Columns</label>
+          <MultiSelect
+            v-model="featureCols"
+            :options="featureOptions"
+            placeholder="All non-target columns"
+            :disabled="!targetCol || featureOptions.length === 0"
+            display="chip"
+            class="w-full"
+            filter
+          />
+          <span class="text-xs text-color-secondary">Leave blank to use all non-target columns.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Customized settings — per-sector overrides, collapsed by default -->
+    <Panel
+      v-if="selectedSectors.length > 0"
+      header="Customized Settings"
+      toggleable
+      :collapsed="true"
+      class="shadow-1 mb-4"
+    >
+      <p class="text-xs text-color-secondary m-0 mb-3">
+        Override segmentation, model, or feature columns for individual sectors. Anything
+        left un-customized uses the Defaults above.
+      </p>
       <Accordion>
         <AccordionTab v-for="sector in selectedSectors" :key="sector">
           <template #header>
@@ -353,95 +431,7 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
           </div>
         </AccordionTab>
       </Accordion>
-    </div>
-
-    <!-- 4. Model configuration -->
-    <div class="surface-card border-round shadow-1 mb-4 overflow-hidden">
-      <div class="p-4 border-bottom-1 surface-border">
-        <h3 class="text-base font-semibold m-0">Model Configuration</h3>
-        <p class="text-xs text-color-secondary m-0 mt-1">Pick a saved model config. Training settings (split, scaler, hyperparameter search) are configured in the config itself.</p>
-      </div>
-      <section class="p-4 flex flex-column md:flex-row md:align-items-start gap-4">
-        <div class="md:w-12rem flex-shrink-0">
-          <div class="text-xs font-semibold uppercase text-color-secondary">Configuration</div>
-          <div class="text-xs text-color-secondary mt-1">The algorithm and hyperparameters to calibrate.</div>
-        </div>
-        <div class="flex-1 flex flex-column gap-2">
-          <Dropdown
-            v-model="selectedConfig"
-            :options="configOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select model configuration"
-            class="w-full"
-          />
-          <div v-if="selectedConfigMeta" class="surface-ground border-round p-3 flex flex-wrap align-items-center gap-3">
-            <div class="flex flex-column">
-              <span class="text-xs text-color-secondary uppercase">Algorithm</span>
-              <span class="font-mono text-sm">{{ selectedConfigMeta.algorithm }}</span>
-            </div>
-            <div class="flex flex-column">
-              <span class="text-xs text-color-secondary uppercase">Split</span>
-              <span class="font-mono text-sm">{{ Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }} / {{ 100 - Math.round((selectedConfigMeta.train_split ?? 0.8) * 100) }}</span>
-            </div>
-            <div v-if="selectedConfigMeta.scaler" class="flex flex-column">
-              <span class="text-xs text-color-secondary uppercase">Scaler</span>
-              <span class="font-mono text-sm">{{ selectedConfigMeta.scaler }}</span>
-            </div>
-            <Tag v-if="algorithmMeta" :value="algorithmMeta.family" severity="secondary" class="text-xs ml-auto" />
-          </div>
-          <span v-if="configOptions.length === 0" class="text-xs text-color-secondary">
-            No configurations saved yet — create one in the Models module.
-          </span>
-        </div>
-      </section>
-    </div>
-
-    <!-- 5. Variables -->
-    <div class="surface-card border-round shadow-1 mb-4 overflow-hidden">
-      <div class="p-4 border-bottom-1 surface-border">
-        <h3 class="text-base font-semibold m-0">Variables</h3>
-        <p class="text-xs text-color-secondary m-0 mt-1">Select the target to predict and which columns to use as features.</p>
-      </div>
-      <section class="p-4 flex flex-column gap-4">
-        <div class="flex flex-column md:flex-row md:align-items-start gap-4">
-          <div class="md:w-12rem flex-shrink-0">
-            <div class="text-xs font-semibold uppercase text-color-secondary">Target Column</div>
-            <div class="text-xs text-color-secondary mt-1">The variable to predict.</div>
-          </div>
-          <div class="flex-1">
-            <Dropdown
-              v-model="targetCol"
-              :options="columnOptions"
-              placeholder="Select target column"
-              :disabled="columnOptions.length === 0"
-              class="w-full"
-              filter
-            />
-            <span v-if="columnOptions.length === 0" class="text-xs text-color-secondary mt-1 block">
-              Select a dataset first.
-            </span>
-          </div>
-        </div>
-        <div class="flex flex-column md:flex-row md:align-items-start gap-4">
-          <div class="md:w-12rem flex-shrink-0">
-            <div class="text-xs font-semibold uppercase text-color-secondary">Feature Columns</div>
-            <div class="text-xs text-color-secondary mt-1">Leave blank to use all non-target columns.</div>
-          </div>
-          <div class="flex-1">
-            <MultiSelect
-              v-model="featureCols"
-              :options="featureOptions"
-              placeholder="All non-target columns"
-              :disabled="!targetCol || featureOptions.length === 0"
-              display="chip"
-              class="w-full"
-              filter
-            />
-          </div>
-        </div>
-      </section>
-    </div>
+    </Panel>
 
     <div class="flex gap-2">
       <Button v-can="'calibration:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || submitting" @click="launch" />
