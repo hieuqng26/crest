@@ -64,6 +64,23 @@ class TestApplyFilters:
         out = table_query.apply_filters(df, {"country": {"mode": "in", "value": []}})
         assert len(out) == len(df)
 
+    def test_global_search_matches_any_column(self, df):
+        out = table_query.apply_filters(
+            df, {table_query.GLOBAL_SEARCH_KEY: {"value": "de"}}
+        )
+        # only erin's country ("DE") contains "de" case-insensitively
+        assert sorted(out["name"]) == ["erin"]
+
+    def test_global_search_combines_with_column_filter(self, df):
+        out = table_query.apply_filters(
+            df,
+            {
+                table_query.GLOBAL_SEARCH_KEY: {"value": "a"},
+                "country": {"mode": "in", "value": ["US"]},
+            },
+        )
+        assert sorted(out["name"]) == ["alice"]
+
 
 class TestApplySort:
     def test_ascending_by_default(self, df):

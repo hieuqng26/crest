@@ -1,7 +1,6 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
 import { getDataset, fetchDatasets, datasets } from './datasetsStore'
 import { fmtDate as formatDate } from '@/utils/datetime'
@@ -10,42 +9,22 @@ import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const router = useRouter()
 const route  = useRoute()
-const toast  = useToast()
 
 const backRoute = computed(() => route.query.back ? { name: route.query.back } : { name: 'datasets' })
 
 const dataset = computed(() => getDataset(props.id))
-const dataTable = ref(null)
 
-const visibleCols = ref([])
-const colOptions = computed(() => (dataset.value?.columns ?? []).map(c => ({ label: c, value: c })))
-const orderedVisible = computed(() => (dataset.value?.columns ?? []).filter(c => visibleCols.value.includes(c)))
-const tableColumns = computed(() => orderedVisible.value.map(c => ({ field: c, header: c, width: '10rem' })))
+const tableColumns = computed(() => (dataset.value?.columns ?? []).map(c => ({ field: c, header: c, width: '10rem' })))
 
 const sourceSeverity = (s) => (s === 'upload' ? 'info' : 'warning')
 const statusSeverity = (s) => ({ ready: 'success', processing: 'warning', error: 'danger' }[s] ?? 'secondary')
 
 onMounted(async () => {
   if (!dataset.value) await fetchDatasets()
-  if (dataset.value) visibleCols.value = dataset.value.columns
 })
 
 const fetchPage = (params) => datasetsAPI.rows(dataset.value.id, params)
 const fetchDistinct = (column) => datasetsAPI.rowsDistinct(dataset.value.id, column)
-
-const downloadCsv = () => {
-  const rows = dataTable.value?.rows ?? []
-  if (!dataset.value || !rows.length) return
-  const cols = orderedVisible.value
-  const header = cols.join(',')
-  const body = rows.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(',')).join('\n')
-  const blob = new Blob([header + '\n' + body], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = `${dataset.value.name}_page.csv`; a.click()
-  URL.revokeObjectURL(url)
-  toast.add({ severity: 'info', summary: 'Exported current page', life: 2000 })
-}
 </script>
 
 <template>
@@ -91,23 +70,9 @@ const downloadCsv = () => {
 
     <!-- Data table -->
     <div class="surface-card border-round shadow-1 p-4">
-      <div class="flex flex-wrap align-items-center justify-content-end gap-3 mb-3">
-        <MultiSelect
-          v-model="visibleCols"
-          :options="colOptions"
-          optionLabel="label"
-          optionValue="value"
-          display="chip"
-          placeholder="Columns"
-          class="w-18rem"
-        />
-        <Button label="Export page" icon="pi pi-download" size="small" text @click="downloadCsv" />
-      </div>
-
       <CommonDataTable
         v-if="tableColumns.length"
         :key="dataset.id"
-        ref="dataTable"
         :columns="tableColumns"
         :fetch-page="fetchPage"
         :fetch-distinct="fetchDistinct"

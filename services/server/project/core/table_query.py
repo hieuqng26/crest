@@ -13,12 +13,18 @@ import pandas as pd
 
 DISTINCT_VALUES_LIMIT = 30
 
+# Reserved filter key for a toolbar-level "search all columns" box, as opposed
+# to a per-column filter (which uses the column's own field name as the key).
+GLOBAL_SEARCH_KEY = "__search__"
+
 
 def parse_filters(raw: str | None) -> dict[str, dict]:
     """Parse the `filters` query param: JSON `{field: {mode, value}}`.
 
     `mode` is `"contains"` (case-insensitive substring, `value` a string) or
-    `"in"` (exact match against any of `value`, a list of strings).
+    `"in"` (exact match against any of `value`, a list of strings). The
+    reserved field `GLOBAL_SEARCH_KEY` matches against every column instead
+    of one.
     """
     if not raw:
         return {}
@@ -33,12 +39,26 @@ def parse_filters(raw: str | None) -> dict[str, dict]:
 
 def apply_filters(df: pd.DataFrame, filters: dict[str, dict]) -> pd.DataFrame:
     for field, spec in filters.items():
-        if field not in df.columns or not isinstance(spec, dict):
+        if not isinstance(spec, dict):
             continue
-        mode = spec.get("mode")
         value = spec.get("value")
         if value in (None, "", []):
             continue
+
+        if field == GLOBAL_SEARCH_KEY:
+            needle = str(value).lower()
+            mask = df.apply(
+                lambda row: (
+                    row.astype(str).str.lower().str.contains(needle, na=False).any()
+                ),
+                axis=1,
+            )
+            df = df[mask]
+            continue
+
+        if field not in df.columns:
+            continue
+        mode = spec.get("mode")
         col = df[field].astype(str)
         if mode == "in":
             values = value if isinstance(value, list) else [value]
