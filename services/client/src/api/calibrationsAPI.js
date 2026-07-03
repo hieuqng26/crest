@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient'
+import { toPageParams } from '@/utils/tablePaging'
 
 const calibrationsAPI = {
   list:        (params = {})  => httpClient.get('/calibrations/', { params }),
@@ -8,6 +9,18 @@ const calibrationsAPI = {
   getDiagnostics: (runId, segKey)    => httpClient.get(`/calibrations/${runId}/diagnostics`, { params: segKey ? { segment_key: segKey } : {} }),
   segments:       (runId)            => httpClient.get(`/calibrations/${runId}/segments`),
   forecast:    (runId)        => httpClient.get(`/calibrations/${runId}/forecast`),
+
+  // Paginated backtest predictions (non-segmented run) — backs ForecastTab.vue
+  backtestPredictions: (runId, pageState) =>
+    httpClient.get(`/calibrations/${runId}/backtest/predictions`, { params: toPageParams(pageState) }),
+  backtestPredictionsDistinct: (runId, column) =>
+    httpClient.get(`/calibrations/${runId}/backtest/predictions/distinct`, { params: { column } }),
+
+  // Paginated backtest predictions (per segment) — backs SegmentBacktestTab.vue
+  segmentBacktestPredictions: (runId, segKey, pageState) =>
+    httpClient.get(`/calibrations/${runId}/segments/${segKey}/backtest/predictions`, { params: toPageParams(pageState) }),
+  segmentBacktestPredictionsDistinct: (runId, segKey, column) =>
+    httpClient.get(`/calibrations/${runId}/segments/${segKey}/backtest/predictions/distinct`, { params: { column } }),
   recalibrate: (runId, body)  => httpClient.post(`/calibrations/${runId}/recalibrate`, body),
   logs:        (runId)        => httpClient.get(`/calibrations/${runId}/logs`),
   cancel:      (runId)        => httpClient.post(`/calibrations/${runId}/cancel`),

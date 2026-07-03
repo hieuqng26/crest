@@ -6,6 +6,7 @@ import { useToast } from 'primevue/usetoast'
 
 import forecastRunsAPI from '@/api/forecastRunsAPI'
 import { fmtDate, duration } from '@/utils/datetime'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 
 const route   = useRoute()
 const router  = useRouter()
@@ -70,21 +71,31 @@ const copyLogs = () => {
   )
 }
 
-// ── results ───────────────────────────────────────────────────────────────────
-const results        = ref([])
-const resultsLoading = ref(false)
-const resultsFirst   = ref(0)
+// ── results (server-paginated via CommonDataTable) ─────────────────────────────
+const resultColumns = ref([])
 
-const fetchResults = async () => {
+const tableColumns = computed(() =>
+  resultColumns.value.map((c) => {
+    if (c === 'date') return { field: 'date', header: 'Date', width: '9rem' }
+    if (c === 'predicted') {
+      return { field: 'predicted', header: 'Predicted', width: '9rem', formatter: (v) => v != null ? v.toFixed(4) : '—' }
+    }
+    return { field: c, header: c, width: '9rem' }
+  })
+)
+
+const resultsFetchPage = (params) => forecastRunsAPI.results(runId.value, params)
+const resultsFetchDistinct = (field) => forecastRunsAPI.resultsDistinct(runId.value, field)
+
+// Only the column set is probed eagerly — CommonDataTable owns row fetching/pagination.
+const probeResultColumns = async () => {
   if (!run.value || run.value.status !== 'success') return
-  resultsLoading.value = true
   try {
-    const { data } = await forecastRunsAPI.results(runId.value)
-    results.value = data.rows ?? []
+    const { data } = await forecastRunsAPI.results(runId.value, { page: 0, pageSize: 1 })
+    resultColumns.value = data.columns ?? []
   } catch (e) {
+    resultColumns.value = []
     toast.add({ severity: 'error', summary: 'Failed to load results', detail: e?.response?.data?.error ?? e.message, life: 4000 })
-  } finally {
-    resultsLoading.value = false
   }
 }
 
@@ -112,7 +123,7 @@ const startPolling = () => {
     await Promise.all([fetchRun(), fetchLogs()])
     if (!isLive()) {
       stopPolling()
-      if (run.value?.status === 'success') fetchResults()
+      if (run.value?.status === 'success') probeResultColumns()
     }
   }, 3000)
 }
@@ -130,7 +141,7 @@ onUnmounted(stopPolling)
 
 watch(runId, async () => {
   stopPolling()
-  results.value = []
+  resultColumns.value = []
   logs.value = []
   loading.value = true
   await Promise.all([fetchRun(), fetchLogs()])
@@ -152,7 +163,7 @@ async function rerunRun() {
   try {
     await forecastRunsAPI.rerun(runId.value)
     logs.value = []
-    results.value = []
+    resultColumns.value = []
     await fetchRun()
     startPolling()
     toast.add({ severity: 'info', summary: 'Rerun queued', life: 3000 })
@@ -204,21 +215,6 @@ async function doDelete() {
     actionBusy.value = false
   }
 }
-
-// ── meta columns ─────────────────────────────────────────────────────────────
-const metaCols = computed(() => {
-  if (!results.value.length) return []
-  const keys = new Set()
-  for (const r of results.value.slice(0, 20)) {
-    if (r.meta) {
-      try {
-        const m = typeof r.meta === 'string' ? JSON.parse(r.meta) : r.meta
-        Object.keys(m).forEach(k => keys.add(k))
-      } catch {}
-    }
-  }
-  return [...keys]
-})
 
 const levelColor = (level) =>
   ({ info: 'text-color-secondary', warn: 'text-yellow-700', error: 'text-red-500' }[level] ?? 'text-color-secondary')
@@ -442,40 +438,14 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
       <!-- Results tab -->
       <div v-if="activeKey === 'results'">
         <div class="panel overflow-hidden">
-          <DataTable
-            :value="results"
-            :loading="resultsLoading"
-            size="small"
-            class="results-table"
-            :paginator="results.length > 25"
-            :rows="25"
-            v-model:first="resultsFirst"
-          >
-            <template #paginatorstart>
-              <span class="text-xs text-color-secondary">
-                {{ results.length === 0 ? '0' : resultsFirst + 1 }}–{{ Math.min(resultsFirst + 25, results.length) }} of {{ results.length.toLocaleString() }}
-              </span>
-            </template>
-            <template #empty>
-              <div class="text-center py-5 text-color-secondary text-sm">No results yet.</div>
-            </template>
-            <Column field="date" header="Date" style="min-width: 8rem" />
-            <Column header="Predicted" style="min-width: 10rem">
-              <template #body="{ data }">
-                <span class="font-mono">{{ data.predicted != null ? data.predicted.toFixed(4) : '—' }}</span>
-              </template>
-            </Column>
-            <Column
-              v-for="col in metaCols"
-              :key="col"
-              :header="col"
-              style="min-width: 8rem"
-            >
-              <template #body="{ data }">
-                <span class="text-xs">{{ (() => { try { const m = typeof data.meta === 'string' ? JSON.parse(data.meta) : (data.meta ?? {}); return m[col] ?? '—' } catch { return '—' } })() }}</span>
-              </template>
-            </Column>
-          </DataTable>
+          <CommonDataTable
+            v-if="tableColumns.length"
+            :key="runId"
+            :columns="tableColumns"
+            :fetch-page="resultsFetchPage"
+            :fetch-distinct="resultsFetchDistinct"
+            empty-message="No results yet."
+          />
         </div>
       </div>
     </template>
@@ -680,24 +650,4 @@ dd { margin: 0; word-break: break-all; }
   min-height: 0;
 }
 .log-line { white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
-
-/* Results table */
-:deep(.results-table .p-datatable-thead > tr > th) {
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-size: 0.7rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 1rem;
-}
-:deep(.results-table .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.7rem 1rem;
-}
-:deep(.results-table .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
-:deep(.results-table .p-paginator) { border: 0; border-top: 1px solid var(--surface-border); background: transparent; }
 </style>

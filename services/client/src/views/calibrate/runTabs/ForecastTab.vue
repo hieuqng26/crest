@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import calibrationsAPI from '@/api/calibrationsAPI'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 
 const props = defineProps({
   run:        { type: Object, required: true },
@@ -338,49 +339,29 @@ const classStats = computed(() => {
   ]
 })
 
-// ── Prediction tables ─────────────────────────────────────────────────────────
-const regressionTableRows = computed(() =>
-  regressionPairs.value.map((d) => ({
-    date:      d.date ?? '—',
-    client_id: d.client_id ?? '—',
-    country:   d.country   ?? '—',
-    actual:    d.a?.toFixed(4) ?? '—',
-    predicted: d.p?.toFixed(4) ?? '—',
-    residual:  (d.a != null && d.p != null) ? (d.a - d.p).toFixed(4) : '—',
-  }))
-)
+// ── Prediction table (server-paginated) ────────────────────────────────────────
+// Independent of the chart's country/client filters above — the table has its
+// own per-column filters (including these) via CommonDataTable.
+const predictionColumns = computed(() => {
+  const cols = []
+  if (hasDate.value)     cols.push({ field: 'date',      header: 'Date',    width: '9rem' })
+  if (hasClientId.value) cols.push({ field: 'client_id', header: 'Client',  width: '8rem' })
+  if (hasCountry.value)  cols.push({ field: 'country',   header: 'Country', width: '8rem' })
+  if (isClassification.value) {
+    cols.push({ field: 'actual',     header: 'Actual class' })
+    cols.push({ field: 'predicted',  header: 'P(positive)', formatter: (v) => v?.toFixed(4) ?? '—' })
+    cols.push({ field: 'pred_class', header: 'Predicted class' })
+    cols.push({ field: 'correct',    header: '', width: '3rem', sortable: false, filterable: false })
+  } else {
+    cols.push({ field: 'actual',    header: 'Actual',    formatter: (v) => v?.toFixed(4) ?? '—' })
+    cols.push({ field: 'predicted', header: 'Predicted', formatter: (v) => v?.toFixed(4) ?? '—' })
+    cols.push({ field: 'residual',  header: 'Residual',  formatter: (v) => v?.toFixed(4) ?? '—' })
+  }
+  return cols
+})
 
-const classTableRows = computed(() =>
-  clsFilteredIndices.value.map((i) => {
-    const a = actual.value[i]
-    const p = predicted.value[i]
-    return {
-      index:      i + 1,
-      date:       meta.value['date']?.[i]      ?? '—',
-      client_id:  meta.value['client_id']?.[i] ?? '—',
-      country:    meta.value['country']?.[i]   ?? '—',
-      actual:     Math.round(a),
-      predicted:  p?.toFixed(4) ?? '—',
-      pred_class: p != null ? (p >= 0.5 ? 1 : 0) : '—',
-      correct:    (p != null && Math.round(a) === (p >= 0.5 ? 1 : 0)) ? '✓' : '✗',
-    }
-  })
-)
-
-const classFirst      = ref(0)
-const regressionFirst = ref(0)
-
-function downloadCsv(rows, filename) {
-  if (!rows.length) return
-  const headers = Object.keys(rows[0])
-  const lines = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
+const predictionsFetchPage = (params) => calibrationsAPI.backtestPredictions(props.run.run_id, params)
+const predictionsFetchDistinct = (field) => calibrationsAPI.backtestPredictionsDistinct(props.run.run_id, field)
 </script>
 
 <template>
@@ -465,34 +446,18 @@ function downloadCsv(rows, filename) {
 
         <!-- Table -->
         <div class="surface-card border-round p-4" style="border:1px solid var(--surface-border)">
-          <div class="flex align-items-center justify-content-between mb-3">
-            <h4 class="text-sm font-semibold m-0">
-              Predictions
-              <span class="text-xs font-normal text-color-secondary ml-2">{{ clsFilteredIndices.length.toLocaleString() }} rows</span>
-            </h4>
-            <Button label="Download CSV" icon="pi pi-download" size="small" severity="secondary" outlined
-              @click="downloadCsv(classTableRows, 'backtesting_predictions.csv')" />
-          </div>
-          <DataTable :value="classTableRows" size="small" class="forecast-table"
-            :paginator="classTableRows.length > 25" :rows="25"
-            v-model:first="classFirst">
-            <template #paginatorstart>
-              <span class="text-xs text-color-secondary">
-                {{ classTableRows.length === 0 ? '0' : classFirst + 1 }}–{{ Math.min(classFirst + 25, classTableRows.length) }} of {{ classTableRows.length.toLocaleString() }}
-              </span>
+          <h4 class="text-sm font-semibold m-0 mb-3">Predictions</h4>
+          <CommonDataTable
+            :key="run.run_id"
+            :columns="predictionColumns"
+            :fetch-page="predictionsFetchPage"
+            :fetch-distinct="predictionsFetchDistinct"
+            empty-message="No predictions available."
+          >
+            <template #cell-correct="{ data }">
+              <span :style="{ color: data.correct ? '#34d399' : '#f87171' }">{{ data.correct ? '✓' : '✗' }}</span>
             </template>
-            <Column field="date"       header="Date"            v-if="hasDate"     style="font-family:monospace;white-space:nowrap" />
-            <Column field="client_id"  header="Client"          v-if="hasClientId" style="font-family:monospace" />
-            <Column field="country"    header="Country"         v-if="hasCountry"  />
-            <Column field="actual"     header="Actual class"    style="width:8rem" />
-            <Column field="predicted"  header="P(positive)"     style="font-family:monospace" />
-            <Column field="pred_class" header="Predicted class" style="width:9rem" />
-            <Column field="correct"    header=""                style="width:3rem;text-align:center">
-              <template #body="{ data }">
-                <span :style="{ color: data.correct === '✓' ? '#34d399' : '#f87171' }">{{ data.correct }}</span>
-              </template>
-            </Column>
-          </DataTable>
+          </CommonDataTable>
         </div>
       </template>
 
@@ -557,35 +522,20 @@ function downloadCsv(rows, filename) {
 
         <!-- Predictions table -->
         <div class="surface-card border-round p-4" style="border:1px solid var(--surface-border)">
-          <div class="flex align-items-center justify-content-between mb-3">
-            <h4 class="text-sm font-semibold m-0">
-              Prediction values
-              <span class="text-xs font-normal text-color-secondary ml-2">{{ regressionPairs.length.toLocaleString() }} rows</span>
-            </h4>
-            <Button label="Download CSV" icon="pi pi-download" size="small" severity="secondary" outlined
-              @click="downloadCsv(regressionTableRows, 'backtesting_predictions.csv')" />
-          </div>
-          <DataTable :value="regressionTableRows" size="small" class="forecast-table"
-            :paginator="regressionTableRows.length > 25" :rows="25"
-            v-model:first="regressionFirst">
-            <template #paginatorstart>
-              <span class="text-xs text-color-secondary">
-                {{ regressionTableRows.length === 0 ? '0' : regressionFirst + 1 }}–{{ Math.min(regressionFirst + 25, regressionTableRows.length) }} of {{ regressionTableRows.length.toLocaleString() }}
+          <h4 class="text-sm font-semibold m-0 mb-3">Prediction values</h4>
+          <CommonDataTable
+            :key="run.run_id"
+            :columns="predictionColumns"
+            :fetch-page="predictionsFetchPage"
+            :fetch-distinct="predictionsFetchDistinct"
+            empty-message="No predictions available."
+          >
+            <template #cell-residual="{ data }">
+              <span :style="{ color: data.residual < 0 ? '#f87171' : '#34d399' }">
+                {{ data.residual?.toFixed(4) ?? '—' }}
               </span>
             </template>
-            <Column field="date"      header="Date"      v-if="hasDate"     style="font-family:monospace;white-space:nowrap" />
-            <Column field="client_id" header="Client"    v-if="hasClientId" style="font-family:monospace" />
-            <Column field="country"   header="Country"   v-if="hasCountry" />
-            <Column field="actual"    header="Actual"    style="font-family:monospace" />
-            <Column field="predicted" header="Predicted" style="font-family:monospace" />
-            <Column field="residual"  header="Residual"  style="font-family:monospace">
-              <template #body="{ data }">
-                <span :style="{ color: parseFloat(data.residual) < 0 ? '#f87171' : '#34d399' }">
-                  {{ data.residual }}
-                </span>
-              </template>
-            </Column>
-          </DataTable>
+          </CommonDataTable>
         </div>
       </template>
 
@@ -600,22 +550,4 @@ function downloadCsv(rows, filename) {
 :deep(.ctrl-drop .p-dropdown-label) { padding: 0.3rem 0.5rem; font-size: 0.78rem; white-space: nowrap; overflow: visible; }
 :deep(.ctrl-drop .p-dropdown-trigger) { width: 2rem; }
 .ctrl-btn { font-size: 0.78rem; height: 2rem; padding: 0 0.65rem; }
-
-:deep(.forecast-table .p-datatable-thead > tr > th) {
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--surface-border);
-}
-:deep(.forecast-table .p-datatable-tbody > tr > td) {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.82rem;
-  border-bottom: 1px solid var(--surface-border);
-}
-:deep(.forecast-table .p-datatable-tbody > tr:hover > td) {
-  background: var(--surface-hover);
-}
 </style>

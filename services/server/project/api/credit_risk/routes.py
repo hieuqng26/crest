@@ -6,7 +6,9 @@ import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
+from project import cache
 from project.api.auth.decorators import require_perm
+from project.core import table_query
 from project.db_models.calibration_models import Dataset
 from project.db_models.credit_models import (
     CreditRiskForecastInput,
@@ -417,21 +419,17 @@ def _client_stage(
     return 1
 
 
-@credit_risk.get("/runs/<cr_run_id>/results")
-@require_perm("credit_risk:read")
-def get_run_results(cr_run_id: str):
-    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
-    if not cr:
-        return jsonify({"error": "Run not found"}), 404
+def _run_results_df(cr: CreditRiskRun) -> pd.DataFrame:
+    cache_key = f"cr_run_results:{cr.run_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    limit = min(int(request.args.get("limit", 200)), 1000)
     results = (
-        CreditRiskResult.query.filter_by(run_id=cr_run_id)
+        CreditRiskResult.query.filter_by(run_id=cr.run_id)
         .order_by(CreditRiskResult.id)
-        .limit(limit)
         .all()
     )
-    total = CreditRiskResult.query.filter_by(run_id=cr_run_id).count()
 
     pd_rating_df = _pd_rating_df(cr.curve)
     rating_to_category = dict(zip(pd_rating_df["Rating"], pd_rating_df["Category"]))
@@ -491,7 +489,43 @@ def get_run_results(cr_run_id: str):
             }
         )
 
-    return jsonify({"rows": rows, "total": total, "showing": len(rows)}), 200
+    df = pd.DataFrame.from_records(rows)
+    cache.set(cache_key, df, timeout=60)
+    return df
+
+
+@credit_risk.get("/runs/<cr_run_id>/results")
+@require_perm("credit_risk:read")
+def get_run_results(cr_run_id: str):
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+
+    df = _run_results_df(cr)
+    page, total = table_query.query_page(
+        df,
+        page=int(request.args.get("page", 0)),
+        page_size=int(request.args.get("page_size", 50)),
+        sort_column=request.args.get("sort_column"),
+        sort_order=request.args.get("sort_order"),
+        filters=table_query.parse_filters(request.args.get("filters")),
+    )
+    rows = page.where(pd.notnull(page), None).to_dict(orient="records")
+    return jsonify({"rows": rows, "total": total}), 200
+
+
+@credit_risk.get("/runs/<cr_run_id>/results/distinct")
+@require_perm("credit_risk:read")
+def get_run_results_distinct(cr_run_id: str):
+    cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+    if not cr:
+        return jsonify({"error": "Run not found"}), 404
+    column = request.args.get("column", "")
+    if not column:
+        return jsonify({"values": [], "truncated": False}), 200
+
+    df = _run_results_df(cr)
+    return jsonify(table_query.distinct_values(df, column)), 200
 
 
 @credit_risk.delete("/runs/<cr_run_id>")

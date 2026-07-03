@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient'
+import { toPageParams } from '@/utils/tablePaging'
 
 const forecastRunsAPI = {
   list:    (params)  => httpClient.get('/forecast-runs', { params }),
@@ -10,7 +11,12 @@ const forecastRunsAPI = {
   cancel:  (runId)   => httpClient.post(`/forecast-runs/${runId}/cancel`),
   rerun:   (runId)   => httpClient.post(`/forecast-runs/${runId}/rerun`),
   logs:    (runId)   => httpClient.get(`/forecast-runs/${runId}/logs`),
-  results: (runId) => httpClient.get(`/forecast-runs/${runId}/results`),
+
+  // GET /forecast-runs/:id/results?page=&page_size=&sort_column=&sort_order=&filters=
+  results: (runId, pageState) => httpClient.get(`/forecast-runs/${runId}/results`, { params: toPageParams(pageState) }),
+
+  resultsDistinct: (runId, column) =>
+    httpClient.get(`/forecast-runs/${runId}/results/distinct`, { params: { column } }),
 }
 
 export default forecastRunsAPI

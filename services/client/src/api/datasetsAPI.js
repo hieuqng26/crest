@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient'
+import { toPageParams } from '@/utils/tablePaging'
 
 const datasetsAPI = {
   list:        ()       => httpClient.get('/datasets/'),
@@ -33,15 +34,13 @@ const datasetsAPI = {
 
   sectors: (id) => httpClient.get(`/datasets/${id}/sectors`),
 
-  // Rows endpoint — used by DatasetView lazy paginator
-  // GET /api/datasets/:id/rows?offset=&limit=&sort=&order=&filter=
-  rows: (id, { offset = 0, limit = 50, sort = null, order = null, filter = '' } = {}) => {
-    const params = { offset, limit }
-    if (sort)   params.sort  = sort
-    if (order)  params.order = order
-    if (filter) params.filter = filter
-    return httpClient.get(`/datasets/${id}/rows`, { params })
-  }
+  // Rows endpoint — used by DatasetView via CommonDataTable's fetchPage
+  // GET /api/datasets/:id/rows?page=&page_size=&sort_column=&sort_order=&filters=
+  rows: (id, pageState) => httpClient.get(`/datasets/${id}/rows`, { params: toPageParams(pageState) }),
+
+  // GET /api/datasets/:id/rows/distinct?column=
+  rowsDistinct: (id, column) =>
+    httpClient.get(`/datasets/${id}/rows/distinct`, { params: { column } })
 }
 
 export default datasetsAPI

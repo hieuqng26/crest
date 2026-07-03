@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
+import { localFetchPage } from '@/utils/tableQuery'
 
 const router = useRouter()
 const toast  = useToast()
@@ -119,6 +121,14 @@ onMounted(async () => {
 watch(selectedClient, (v) => {
   if (v && runData.value) fetchECL()
 })
+
+const eclTableColumns = [
+  { field: 'YEAR', header: 'Year', width: '7rem' },
+  { field: 'SCENARIO', header: 'Scenario', width: '9rem' },
+  { field: 'ECL_12M', header: '12M ECL', width: '9rem', formatter: (v) => fmt(v) },
+  { field: 'ECL_Lifetime', header: 'Lifetime ECL', width: '9rem', formatter: (v) => fmt(v) },
+]
+const eclFetchPage = localFetchPage(() => filteredRows.value)
 
 async function fetchECL() {
   if (!runData.value?.run_id || !selectedClient.value) return
@@ -241,19 +251,13 @@ async function fetchECL() {
           <span class="text-xs text-color-secondary">{{ filteredRows.length }} rows · client {{ selectedClient }}</span>
         </div>
         <div class="bare-table">
-          <DataTable :value="filteredRows" size="small" class="bare-table-inner" :paginator="filteredRows.length > 20" :rows="20">
-            <template #empty>
-              <div class="text-center p-4 text-color-secondary">No rows for the selected scenario.</div>
-            </template>
-            <Column field="YEAR"     header="Year"     sortable />
-            <Column field="SCENARIO" header="Scenario" sortable />
-            <Column header="12M ECL">
-              <template #body="{ data }">{{ fmt(data.ECL_12M) }}</template>
-            </Column>
-            <Column header="Lifetime ECL">
-              <template #body="{ data }">{{ fmt(data.ECL_Lifetime) }}</template>
-            </Column>
-          </DataTable>
+          <CommonDataTable
+            :key="`${selectedClient}:${selectedScenario}`"
+            :columns="eclTableColumns"
+            :fetch-page="eclFetchPage"
+            :initial-page-size="500"
+            empty-message="No rows for the selected scenario."
+          />
         </div>
       </div>
     </template>
@@ -319,22 +323,4 @@ async function fetchECL() {
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 .bare-table { margin: 0 -1.25rem -1rem; }
-:deep(.bare-table-inner .p-datatable-thead > tr > th) {
-  background: transparent;
-  color: var(--text-color-secondary);
-  font-weight: 500;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 1.25rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.85rem 1.25rem;
-  font-size: 0.875rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 </style>

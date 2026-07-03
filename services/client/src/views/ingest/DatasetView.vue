@@ -2,10 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
-import { FilterMatchMode } from 'primevue/api'
 import datasetsAPI from '@/api/datasetsAPI'
 import { getDataset, fetchDatasets, datasets } from './datasetsStore'
 import { fmtDate as formatDate } from '@/utils/datetime'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const router = useRouter()
@@ -15,61 +15,30 @@ const toast  = useToast()
 const backRoute = computed(() => route.query.back ? { name: route.query.back } : { name: 'datasets' })
 
 const dataset = computed(() => getDataset(props.id))
-
-const rows = ref([])
-const loadingRows = ref(false)
-const first = ref(0)
-const pageSize = ref(50)
-const sortField = ref(null)
-const sortOrder = ref(null)
-const filters = ref({ global: { value: '', matchMode: FilterMatchMode.CONTAINS } })
-const totalOverride = ref(null)
+const dataTable = ref(null)
 
 const visibleCols = ref([])
 const colOptions = computed(() => (dataset.value?.columns ?? []).map(c => ({ label: c, value: c })))
 const orderedVisible = computed(() => (dataset.value?.columns ?? []).filter(c => visibleCols.value.includes(c)))
-const totalRecords = computed(() => totalOverride.value ?? dataset.value?.row_count ?? 0)
+const tableColumns = computed(() => orderedVisible.value.map(c => ({ field: c, header: c, width: '10rem' })))
 
 const sourceSeverity = (s) => (s === 'upload' ? 'info' : 'warning')
 const statusSeverity = (s) => ({ ready: 'success', processing: 'warning', error: 'danger' }[s] ?? 'secondary')
 
 onMounted(async () => {
   if (!dataset.value) await fetchDatasets()
-  if (dataset.value) {
-    visibleCols.value = dataset.value.columns
-    loadRows()
-  }
+  if (dataset.value) visibleCols.value = dataset.value.columns
 })
 
-const loadRows = async () => {
-  if (!dataset.value) return
-  loadingRows.value = true
-  try {
-    const { data } = await datasetsAPI.rows(dataset.value.id, {
-      offset: first.value,
-      limit: pageSize.value,
-      sort: sortField.value,
-      order: sortOrder.value === 1 ? 'asc' : sortOrder.value === -1 ? 'desc' : null,
-      filter: filters.value.global.value?.toString().trim() || ''
-    })
-    rows.value = Array.isArray(data) ? data : (data.rows ?? [])
-    if (!Array.isArray(data) && data.total != null) totalOverride.value = data.total
-  } catch {
-    rows.value = []
-  } finally {
-    loadingRows.value = false
-  }
-}
-
-const onPage   = (e) => { first.value = e.first; pageSize.value = e.rows; loadRows() }
-const onSort   = (e) => { sortField.value = e.sortField; sortOrder.value = e.sortOrder; loadRows() }
-const onFilter = ()  => { first.value = 0; loadRows() }
+const fetchPage = (params) => datasetsAPI.rows(dataset.value.id, params)
+const fetchDistinct = (column) => datasetsAPI.rowsDistinct(dataset.value.id, column)
 
 const downloadCsv = () => {
-  if (!dataset.value) return
+  const rows = dataTable.value?.rows ?? []
+  if (!dataset.value || !rows.length) return
   const cols = orderedVisible.value
   const header = cols.join(',')
-  const body = rows.value.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(',')).join('\n')
+  const body = rows.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(',')).join('\n')
   const blob = new Blob([header + '\n' + body], { type: 'text/csv' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -103,7 +72,7 @@ const downloadCsv = () => {
       <div class="flex flex-wrap" style="gap: 0">
         <div class="flex flex-column justify-content-center p-4" style="min-width: 10rem; border-right: 1px solid var(--surface-border)">
           <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Total Rows</div>
-          <div class="text-xl font-semibold">{{ totalRecords.toLocaleString() }}</div>
+          <div class="text-xl font-semibold">{{ (dataset.row_count ?? 0).toLocaleString() }}</div>
         </div>
         <div class="flex flex-column justify-content-center p-4" style="min-width: 10rem; border-right: 1px solid var(--surface-border)">
           <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Columns</div>
@@ -122,16 +91,7 @@ const downloadCsv = () => {
 
     <!-- Data table -->
     <div class="surface-card border-round shadow-1 p-4">
-      <div class="flex flex-wrap align-items-center gap-3 mb-3">
-        <IconField class="flex-1" style="min-width: 18rem">
-          <InputIcon class="pi pi-search" />
-          <InputText
-            v-model="filters.global.value"
-            placeholder="Search rows…"
-            class="w-full"
-            @input="onFilter"
-          />
-        </IconField>
+      <div class="flex flex-wrap align-items-center justify-content-end gap-3 mb-3">
         <MultiSelect
           v-model="visibleCols"
           :options="colOptions"
@@ -144,40 +104,16 @@ const downloadCsv = () => {
         <Button label="Export page" icon="pi pi-download" size="small" text @click="downloadCsv" />
       </div>
 
-      <DataTable
-        :value="rows"
-        :lazy="true"
-        :loading="loadingRows"
-        :paginator="true"
-        :rows="pageSize"
-        :first="first"
-        :totalRecords="totalRecords"
-        :rowsPerPageOptions="[10, 25, 50, 100, 250]"
-        :sortField="sortField"
-        :sortOrder="sortOrder"
-        size="small"
-        scrollable
-        scrollHeight="60vh"
-        @page="onPage"
-        @sort="onSort"
-        currentPageReportTemplate="{first}–{last} of {totalRecords}"
-        :paginatorTemplate="'FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink RowsPerPageDropdown'"
-        :alwaysShowPaginator="true"
-      >
-        <Column field="__idx" header="#" style="width:5rem" frozen />
-        <Column
-          v-for="col in orderedVisible"
-          :key="col"
-          :field="col"
-          :header="col"
-          sortable
-          style="min-width: 10rem"
-        >
-          <template #body="{ data }">
-            <span class="font-mono text-sm">{{ data[col] }}</span>
-          </template>
-        </Column>
-      </DataTable>
+      <CommonDataTable
+        v-if="tableColumns.length"
+        :key="dataset.id"
+        ref="dataTable"
+        :columns="tableColumns"
+        :fetch-page="fetchPage"
+        :fetch-distinct="fetchDistinct"
+        scroll-height="60vh"
+        empty-message="No rows found."
+      />
     </div>
   </div>
 

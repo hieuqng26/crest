@@ -3,11 +3,13 @@ import math
 import uuid
 from datetime import datetime, timezone
 
+import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
 from project.api.auth.decorators import require_perm
+from project.core import table_query
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
@@ -347,6 +349,144 @@ def get_forecast(run_id):
         d["forecast_json"] = _load_forecast_data(f)
         result.append(d)
     return jsonify(result), 200
+
+
+def _predictions_df(
+    actual: list, predicted: list, meta: dict, model_family: str | None
+):
+    """Build a predictions DataFrame (actual/predicted/meta columns, plus a
+    derived residual or pred_class+correct column) from parallel arrays."""
+    records = {"actual": actual, "predicted": predicted, **meta}
+    df = pd.DataFrame(records)
+    if df.empty:
+        return df
+    df = df[df["actual"].notna() & df["predicted"].notna()].reset_index(drop=True)
+    if model_family == "classification":
+        df["pred_class"] = (df["predicted"] >= 0.5).astype(int)
+        df["correct"] = df["actual"].round().astype(int) == df["pred_class"]
+    else:
+        df["residual"] = df["actual"] - df["predicted"]
+    return df
+
+
+def _run_predictions_df(run: CalibrationRun) -> pd.DataFrame:
+    """Predictions for a non-segmented run, from Forecast/ForecastResult rows."""
+    from project.workers.tasks import _load_forecast_data
+
+    forecast = (
+        Forecast.query.filter_by(calibration_run_id=run.id)
+        .order_by(Forecast.created_at)
+        .first()
+    )
+    if not forecast:
+        return pd.DataFrame()
+    data = _load_forecast_data(forecast)
+    family = run.model_config.family if run.model_config else None
+    return _predictions_df(
+        data.get("actual", []), data.get("predicted", []), data.get("meta", {}), family
+    )
+
+
+def _segment_predictions_df(
+    run: CalibrationRun, segment_key: str
+) -> pd.DataFrame | None:
+    """Predictions for one segment, from CalibrationRunSegment.val_metrics_json's
+    val_obs. Returns None if the segment doesn't exist. Older runs (predating
+    val_obs) fall back to reconstructing actual/predicted from fitted+residuals
+    (regression only — mirrors SegmentBacktestTab.vue's client-side fallback)."""
+    seg = CalibrationRunSegment.query.filter_by(
+        calibration_run_id=run.id, segment_key=segment_key
+    ).first()
+    if not seg:
+        return None
+    diag = json.loads(seg.val_metrics_json or "{}")
+    family = run.model_config.family if run.model_config else None
+
+    val_obs = diag.get("val_obs")
+    if val_obs:
+        return _predictions_df(
+            val_obs.get("actual", []),
+            val_obs.get("predicted", []),
+            val_obs.get("meta", {}),
+            family,
+        )
+
+    fitted = diag.get("fitted")
+    if fitted and family != "classification":
+        residuals = diag.get("residuals", [])
+        actual = [
+            f + (residuals[i] if i < len(residuals) else 0)
+            for i, f in enumerate(fitted)
+        ]
+        return _predictions_df(actual, fitted, {}, family)
+
+    return pd.DataFrame()
+
+
+def _predictions_page_response(df: pd.DataFrame):
+    page, total = table_query.query_page(
+        df,
+        page=int(request.args.get("page", 0)),
+        page_size=int(request.args.get("page_size", 50)),
+        sort_column=request.args.get("sort_column"),
+        sort_order=request.args.get("sort_order"),
+        filters=table_query.parse_filters(request.args.get("filters")),
+    )
+    rows = page.where(pd.notnull(page), None).to_dict(orient="records")
+    return jsonify({"rows": rows, "total": total, "columns": list(df.columns)}), 200
+
+
+def _predictions_distinct_response(df: pd.DataFrame):
+    column = request.args.get("column", "")
+    if not column:
+        return jsonify({"values": [], "truncated": False}), 200
+    return jsonify(table_query.distinct_values(df, column)), 200
+
+
+@calibrations.get("/<run_id>/backtest/predictions")
+@require_perm("calibration:read")
+def get_backtest_predictions(run_id):
+    """Paginated per-observation backtest predictions for a non-segmented run
+    (backs ForecastTab.vue)."""
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    return _predictions_page_response(_run_predictions_df(run))
+
+
+@calibrations.get("/<run_id>/backtest/predictions/distinct")
+@require_perm("calibration:read")
+def get_backtest_predictions_distinct(run_id):
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    return _predictions_distinct_response(_run_predictions_df(run))
+
+
+@calibrations.get("/<run_id>/segments/<segment_key>/backtest/predictions")
+@require_perm("calibration:read")
+def get_segment_backtest_predictions(run_id, segment_key):
+    """Paginated per-observation validation predictions for one segment
+    (backs SegmentBacktestTab.vue)."""
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    df = _segment_predictions_df(run, segment_key)
+    if df is None:
+        return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
+    return _predictions_page_response(df)
+
+
+@calibrations.get("/<run_id>/segments/<segment_key>/backtest/predictions/distinct")
+@require_perm("calibration:read")
+def get_segment_backtest_predictions_distinct(run_id, segment_key):
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    df = _segment_predictions_df(run, segment_key)
+    if df is None:
+        return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
+    return _predictions_distinct_response(df)
 
 
 @calibrations.post("/<run_id>/cancel")

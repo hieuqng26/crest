@@ -6,6 +6,7 @@ import { useToast } from 'primevue/usetoast'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
 import { fmtDate, duration } from '@/utils/datetime'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 
 const route   = useRoute()
 const router  = useRouter()
@@ -27,24 +28,19 @@ const fetchRun = async () => {
   }
 }
 
-// ── results ───────────────────────────────────────────────────────────────────
-const results        = ref([])
-const resultsTotal   = ref(0)
-const resultsLoading = ref(false)
+// ── results (server-paginated via CommonDataTable) ─────────────────────────────
+const resultColumns = [
+  { field: 'client_id', header: 'Client ID', width: '9rem' },
+  { field: 'scenario',  header: 'Scenario',  width: '9rem' },
+  { field: 'year',      header: 'Year',      width: '6rem' },
+  { field: 'stage',     header: 'Stage',     width: '5rem' },
+  { field: 'pd',        header: 'PD',        width: '7rem', formatter: (v) => v != null ? (v * 100).toFixed(3) + '%' : '—' },
+  { field: 'lgd',       header: 'LGD',       width: '7rem', formatter: (v) => v != null ? (v * 100).toFixed(1) + '%' : '—' },
+  { field: 'ecl',       header: 'ECL',       width: '9rem', formatter: (v) => v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—' },
+]
 
-const fetchResults = async () => {
-  if (!run.value || run.value.status !== 'success') return
-  resultsLoading.value = true
-  try {
-    const { data } = await creditRiskAPI.getRunResults(runId.value, 200)
-    results.value      = data.rows ?? []
-    resultsTotal.value = data.total ?? 0
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Failed to load results', detail: e?.response?.data?.error ?? e.message, life: 4000 })
-  } finally {
-    resultsLoading.value = false
-  }
-}
+const resultsFetchPage = (params) => creditRiskAPI.getRunResults(runId.value, params)
+const resultsFetchDistinct = (field) => creditRiskAPI.getRunResultsDistinct(runId.value, field)
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
 const TABS = [
@@ -124,14 +120,13 @@ onMounted(async () => {
   await Promise.all([fetchRun(), fetchLogs()])
   loading.value = false
   if (isLive()) startPolling()
-  else if (run.value?.status === 'success') fetchResults()
 })
 
 onUnmounted(stopPolling)
 
 watch(() => run.value?.status, (s) => {
   if (s === 'running' || s === 'queued') startPolling()
-  else { stopPolling(); fetchLogs(); if (s === 'success') fetchResults() }
+  else { stopPolling(); fetchLogs() }
 })
 
 // ── actions ───────────────────────────────────────────────────────────────────
@@ -456,51 +451,24 @@ const levelColor = (level) =>
       <!-- Results tab -->
       <div v-if="activeKey === 'results'">
         <div class="panel overflow-hidden">
-          <div class="panel-section-head flex align-items-center justify-content-between">
+          <div class="panel-section-head">
             <div class="text-xs uppercase font-semibold" style="letter-spacing: 0.06em">ECL Summary per Client</div>
-            <div v-if="resultsTotal > 200" class="text-xs text-color-secondary">
-              Showing first 200 of {{ resultsTotal.toLocaleString() }} clients
-            </div>
           </div>
-          <DataTable
-            :value="results"
-            :loading="resultsLoading"
-            size="small"
-            class="results-table"
-            :paginator="results.length > 25"
-            :rows="25"
+          <CommonDataTable
+            :key="runId"
+            :columns="resultColumns"
+            :fetch-page="resultsFetchPage"
+            :fetch-distinct="resultsFetchDistinct"
+            empty-message="No results yet."
           >
-            <template #empty>
-              <div class="text-center py-5 text-color-secondary text-sm">No results yet.</div>
+            <template #cell-stage="{ data }">
+              <Tag v-if="data.stage != null"
+                :value="`Stage ${data.stage}`"
+                :severity="{ 1: 'success', 2: 'warning', 3: 'danger' }[data.stage] ?? 'secondary'"
+              />
+              <span v-else class="text-color-secondary">—</span>
             </template>
-            <Column field="client_id" header="Client ID"  style="min-width: 9rem" />
-            <Column field="scenario"  header="Scenario"   style="min-width: 9rem" />
-            <Column field="year"      header="Year"        style="min-width: 6rem" />
-            <Column field="stage"     header="Stage"       style="min-width: 5rem">
-              <template #body="{ data }">
-                <Tag v-if="data.stage != null"
-                  :value="`Stage ${data.stage}`"
-                  :severity="{ 1: 'success', 2: 'warning', 3: 'danger' }[data.stage] ?? 'secondary'"
-                />
-                <span v-else class="text-color-secondary">—</span>
-              </template>
-            </Column>
-            <Column header="PD" style="min-width: 7rem">
-              <template #body="{ data }">
-                <span class="font-mono text-xs">{{ data.pd != null ? (data.pd * 100).toFixed(3) + '%' : '—' }}</span>
-              </template>
-            </Column>
-            <Column header="LGD" style="min-width: 7rem">
-              <template #body="{ data }">
-                <span class="font-mono text-xs">{{ data.lgd != null ? (data.lgd * 100).toFixed(1) + '%' : '—' }}</span>
-              </template>
-            </Column>
-            <Column header="ECL" style="min-width: 9rem">
-              <template #body="{ data }">
-                <span class="font-mono text-xs font-semibold">{{ data.ecl != null ? data.ecl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—' }}</span>
-              </template>
-            </Column>
-          </DataTable>
+          </CommonDataTable>
         </div>
       </div>
     </template>
@@ -640,26 +608,6 @@ const levelColor = (level) =>
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .tab-btn.is-disabled { opacity: 0.4; cursor: not-allowed; }
-
-/* Results table */
-:deep(.results-table .p-datatable-thead > tr > th) {
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-size: 0.7rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 1rem;
-}
-:deep(.results-table .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.7rem 1rem;
-}
-:deep(.results-table .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
-:deep(.results-table .p-paginator) { border: 0; border-top: 1px solid var(--surface-border); background: transparent; }
 
 .section-divider {
   margin: 1rem 0;

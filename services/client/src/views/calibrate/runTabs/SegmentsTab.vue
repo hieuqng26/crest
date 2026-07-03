@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import calibrationsAPI from '@/api/calibrationsAPI'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
+import { localFetchPage } from '@/utils/tableQuery'
 
 const props = defineProps({ run: { type: Object, required: true } })
 const emit = defineEmits(['select-segment'])
@@ -17,6 +19,18 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+const segmentColumns = [
+  { field: 'sector', header: 'Sector', width: '10rem' },
+  { field: 'split_by', header: 'Split By', width: '8rem' },
+  { field: 'split_value', header: 'Split Value', width: '10rem' },
+  { field: 'row_count', header: 'Rows', width: '6rem', formatter: (v) => v?.toLocaleString() ?? '—' },
+  { field: 'ead_total', header: 'EAD Total', width: '8rem', formatter: (v) => fmtEad(v) },
+  { field: 'primary_metric', header: 'Primary Metric', width: '10rem', sortable: false, filterable: false },
+  { field: 'status', header: 'Status', width: '7rem' },
+  { field: 'actions', header: '', width: '5rem', sortable: false, filterable: false }
+]
+const segmentsFetchPage = localFetchPage(() => segments.value)
 
 const STATUS_SEV = { success: 'success', failed: 'danger', skipped: 'warning' }
 
@@ -50,54 +64,40 @@ const fmtEad = (v) => {
       <p class="m-0 text-color-secondary">No segment results yet.</p>
     </div>
 
-    <DataTable
+    <CommonDataTable
       v-else
-      :value="segments"
-      sortField="ead_total"
-      :sortOrder="-1"
-      responsiveLayout="scroll"
-      class="p-datatable-sm"
+      :key="run.run_id"
+      :columns="segmentColumns"
+      :fetch-page="segmentsFetchPage"
+      :initial-page-size="500"
+      initial-sort-field="ead_total"
+      :initial-sort-order="-1"
+      empty-message="No segment results yet."
     >
-      <Column field="sector" header="Sector" sortable />
-      <Column field="split_by" header="Split By" style="width: 8rem">
-        <template #body="{ data }">
-          <Tag :value="data.split_by" severity="secondary" />
-        </template>
-      </Column>
-      <Column field="split_value" header="Split Value" sortable />
-      <Column field="row_count" header="Rows" sortable style="width: 6rem">
-        <template #body="{ data }">{{ data.row_count.toLocaleString() }}</template>
-      </Column>
-      <Column field="ead_total" header="EAD Total" sortable style="width: 8rem">
-        <template #body="{ data }">{{ fmtEad(data.ead_total) }}</template>
-      </Column>
-      <Column header="Primary Metric" style="width: 10rem">
-        <template #body="{ data }">
-          <span v-if="primaryMetric(data)" class="font-mono text-sm">
-            {{ primaryMetric(data).label }}: {{ primaryMetric(data).value.toFixed(3) }}
-          </span>
-          <span v-else class="text-color-secondary text-xs">—</span>
-        </template>
-      </Column>
-      <Column field="status" header="Status" sortable style="width: 7rem">
-        <template #body="{ data }">
-          <Tag :value="data.status" :severity="STATUS_SEV[data.status] ?? 'secondary'" />
-        </template>
-      </Column>
-      <Column header="" style="width: 5rem">
-        <template #body="{ data }">
-          <Button
-            v-if="data.status === 'success'"
-            icon="pi pi-chart-bar"
-            text
-            rounded
-            size="small"
-            v-tooltip.top="'View diagnostics'"
-            @click="emit('select-segment', data.segment_key)"
-          />
-        </template>
-      </Column>
-    </DataTable>
+      <template #cell-split_by="{ data }">
+        <Tag :value="data.split_by" severity="secondary" />
+      </template>
+      <template #cell-primary_metric="{ data }">
+        <span v-if="primaryMetric(data)" class="font-mono text-sm">
+          {{ primaryMetric(data).label }}: {{ primaryMetric(data).value.toFixed(3) }}
+        </span>
+        <span v-else class="text-color-secondary text-xs">—</span>
+      </template>
+      <template #cell-status="{ data }">
+        <Tag :value="data.status" :severity="STATUS_SEV[data.status] ?? 'secondary'" />
+      </template>
+      <template #cell-actions="{ data }">
+        <Button
+          v-if="data.status === 'success'"
+          icon="pi pi-chart-bar"
+          text
+          rounded
+          size="small"
+          v-tooltip.top="'View diagnostics'"
+          @click="emit('select-segment', data.segment_key)"
+        />
+      </template>
+    </CommonDataTable>
   </div>
 </template>
 
