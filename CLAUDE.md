@@ -116,6 +116,7 @@ matrix: `.claude/docs/architecture.md`.
 **`.claude/bugs/`** — fixed-bug patterns (read before touching the same area):
 - [fk-constraint-on-delete.md](.claude/bugs/fk-constraint-on-delete.md),
   [vmodel-ternary-compile-error.md](.claude/bugs/vmodel-ternary-compile-error.md),
-  [detached-instance-in-celery-tasks.md](.claude/bugs/detached-instance-in-celery-tasks.md)
+  [detached-instance-in-celery-tasks.md](.claude/bugs/detached-instance-in-celery-tasks.md),
+  [primevue-multiselect-filter-matchmode.md](.claude/bugs/primevue-multiselect-filter-matchmode.md)
 
 > When you fix a bug, add a pattern file to `.claude/bugs/`. When you learn a reusable procedure, add it to `.claude/skills/`. Keep CLAUDE.md a pure index.

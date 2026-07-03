@@ -1,4 +1,5 @@
 import { httpClient } from './httpClient'
+import { toPageParams } from '@/utils/tablePaging'
 
 const creditRiskAPI = {
   pdRatings: (curve = 'moodys') =>
@@ -21,7 +22,10 @@ const creditRiskAPI = {
   getRun:          (runId)         => httpClient.get(`/credit-risk/runs/${runId}`),
   getClientResult: (runId, cId)    => httpClient.get(`/credit-risk/runs/${runId}/client/${cId}`),
   getRunLogs:      (runId)         => httpClient.get(`/credit-risk/runs/${runId}/logs`),
-  getRunResults:   (runId, limit = 200) => httpClient.get(`/credit-risk/runs/${runId}/results`, { params: { limit } }),
+  // GET /credit-risk/runs/:id/results?page=&page_size=&sort_column=&sort_order=&filters=
+  getRunResults: (runId, pageState) => httpClient.get(`/credit-risk/runs/${runId}/results`, { params: toPageParams(pageState) }),
+  getRunResultsDistinct: (runId, column) =>
+    httpClient.get(`/credit-risk/runs/${runId}/results/distinct`, { params: { column } }),
   setActiveRun:    (runId)         => httpClient.put(`/credit-risk/runs/${runId}/active`),
   cancelRun:       (runId)         => httpClient.post(`/credit-risk/runs/${runId}/cancel`),
   rerunRun:        (runId)         => httpClient.post(`/credit-risk/runs/${runId}/rerun`),

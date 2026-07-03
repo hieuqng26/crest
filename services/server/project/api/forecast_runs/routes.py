@@ -1,10 +1,13 @@
+import json
 import uuid
 from datetime import datetime, timezone
 
+import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project.api.auth.decorators import require_perm
+from project.core import table_query
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunSegment,
@@ -270,6 +273,22 @@ def rerun_run(run_id: str):
     return jsonify({"ok": True}), 202
 
 
+def _forecast_results_df(fr: ForecastRun) -> pd.DataFrame:
+    rows = (
+        ForecastRunResult.query.filter_by(forecast_run_id=fr.id)
+        .order_by(ForecastRunResult.id)
+        .all()
+    )
+    records = []
+    for r in rows:
+        try:
+            meta = json.loads(r.meta_json) if r.meta_json else {}
+        except (TypeError, ValueError):
+            meta = {}
+        records.append({"date": r.date, "predicted": r.predicted, **meta})
+    return pd.DataFrame.from_records(records)
+
+
 @forecast_runs.get("/<run_id>/results")
 @require_perm("forecast:read")
 def get_results(run_id: str):
@@ -277,17 +296,29 @@ def get_results(run_id: str):
     if not fr:
         return jsonify({"error": "Not found"}), 404
 
-    rows = (
-        ForecastRunResult.query.filter_by(forecast_run_id=fr.id)
-        .order_by(ForecastRunResult.id)
-        .all()
+    df = _forecast_results_df(fr)
+    page, total = table_query.query_page(
+        df,
+        page=int(request.args.get("page", 0)),
+        page_size=int(request.args.get("page_size", 50)),
+        sort_column=request.args.get("sort_column"),
+        sort_order=request.args.get("sort_order"),
+        filters=table_query.parse_filters(request.args.get("filters")),
     )
-    result = [
-        {
-            "date": r.date,
-            "predicted": r.predicted,
-            "meta": r.meta_json,
-        }
-        for r in rows
-    ]
-    return jsonify({"rows": result, "total": len(result)}), 200
+    rows = page.where(pd.notnull(page), None).to_dict(orient="records")
+    columns = list(df.columns)
+    return jsonify({"rows": rows, "total": total, "columns": columns}), 200
+
+
+@forecast_runs.get("/<run_id>/results/distinct")
+@require_perm("forecast:read")
+def get_results_distinct(run_id: str):
+    fr = ForecastRun.query.filter_by(run_id=run_id).first()
+    if not fr:
+        return jsonify({"error": "Not found"}), 404
+    column = request.args.get("column", "")
+    if not column:
+        return jsonify({"values": [], "truncated": False}), 200
+
+    df = _forecast_results_df(fr)
+    return jsonify(table_query.distinct_values(df, column)), 200

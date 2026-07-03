@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import calibrationsAPI from '@/api/calibrationsAPI'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 
 const props = defineProps({
   run:        { type: Object, required: true },
@@ -209,18 +210,22 @@ const regressionOptions = computed(() => ({
   },
 }))
 
-const regressionTableRows = computed(() =>
-  regressionPairs.value.map((d, i) => ({
-    idx:       i + 1,
-    date:      d.date      ?? '—',
-    client_id: d.client_id ?? '—',
-    country:   d.country   ?? '—',
-    actual:    d.a?.toFixed(4) ?? '—',
-    predicted: d.p?.toFixed(4) ?? '—',
-    residual:  (d.a != null && d.p != null) ? (d.a - d.p).toFixed(4) : '—',
-  }))
-)
-const regressionFirst = ref(0)
+// ── Prediction table (server-paginated) ────────────────────────────────────────
+const predictionColumns = computed(() => {
+  const cols = []
+  if (hasDate.value)     cols.push({ field: 'date',      header: 'Date',    width: '9rem' })
+  if (hasClientId.value) cols.push({ field: 'client_id', header: 'Client',  width: '8rem' })
+  if (hasCountry.value)  cols.push({ field: 'country',   header: 'Country', width: '8rem' })
+  cols.push({ field: 'actual',    header: 'Actual',    formatter: (v) => v?.toFixed(4) ?? '—' })
+  cols.push({ field: 'predicted', header: 'Predicted', formatter: (v) => v?.toFixed(4) ?? '—' })
+  cols.push({ field: 'residual',  header: 'Residual',  formatter: (v) => v?.toFixed(4) ?? '—' })
+  return cols
+})
+
+const predictionsFetchPage = (params) =>
+  calibrationsAPI.segmentBacktestPredictions(props.run.run_id, props.segmentKey, params)
+const predictionsFetchDistinct = (field) =>
+  calibrationsAPI.segmentBacktestPredictionsDistinct(props.run.run_id, props.segmentKey, field)
 
 // ── Classification — val_obs mode ─────────────────────────────────────────────
 const clsCountryFilter  = ref(null)
@@ -340,18 +345,6 @@ const rocOptions = {
   },
 }
 
-// ── Shared download ───────────────────────────────────────────────────────────
-function downloadCsv(rows, filename) {
-  if (!rows.length) return
-  const headers = Object.keys(rows[0])
-  const lines = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
 </script>
 
 <template>
@@ -507,33 +500,20 @@ function downloadCsv(rows, filename) {
 
         <!-- Table -->
         <div class="surface-card border-round p-4" style="border: 1px solid var(--surface-border)">
-          <div class="flex align-items-center justify-content-between mb-3">
-            <h4 class="text-sm font-semibold m-0">
-              Prediction values
-              <span class="text-xs font-normal text-color-secondary ml-2">{{ regressionPairs.length.toLocaleString() }} rows</span>
-            </h4>
-            <Button label="Download CSV" icon="pi pi-download" size="small" severity="secondary" outlined
-              @click="downloadCsv(regressionTableRows, `backtesting_${segmentKey}.csv`)" />
-          </div>
-          <DataTable :value="regressionTableRows" size="small" class="bt-table"
-            :paginator="regressionTableRows.length > 25" :rows="25" v-model:first="regressionFirst">
-            <template #paginatorstart>
-              <span class="text-xs text-color-secondary">
-                {{ regressionTableRows.length === 0 ? '0' : regressionFirst + 1 }}–{{ Math.min(regressionFirst + 25, regressionTableRows.length) }} of {{ regressionTableRows.length.toLocaleString() }}
+          <h4 class="text-sm font-semibold m-0 mb-3">Prediction values</h4>
+          <CommonDataTable
+            :key="`${run.run_id}:${segmentKey}`"
+            :columns="predictionColumns"
+            :fetch-page="predictionsFetchPage"
+            :fetch-distinct="predictionsFetchDistinct"
+            empty-message="No backtesting data available for this segment."
+          >
+            <template #cell-residual="{ data }">
+              <span :style="{ color: data.residual < 0 ? '#f87171' : '#34d399' }">
+                {{ data.residual?.toFixed(4) ?? '—' }}
               </span>
             </template>
-            <Column field="idx"       header="#"         style="width: 4rem" />
-            <Column field="date"      header="Date"      v-if="hasDate"     style="font-family: monospace; white-space: nowrap" />
-            <Column field="client_id" header="Client"    v-if="hasClientId" style="font-family: monospace" />
-            <Column field="country"   header="Country"   v-if="hasCountry"  />
-            <Column field="actual"    header="Actual"    style="font-family: monospace" />
-            <Column field="predicted" header="Predicted" style="font-family: monospace" />
-            <Column field="residual"  header="Residual"  style="font-family: monospace">
-              <template #body="{ data }">
-                <span :style="{ color: parseFloat(data.residual) < 0 ? '#f87171' : '#34d399' }">{{ data.residual }}</span>
-              </template>
-            </Column>
-          </DataTable>
+          </CommonDataTable>
         </div>
 
       </template>
@@ -547,24 +527,6 @@ function downloadCsv(rows, filename) {
 :deep(.ctrl-drop .p-dropdown-label) { padding: 0.3rem 0.5rem; font-size: 0.78rem; white-space: nowrap; overflow: visible; }
 :deep(.ctrl-drop .p-dropdown-trigger) { width: 2rem; }
 .ctrl-btn { font-size: 0.78rem; height: 2rem; padding: 0 0.65rem; }
-
-:deep(.bt-table .p-datatable-thead > tr > th) {
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--surface-border);
-}
-:deep(.bt-table .p-datatable-tbody > tr > td) {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.82rem;
-  border-bottom: 1px solid var(--surface-border);
-}
-:deep(.bt-table .p-datatable-tbody > tr:hover > td) {
-  background: var(--surface-hover);
-}
 
 /* Confusion matrix */
 .confusion-grid {

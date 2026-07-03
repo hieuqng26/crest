@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
+import CommonDataTable from '@/components/Table/CommonDataTable.vue'
+import { localFetchPage } from '@/utils/tableQuery'
 
 const router = useRouter()
 const toast  = useToast()
@@ -124,6 +126,17 @@ async function fetchKMV() {
 
 function pct(v) { return v != null && isFinite(v) ? (v * 100).toFixed(2) + '%' : '—' }
 function num(v) { return v != null && isFinite(v) ? Number(v).toFixed(4) : '—' }
+
+const kmvTableColumns = [
+  { field: 'YEAR', header: 'Year', width: '7rem' },
+  { field: 'SCENARIO', header: 'Scenario', width: '9rem' },
+  { field: 'Rating', header: 'Rating', width: '7rem' },
+  { field: 'PD', header: 'PD', width: '8rem', formatter: (v) => pct(v) },
+  { field: 'Marginal PD', header: 'Marginal PD', width: '9rem', formatter: (v) => pct(v) },
+  { field: 'LGD', header: 'LGD', width: '8rem', formatter: (v) => pct(v) },
+  { field: 'DTD', header: 'DTD', width: '7rem', formatter: (v) => num(v) },
+]
+const kmvFetchPage = localFetchPage(() => kmvRows.value)
 </script>
 
 <template>
@@ -200,23 +213,13 @@ function num(v) { return v != null && isFinite(v) ? Number(v).toFixed(4) : '—'
           <span class="text-xs text-color-secondary">{{ kmvRows.length }} rows · client {{ selectedClient }}</span>
         </div>
         <div class="bare-table">
-          <DataTable :value="kmvRows" size="small" class="bare-table-inner" :paginator="kmvRows.length > 20" :rows="20">
-            <Column field="YEAR"     header="Year"     sortable />
-            <Column field="SCENARIO" header="Scenario" sortable />
-            <Column field="Rating"   header="Rating"   sortable />
-            <Column header="PD">
-              <template #body="{ data }">{{ pct(data.PD) }}</template>
-            </Column>
-            <Column header="Marginal PD">
-              <template #body="{ data }">{{ pct(data['Marginal PD']) }}</template>
-            </Column>
-            <Column header="LGD">
-              <template #body="{ data }">{{ pct(data.LGD) }}</template>
-            </Column>
-            <Column header="DTD">
-              <template #body="{ data }">{{ num(data.DTD) }}</template>
-            </Column>
-          </DataTable>
+          <CommonDataTable
+            :key="selectedClient"
+            :columns="kmvTableColumns"
+            :fetch-page="kmvFetchPage"
+            :initial-page-size="500"
+            empty-message="No KMV rows for this client."
+          />
         </div>
       </div>
     </template>
@@ -269,22 +272,4 @@ function num(v) { return v != null && isFinite(v) ? Number(v).toFixed(4) : '—'
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 .bare-table { margin: 0 -1.25rem -1rem; }
-:deep(.bare-table-inner .p-datatable-thead > tr > th) {
-  background: transparent;
-  color: var(--text-color-secondary);
-  font-weight: 500;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 1.25rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.85rem 1.25rem;
-  font-size: 0.875rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 </style>

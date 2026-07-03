@@ -14,8 +14,7 @@
 - Add a shared component for data table that will be used across the application (unless we need a very customized one) for example in the dataset views, backtesting, forecast results. The table should clean, easy to read. It should have filters for each column. For categorical columns with less than 30 unique values, it should have dropdown (with search). It should also have sorting function for each column. Most importantly, it should has pagination and able to load large data seemlessly
 - Add ability to give the calibration a name
 - Redesign UI for every page
-- Test and verify all models
-- Add real data for mev and financial (refinitive)
+- Test and verify all models. If the error occurs during job run, we should have clear message of what goes wrong (input data is invalid, model is not appropriate, etc.)
 - Add model for panel data
 - Add customized models (with optimization)
 - Add outlier detection pipeline
