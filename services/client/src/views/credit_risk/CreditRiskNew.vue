@@ -69,7 +69,7 @@ const launch = async () => {
       lifetime_horizon:               lifetimeHorizon.value,
     })
     toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${data.run_id.slice(0, 8)}…`, life: 3000 })
-    router.push({ name: 'credit_risk_jobs' })
+    router.push({ name: 'jobs_history' })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Launch failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -206,7 +206,7 @@ onMounted(async () => {
         Create forecast runs for <span class="font-mono">total_assets</span>,
         <span class="font-mono">short_term_debts</span>, and
         <span class="font-mono">long_term_debts</span> in the
-        <a class="text-primary cursor-pointer" @click="router.push({ name: 'forecast_jobs' })">Forecast</a>
+        <a class="text-primary cursor-pointer" @click="router.push({ name: 'jobs_history' })">Forecast</a>
         module before launching.
       </div>
 
@@ -310,7 +310,7 @@ onMounted(async () => {
 
     <div class="flex gap-2">
       <Button v-can="'credit_risk:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || loadingInit || submitting" @click="launch" />
-      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'credit_risk_jobs' })" />
+      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'jobs_history' })" />
     </div>
 
     <Toast />

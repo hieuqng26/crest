@@ -176,9 +176,9 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
       <i class="pi pi-chart-bar text-4xl text-color-secondary opacity-50" />
       <div class="text-center">
         <div class="text-sm font-medium mb-1">No active analysis run</div>
-        <div class="text-xs text-color-secondary">Set an active run in Analysis Jobs to view PD / LGD results.</div>
+        <div class="text-xs text-color-secondary">Set an active run in Job History to view PD / LGD results.</div>
       </div>
-      <Button label="Analysis Jobs" icon="pi pi-list" size="small" @click="router.push({ name: 'credit_risk_jobs' })" />
+      <Button label="Job History" icon="pi pi-list" size="small" @click="router.push({ name: 'jobs_history' })" />
     </div>
 
     <!-- Loading -->

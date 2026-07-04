@@ -81,7 +81,7 @@ const launch = async () => {
       segment_key:        selectedSegmentKey.value || undefined,
     })
     toast.add({ severity: 'success', summary: 'Forecast run queued', life: 3000 })
-    router.push({ name: 'forecast_jobs' })
+    router.push({ name: 'jobs_history' })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Launch failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -262,7 +262,7 @@ onMounted(async () => {
 
     <div class="flex gap-2">
       <Button v-can="'forecast:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || loadingInit || submitting" @click="launch" />
-      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'forecast_jobs' })" />
+      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'jobs_history' })" />
     </div>
 
   </div>

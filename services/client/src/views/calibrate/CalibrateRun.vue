@@ -152,7 +152,7 @@ const doDelete = async () => {
     const res = await calibrationsAPI.delete(runId.value)
     if (res.status < 300) {
       toast.add({ severity: 'success', summary: 'Run deleted', life: 2000 })
-      router.push({ name: 'calibrate_jobs' })
+      router.push({ name: 'jobs_history' })
       return
     }
     toast.add({ severity: 'error', summary: 'Cannot delete', detail: res.data?.error ?? 'This run is referenced by forecast runs.', life: 5000 })
@@ -173,7 +173,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
 
 <template>
   <div class="p-5 mx-auto" style="max-width: 1400px">
-    <button class="back-link mb-3" @click="router.push({ name: 'calibrate_jobs' })">
+    <button class="back-link mb-3" @click="router.push({ name: 'jobs_history' })">
       <i class="pi pi-arrow-left text-xs" />
       <span>All jobs</span>
     </button>

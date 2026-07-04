@@ -190,7 +190,7 @@ const launch = async () => {
     }
     const { data } = await calibrationsAPI.create(payload)
     toast.add({ severity: 'success', summary: 'Queued', detail: `Run ${data.run_id}`, life: 3000 })
-    router.push({ name: 'calibrate_run', params: { run_id: data.run_id }, query: { tab: 'overview' } })
+    router.push({ name: 'jobs_detail', params: { kind: 'training', run_id: data.run_id } })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Launch failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
@@ -435,7 +435,7 @@ onMounted(() => Promise.all([fetchDatasets(), fetchConfigs()]))
 
     <div class="flex gap-2">
       <Button v-can="'calibration:execute'" label="Launch" icon="pi pi-play" :loading="submitting" :disabled="!canLaunch || submitting" @click="launch" />
-      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'calibrate_jobs' })" />
+      <Button label="Cancel" severity="secondary" text @click="router.push({ name: 'jobs_history' })" />
     </div>
   </div>
 </template>

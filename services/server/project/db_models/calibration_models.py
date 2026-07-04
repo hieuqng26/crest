@@ -217,8 +217,11 @@ class CalibrationRunSegment(db.Model):
     val_metrics_json = db.Column(db.Text, nullable=True)
     status = db.Column(
         db.String(32), nullable=False, default="pending"
-    )  # success|failed|skipped
+    )  # success|failed|skipped|queued|running
     error_message = db.Column(db.Text, nullable=True)
+    hyperparams_json = db.Column(
+        db.Text, nullable=True
+    )  # per-segment override, if customized
 
     def to_dict(self):
         return dict(
@@ -240,6 +243,9 @@ class CalibrationRunSegment(db.Model):
             else None,
             status=self.status,
             error_message=self.error_message,
+            hyperparams=json.loads(self.hyperparams_json)
+            if self.hyperparams_json
+            else None,
         )
 
 

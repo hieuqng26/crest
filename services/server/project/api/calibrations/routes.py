@@ -20,7 +20,7 @@ from project.db_models.calibration_models import (
 )
 from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
-from project.workers.tasks import run_calibration
+from project.workers.tasks import run_calibration, run_segment_calibration
 
 from . import calibrations
 
@@ -283,7 +283,63 @@ def get_segments(run_id):
         .order_by(CalibrationRunSegment.sector, CalibrationRunSegment.split_value)
         .all()
     )
-    return jsonify({"segments": [s.to_dict() for s in segs]}), 200
+    config_ids = {s.model_config_id for s in segs if s.model_config_id}
+    configs = (
+        {
+            c.id: c.algorithm
+            for c in ModelConfig.query.filter(ModelConfig.id.in_(config_ids))
+        }
+        if config_ids
+        else {}
+    )
+    result = []
+    for s in segs:
+        d = s.to_dict()
+        d["algorithm"] = configs.get(s.model_config_id)
+        result.append(d)
+    return jsonify({"segments": result}), 200
+
+
+@calibrations.post("/<run_id>/segments/<segment_key>/recalibrate")
+@require_perm("calibration:execute")
+def recalibrate_segment(run_id, segment_key):
+    """Re-fit a single segment of a segmented run with an optional hyperparameter
+    override. Only this segment is retrained — the parent run and every other
+    segment are untouched."""
+    body = request.get_json(silent=True) or {}
+    hyperparams = body.get("hyperparams")
+    if hyperparams is not None and not isinstance(hyperparams, dict):
+        return jsonify({"error": "hyperparams must be an object"}), 400
+
+    with app_session() as s:
+        run = CalibrationRun.query.filter_by(run_id=run_id).first()
+        if not run:
+            return jsonify({"error": "Not found"}), 404
+        if run.status != "success":
+            return jsonify(
+                {"error": "Segments can only be re-run on a completed run"}
+            ), 409
+        seg = CalibrationRunSegment.query.filter_by(
+            calibration_run_id=run.id, segment_key=segment_key
+        ).first()
+        if not seg:
+            return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
+        if seg.status in ("queued", "running"):
+            return jsonify({"error": "Segment is already re-training"}), 409
+
+        seg.status = "queued"
+        seg.error_message = None
+        seg.hyperparams_json = json.dumps(hyperparams) if hyperparams else None
+        s.add(seg)
+        s.flush()
+        result = seg.to_dict()
+        cfg = (
+            ModelConfig.query.get(seg.model_config_id) if seg.model_config_id else None
+        )
+        result["algorithm"] = cfg.algorithm if cfg else None
+
+    run_segment_calibration.delay(run_id, segment_key)
+    return jsonify(result), 202
 
 
 @calibrations.get("/<run_id>/diagnostics")

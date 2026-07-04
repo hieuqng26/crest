@@ -4,9 +4,7 @@ import { useRouter } from 'vue-router'
 import { useStore } from 'vuex'
 
 import datasetsAPI from '@/api/datasetsAPI'
-import calibrationsAPI from '@/api/calibrationsAPI'
-import forecastRunsAPI from '@/api/forecastRunsAPI'
-import creditRiskAPI from '@/api/creditRiskAPI'
+import jobsAPI, { KIND } from '@/api/jobs'
 import { fmtDate } from '@/utils/datetime'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -33,9 +31,7 @@ const todayLabel = new Date().toLocaleDateString('en-GB', {
 
 const loading = ref(true)
 const datasets = ref([])
-const calibrationRuns = ref([])
-const forecastRuns = ref([])
-const creditRiskRuns = ref([])
+const jobs = ref([])
 
 const daysAgo = (iso) => {
   if (!iso) return Infinity
@@ -46,79 +42,40 @@ const daysAgo = (iso) => {
 
 const load = async () => {
   loading.value = true
-  const [dRes, cRes, fRes, xRes] = await Promise.allSettled([
-    datasetsAPI.list(),
-    calibrationsAPI.list({ per_page: 200 }),
-    forecastRunsAPI.list(),
-    creditRiskAPI.listRuns()
-  ])
+  const [dRes, jRes] = await Promise.allSettled([datasetsAPI.list(), jobsAPI.listJobs()])
   datasets.value = dRes.status === 'fulfilled' ? (dRes.value.data ?? []) : []
-  calibrationRuns.value = cRes.status === 'fulfilled' ? (cRes.value.data.items ?? cRes.value.data ?? []) : []
-  forecastRuns.value = fRes.status === 'fulfilled' ? (fRes.value.data ?? []) : []
-  creditRiskRuns.value = xRes.status === 'fulfilled' ? (xRes.value.data ?? []) : []
+  jobs.value = jRes.status === 'fulfilled' ? jRes.value : []
   loading.value = false
 }
 onMounted(load)
 
-const analysisRunsCount = computed(() => forecastRuns.value.length + creditRiskRuns.value.length)
+const modelRuns = computed(() => jobs.value.filter((j) => j.kind === KIND.TRAINING))
+const analysisRuns = computed(() => jobs.value.filter((j) => j.kind !== KIND.TRAINING))
 
-const failedRuns = computed(() => {
-  const all = [...calibrationRuns.value, ...forecastRuns.value, ...creditRiskRuns.value]
-  return all
-    .filter((r) => r.status === 'failed' && daysAgo(r.finished_at ?? r.created_at ?? r.started_at) <= 7)
+const failedRuns = computed(() =>
+  jobs.value
+    .filter((j) => j.status === 'failed' && daysAgo(j.finished_at ?? j.started_at) <= 7)
     .sort((a, b) => new Date(b.finished_at ?? 0) - new Date(a.finished_at ?? 0))
-})
+)
 
 const modelRunsCaption = computed(() => {
-  const n = calibrationRuns.value.filter((r) => r.status === 'running').length
+  const n = modelRuns.value.filter((j) => j.status === 'running').length
   return n > 0 ? `${n} running now` : null
 })
 const analysisRunsCaption = computed(() => {
-  const latest = [...forecastRuns.value, ...creditRiskRuns.value]
-    .filter((r) => r.finished_at)
+  const latest = analysisRuns.value
+    .filter((j) => j.finished_at)
     .sort((a, b) => new Date(b.finished_at) - new Date(a.finished_at))[0]
   return latest ? `last finished ${fmtDate(latest.finished_at)}` : null
 })
-const failedCaption = computed(() => {
-  const r = failedRuns.value[0]
-  return r ? (r.config_name || r.name || r.run_id?.slice(0, 8)) : null
-})
+const failedCaption = computed(() => failedRuns.value[0]?.name ?? null)
 
-// Unified recent-runs list — merges training (calibration) + analysis (forecast / credit risk)
-const recentRuns = computed(() => {
-  const training = calibrationRuns.value.map((r) => ({
-    run_id: r.run_id,
-    name: r.config_name || r.run_id.slice(0, 8),
-    kind: 'TRAINING',
-    status: r.status,
-    finished_at: r.finished_at ?? r.started_at,
-    triggered_by: r.triggered_by,
-    routeName: 'calibrate_run'
-  }))
-  const forecast = forecastRuns.value.map((r) => ({
-    run_id: r.run_id,
-    name: r.name || r.target_col || r.run_id.slice(0, 8),
-    kind: 'ANALYSIS',
-    status: r.status,
-    finished_at: r.finished_at ?? r.created_at,
-    triggered_by: r.triggered_by,
-    routeName: 'forecast_run'
-  }))
-  const creditRisk = creditRiskRuns.value.map((r) => ({
-    run_id: r.run_id,
-    name: r.run_id.slice(0, 8),
-    kind: 'ANALYSIS',
-    status: r.status,
-    finished_at: r.finished_at ?? r.created_at,
-    triggered_by: r.triggered_by,
-    routeName: 'credit_risk_run'
-  }))
-  return [...training, ...forecast, ...creditRisk]
-    .sort((a, b) => new Date(b.finished_at ?? 0) - new Date(a.finished_at ?? 0))
-    .slice(0, 8)
-})
+const recentRuns = computed(() =>
+  [...jobs.value].sort((a, b) => new Date(b.finished_at ?? 0) - new Date(a.finished_at ?? 0)).slice(0, 8)
+)
 
-const openRun = (r) => router.push({ name: r.routeName, params: { run_id: r.run_id } })
+const typeLabel = (kind) => (kind === KIND.TRAINING ? 'TRAINING' : kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS')
+const openRun = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
 
 const quickActions = [
   { label: 'Upload dataset', desc: 'CSV upload or live query', to: { name: 'datasets' } },
@@ -149,8 +106,8 @@ const systemStatus = [
     <!-- KPI strip -->
     <div class="kpi-grid">
       <StatCard label="Datasets" :value="loading ? '—' : datasets.length" />
-      <StatCard label="Model runs" :value="loading ? '—' : calibrationRuns.length" :caption="modelRunsCaption" />
-      <StatCard label="Analysis runs" :value="loading ? '—' : analysisRunsCount" :caption="analysisRunsCaption" />
+      <StatCard label="Model runs" :value="loading ? '—' : modelRuns.length" :caption="modelRunsCaption" />
+      <StatCard label="Analysis runs" :value="loading ? '—' : analysisRuns.length" :caption="analysisRunsCaption" />
       <StatCard
         label="Failed · Last 7 days"
         :value="loading ? '—' : failedRuns.length"
@@ -187,7 +144,7 @@ const systemStatus = [
             <div class="run-name">{{ r.name }}</div>
             <div class="font-mono run-id">{{ r.run_id }}</div>
           </div>
-          <div><span class="type-tag">{{ r.kind }}</span></div>
+          <div><span class="type-tag">{{ typeLabel(r.kind) }}</span></div>
           <div><StatusDot :status="r.status" /></div>
           <div class="font-mono cell-finished">{{ r.finished_at ? fmtDate(r.finished_at) : '—' }}</div>
           <div class="cell-by">{{ r.triggered_by ? r.triggered_by.split('@')[0] : '—' }}</div>

@@ -704,7 +704,7 @@ onMounted(async () => {
             <div v-for="run in deleteRefs" :key="run.run_id" class="flex align-items-center gap-2 text-sm">
               <span class="dot-status" :style="{ background: { queued: '#60a5fa', running: '#facc15', success: '#34d399', failed: '#f87171' }[run.status] ?? 'var(--surface-400)' }" />
               <a class="text-primary cursor-pointer hover:underline font-mono text-xs"
-                @click="router.push({ name: 'calibrate_run', params: { run_id: run.run_id } }); deleteDialog = false">
+                @click="router.push({ name: 'jobs_detail', params: { kind: 'training', run_id: run.run_id } }); deleteDialog = false">
                 {{ run.run_id.slice(0, 16) }}…
               </a>
               <span class="text-xs text-color-secondary capitalize">({{ run.status }})</span>

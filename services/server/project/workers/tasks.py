@@ -236,6 +236,34 @@ def _resolve_sector_training_config(
     }
 
 
+def _sector_split_groups(
+    df_sector: "pd.DataFrame", split_col: str, max_seg: int
+) -> dict[str, "pd.DataFrame"] | None:
+    """Rank one sector's rows by split_col into up to max_seg groups (by total EAD,
+    or row count if no ead column) plus an 'Others' bucket for the rest. Returns
+    None if split_col isn't present. Used by both the initial segmented run and a
+    single-segment re-run so they reproduce the exact same grouping."""
+    if split_col not in df_sector.columns:
+        return None
+
+    if "ead" in df_sector.columns:
+        ead_ranks = (
+            df_sector.groupby(split_col)["ead"].sum().sort_values(ascending=False)
+        )
+    else:
+        ead_ranks = df_sector.groupby(split_col).size().sort_values(ascending=False)
+
+    top_values = list(ead_ranks.index[:max_seg])
+    rest_values = list(ead_ranks.index[max_seg:])
+
+    groups: dict[str, pd.DataFrame] = {
+        v: df_sector[df_sector[split_col] == v] for v in top_values
+    }
+    if rest_values:
+        groups["Others"] = df_sector[df_sector[split_col].isin(rest_values)]
+    return groups
+
+
 def _fit_segment(
     df_group: "pd.DataFrame",
     algorithm: str,
@@ -458,36 +486,12 @@ def run_calibration(self, run_id: str):
                     split_col = sector_cfg["split_by"]
                     max_seg = sector_cfg["max_segments"]
 
-                    if split_col not in df_sector.columns:
+                    groups = _sector_split_groups(df_sector, split_col, max_seg)
+                    if groups is None:
                         logger.warning(
                             f"Sector '{sector}': split column '{split_col}' not found, skipping"
                         )
                         continue
-
-                    # Rank groups by EAD descending; fall back to row count if no ead col
-                    if "ead" in df_sector.columns:
-                        ead_ranks = (
-                            df_sector.groupby(split_col)["ead"]
-                            .sum()
-                            .sort_values(ascending=False)
-                        )
-                    else:
-                        ead_ranks = (
-                            df_sector.groupby(split_col)
-                            .size()
-                            .sort_values(ascending=False)
-                        )
-
-                    top_values = list(ead_ranks.index[:max_seg])
-                    rest_values = list(ead_ranks.index[max_seg:])
-
-                    groups: dict[str, pd.DataFrame] = {
-                        v: df_sector[df_sector[split_col] == v] for v in top_values
-                    }
-                    if rest_values:
-                        groups["Others"] = df_sector[
-                            df_sector[split_col].isin(rest_values)
-                        ]
 
                     for split_value, df_group in groups.items():
                         seg_key = f"{sector}__{split_value}"
@@ -745,6 +749,140 @@ def run_calibration(self, run_id: str):
                     r.error_message = str(exc)
                     s.add(r)
             _write_progress(run_id, -1, f"Failed: {exc}")
+            raise
+
+
+@celery_app.task(bind=True, name="run_segment_calibration")
+def run_segment_calibration(self, run_id: str, segment_key: str):
+    """Re-fit one segment of an already-completed segmented calibration run,
+    using its (possibly customized) hyperparams_json override. Only this
+    segment's row is touched — the parent run and every other segment are
+    left exactly as they are."""
+    app = _make_flask_app()
+    with app.app_context():
+        from project import app_session
+        from project.db_models.calibration_models import (
+            CalibrationRun,
+            CalibrationRunSegment,
+            Dataset,
+            ModelConfig,
+        )
+
+        # --- 0. Load run + segment, extract every scalar before any session-closing call ---
+        run = CalibrationRun.query.filter_by(run_id=run_id).first()
+        if not run:
+            logger.error(f"CalibrationRun {run_id} not found")
+            return
+        seg = CalibrationRunSegment.query.filter_by(
+            calibration_run_id=run.id, segment_key=segment_key
+        ).first()
+        if not seg:
+            logger.error(f"Segment {segment_key} not found on run {run_id}")
+            return
+
+        dataset_id = run.dataset_id
+        train_split_ratio = run.train_split if run.train_split is not None else 0.8
+        scaler_name = run.scaler
+        target_col = run.target_col or ""
+        default_feature_cols = json.loads(run.feature_cols_json or "[]")
+        sector_overrides = json.loads(run.seg_sector_overrides_json or "{}")
+
+        sector = seg.sector
+        split_col = seg.split_by
+        split_value = seg.split_value
+        seg_id = seg.id
+        override_hyperparams = json.loads(seg.hyperparams_json or "null")
+        model_config_id = seg.model_config_id or run.model_config_id
+
+        max_seg = (
+            sector_overrides.get(sector, {}).get("max_segments") or run.seg_max_segments
+        )
+
+        cfg = ModelConfig.query.get(model_config_id)
+        if not cfg:
+            logger.error(
+                f"ModelConfig {model_config_id} not found for segment {segment_key}"
+            )
+            return
+        algorithm = cfg.algorithm
+        model_family = cfg.family
+        raw_params = override_hyperparams or json.loads(cfg.hyperparams_json or "{}")
+
+        try:
+            with app_session() as s:
+                row = CalibrationRunSegment.query.get(seg_id)
+                row.status = "running"
+                row.error_message = None
+                s.add(row)
+
+            ds = Dataset.query.get(dataset_id)
+            if not ds.file_path:
+                raise ValueError(
+                    "No file path on dataset — live query results must be cached first"
+                )
+
+            file_bytes = storage.download_bytes(ds.file_path.split("/", 1)[-1])
+            ext = ds.file_path.rsplit(".", 1)[-1].lower()
+            buf = io.BytesIO(file_bytes)
+            if ext == "csv":
+                df = pd.read_csv(buf)
+            elif ext == "xlsx":
+                df = pd.read_excel(buf)
+            elif ext == "parquet":
+                df = pd.read_parquet(buf)
+            else:
+                raise ValueError(f"Unsupported file type: {ext}")
+
+            if "sector" not in df.columns:
+                raise ValueError(
+                    "Dataset must contain a 'sector' column for segmented calibration"
+                )
+
+            df_sector = df[df["sector"] == sector]
+            groups = _sector_split_groups(df_sector, split_col, max_seg)
+            if groups is None or split_value not in groups:
+                raise ValueError(
+                    f"Could not reproduce segment group for '{segment_key}'"
+                )
+            df_group = groups[split_value]
+
+            min_rows = 10
+            if len(df_group) < min_rows:
+                raise ValueError(f"Only {len(df_group)} rows (min {min_rows})")
+
+            val_metrics, train_metrics, artifact_path = _fit_segment(
+                df_group,
+                algorithm,
+                raw_params,
+                None,  # no CV search on a single-segment re-run — hyperparams are explicit
+                train_split_ratio,
+                scaler_name,
+                target_col,
+                default_feature_cols,
+                model_family,
+                f"artifacts/{run_id}/segments/{segment_key}/model.pkl",
+                run_id,
+            )
+
+            with app_session() as s:
+                row = CalibrationRunSegment.query.get(seg_id)
+                row.status = "success"
+                row.artifact_path = artifact_path
+                row.train_metrics_json = json.dumps(train_metrics)
+                row.val_metrics_json = json.dumps(val_metrics)
+                row.error_message = None
+                s.add(row)
+
+        except Exception as exc:
+            logger.error(
+                f"Segment re-run {run_id}/{segment_key} failed: {exc}", exc_info=True
+            )
+            with app_session() as s:
+                row = CalibrationRunSegment.query.get(seg_id)
+                if row:
+                    row.status = "failed"
+                    row.error_message = str(exc)
+                    s.add(row)
             raise
 
 
