@@ -5,8 +5,23 @@ The visual language for every page. Non-negotiable — follow even for "one quic
 **v2 (current).** CREST is on the v2 EY-style redesign: ink black, a single sparse
 yellow accent, and 2px squared corners everywhere. See `design/README.md` (design
 tokens + screen-by-screen spec) and `design/CREST Redesign v2.dc.html` (hi-fi reference)
-for the full source of truth. This file summarizes the parts that matter for day-to-day
-component work.
+for the full source of truth — **match its px values exactly**, don't approximate.
+This file summarizes the parts that matter for day-to-day component work.
+
+## Units: raw px, not rem
+
+`AppConfig.vue` sets `html { font-size: <slider value>px }` (default 13px) — a legacy
+sakai-template feature that lets a user shrink/grow the whole UI. Any `rem` value you
+write is silently scaled by that root font-size, **not** by the 16px the mockup assumes.
+At the default 13px root, `1rem` renders as 13px instead of 16px — an ~19% shrink that
+was the cause of a "fonts look smaller/thinner than the mockup" bug across the shell,
+buttons, and Login/Dashboard.
+
+**Rule: all v2 sizing (font-size, padding, margin, width, height, gap) is raw `px`
+copied straight from the mockup, never `rem`.** This is intentional, not an oversight —
+the font-scale slider should affect legacy/dense data screens if anything, not this
+fixed-px chrome and typography system. `_brand.scss`, `_topbar.scss`, `_menu.scss`,
+`_content.scss`, `Login.vue`, `Dashboard.vue`, and `components/ui/*` all follow this.
 
 ## Theme architecture
 
@@ -18,6 +33,8 @@ component work.
   This is the single source of truth for tokens and component overrides.
 - **Ink chrome + light content.** The topbar (`#1A1A24`) and sidebar (`#2E2E38`) are
   the persistent dark frame; content surfaces are light (`--surface-ground #F4F4F6`).
+  The sidebar's border matches its own background (no visible seam) — only the topbar
+  has a `1px solid var(--chrome-border)` bottom edge.
 - Drive ALL colors through CSS tokens — never hardcode hex in a component:
   - `var(--surface-ground|inset|card|overlay|border|border-row|border-input|hover)`
     and the numbered ramp `--surface-0…900` (re-based light).
@@ -30,14 +47,33 @@ component work.
 - **Yellow is THE sparse accent — never a large fill or body text.** Used only for:
   active/selected states (sidebar rail, active tab bg, filter chip count, pagination
   current page, selected radio/checkbox fill), progress bars, focus rings
-  (`box-shadow: 0 0 0 2px var(--yellow)`), the primary-button bottom border, the logo
-  beam, and hover underlines. Primary buttons are ink (`--button-primary-bg`) with
-  white text and a 3px yellow bottom border; secondary buttons are outlined.
+  (`box-shadow: 0 0 0 2px var(--yellow)`), CTA-button bottom borders, the logo beam,
+  and hover underlines.
 - **Radii are 2px everywhere** (`--radius-sm/md/lg/xl` all = `2px`). Status dots and
   radio dots are the only circles — don't round anything else.
 - Semantic status colors (`--success-color`/`--error-color`/`--running-color`/
   `--queued-color` + matching `-text-color` pairs) are muted, banking-appropriate —
   not saturated stoplight colors.
+- **No PROD/environment badge and no "internal use only" copy anywhere** (topbar,
+  Login) — removed by design decision. Login's dark-panel footer just reads
+  `EY · © 2026`.
+
+## Buttons — two primary variants, don't conflate them
+
+Both are ink bg (`--button-primary-bg`) + white text + `13px/600`, 2px radius. The
+**only** difference is the CTA border:
+
+- **Header/toolbar primary** (e.g. "+ New Model" in a page header) — plain `.p-button`,
+  **no** bottom border, `height: 38px`. This is the default; most primary buttons in the
+  app are this variant.
+- **CTA / submit-launch primary** (Sign in, Start training, Launch analysis, Re-run
+  segment) — add the `.btn-cta` class → adds a `3px solid var(--yellow)` bottom border.
+  Typically `height: 40–44px`.
+
+Icons/glyphs inside solid-ink buttons (the "+" in New Model, "▶" in Start training) are
+always yellow — handled globally (`.p-button-icon` color rule), don't override per
+button. Outlined buttons (secondary actions, e.g. "Job History", "Continue with SSO")
+hover to an **ink** border+text, not a muted gray.
 
 ## PrimeFlex utility gotcha
 `.text-primary` resolves to the yellow accent and is illegible as body text on white.
@@ -46,10 +82,12 @@ dark hover. Prefer `text-color`/`text-color-secondary` for identifiers.
 
 ## Logo
 - v2 uses an inline SVG lockup, not an image file: a yellow beam
-  (`<polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600"/>`, scaled up on Login) stacked
-  above the "CREST" wordmark. It's ink-chrome-only (topbar, sidebar, Login's dark
-  panel) — there is no light-surface variant because v2 has no light-background logo
-  placement.
+  (`<polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600"/>`) stacked **above** the
+  "CREST" wordmark in a column (`flex-direction: column`), not side-by-side. Topbar:
+  beam+wordmark column, then a `1px×24px` divider, then the two-line tagline — all in
+  one `align-items: flex-end` row. Login (dark left panel): same stacked lockup, scaled
+  up (beam `78×9`, wordmark `22px`). It's ink-chrome-only — there is no light-surface
+  variant because v2 has no light-background logo placement.
 
 ## Layout & hierarchy rules
 - Page title: `<h1>` (24px/700, -0.01em). Eyebrow: `.eyebrow` utility (11px/700,
@@ -66,6 +104,9 @@ dark hover. Prefer `text-color`/`text-color-secondary` for identifiers.
   dividers; legend boxes → small pills above the chart.
 - Empty/loading/error states are first-class: dashed-border placeholder, muted icon,
   one sentence — never a blank div.
+- Don't fabricate data for a KPI/caption that isn't backed by a real computation
+  (e.g. Dashboard's KPI captions are derived from actual run data, or omitted — never a
+  made-up number).
 
 ## Charts
 - Charts read CSS tokens via `getComputedStyle` so they auto-adapt to the theme.
@@ -76,10 +117,12 @@ dark hover. Prefer `text-color`/`text-color-secondary` for identifiers.
   plotly.js → statistical residual plots.
 
 ## Reference implementations
-Before building/redesigning a page, copy the patterns in:
-`views/calibrate/CalibrateJobs.vue`, `CalibrateRun.vue`, `views/credit_risk/CreditRiskECL.vue`.
-Shared patterns: segmented pill (`.seg-pill`/`.status-pill`), flat panel (`.panel`),
-status dot with ping, thin custom progress track, flat-table `:deep()` rules.
-Use PrimeVue for behavior; override the look with scoped `:deep()`. Don't invent a new
-card style if one exists — check `components/ui/` (PageHeader, StatCard, StatusDot)
-first.
+Before building/redesigning a page, copy the patterns in `views/Dashboard.vue` (page
+header w/ CTA buttons, KPI strip, custom grid table, quick-actions list, dark status
+card) and `views/auth/Login.vue` (split-screen). For pre-v2 screens not yet touched:
+`views/calibrate/CalibrateJobs.vue`, `CalibrateRun.vue`,
+`views/credit_risk/CreditRiskECL.vue` — these still use the older rem-based/soft-radius
+patterns (`.seg-pill`/`.status-pill`, `.panel`) and will drift visually until migrated;
+don't copy their unit choices into new v2 work. Use PrimeVue for behavior; override the
+look with scoped `:deep()`. Don't invent a new card style if one exists — check
+`components/ui/` (PageHeader, StatCard, StatusDot) first.

@@ -19,13 +19,13 @@ defineProps({
 
 <style scoped>
 .stat-card {
-  padding: 1rem 1.125rem;
+  padding: 16px 18px;
 }
 .stat-card-label {
-  margin-bottom: 0.625rem;
+  margin-bottom: 8px;
 }
 .stat-card-value {
-  font-size: 1.5rem;
+  font-size: 26px;
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-color);
@@ -34,8 +34,8 @@ defineProps({
   color: var(--error-text-color);
 }
 .stat-card-caption {
-  margin-top: 0.375rem;
-  font-size: 0.75rem;
+  margin-top: 4px;
+  font-size: 11.5px;
   color: var(--text-color-muted-2);
 }
 </style>

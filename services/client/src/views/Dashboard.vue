@@ -62,11 +62,26 @@ onMounted(load)
 
 const analysisRunsCount = computed(() => forecastRuns.value.length + creditRiskRuns.value.length)
 
-const failedLast7Days = computed(() => {
+const failedRuns = computed(() => {
   const all = [...calibrationRuns.value, ...forecastRuns.value, ...creditRiskRuns.value]
-  return all.filter(
-    (r) => r.status === 'failed' && daysAgo(r.finished_at ?? r.created_at ?? r.started_at) <= 7
-  ).length
+  return all
+    .filter((r) => r.status === 'failed' && daysAgo(r.finished_at ?? r.created_at ?? r.started_at) <= 7)
+    .sort((a, b) => new Date(b.finished_at ?? 0) - new Date(a.finished_at ?? 0))
+})
+
+const modelRunsCaption = computed(() => {
+  const n = calibrationRuns.value.filter((r) => r.status === 'running').length
+  return n > 0 ? `${n} running now` : null
+})
+const analysisRunsCaption = computed(() => {
+  const latest = [...forecastRuns.value, ...creditRiskRuns.value]
+    .filter((r) => r.finished_at)
+    .sort((a, b) => new Date(b.finished_at) - new Date(a.finished_at))[0]
+  return latest ? `last finished ${fmtDate(latest.finished_at)}` : null
+})
+const failedCaption = computed(() => {
+  const r = failedRuns.value[0]
+  return r ? (r.config_name || r.name || r.run_id?.slice(0, 8)) : null
 })
 
 // Unified recent-runs list — merges training (calibration) + analysis (forecast / credit risk)
@@ -74,7 +89,7 @@ const recentRuns = computed(() => {
   const training = calibrationRuns.value.map((r) => ({
     run_id: r.run_id,
     name: r.config_name || r.run_id.slice(0, 8),
-    kind: 'Training',
+    kind: 'TRAINING',
     status: r.status,
     finished_at: r.finished_at ?? r.started_at,
     triggered_by: r.triggered_by,
@@ -83,7 +98,7 @@ const recentRuns = computed(() => {
   const forecast = forecastRuns.value.map((r) => ({
     run_id: r.run_id,
     name: r.name || r.target_col || r.run_id.slice(0, 8),
-    kind: 'Analysis',
+    kind: 'ANALYSIS',
     status: r.status,
     finished_at: r.finished_at ?? r.created_at,
     triggered_by: r.triggered_by,
@@ -92,7 +107,7 @@ const recentRuns = computed(() => {
   const creditRisk = creditRiskRuns.value.map((r) => ({
     run_id: r.run_id,
     name: r.run_id.slice(0, 8),
-    kind: 'Analysis',
+    kind: 'ANALYSIS',
     status: r.status,
     finished_at: r.finished_at ?? r.created_at,
     triggered_by: r.triggered_by,
@@ -106,16 +121,16 @@ const recentRuns = computed(() => {
 const openRun = (r) => router.push({ name: r.routeName, params: { run_id: r.run_id } })
 
 const quickActions = [
-  { label: 'Upload dataset', icon: 'pi pi-upload', to: { name: 'datasets' } },
-  { label: 'Train new model', icon: 'pi pi-sparkles', to: { name: 'model_new' } },
-  { label: 'Explore heatmap', icon: 'pi pi-th-large', to: { name: 'analysis_heatmap' } },
-  { label: 'Review audit trail', icon: 'pi pi-shield', to: { name: 'log' } }
+  { label: 'Upload dataset', desc: 'CSV upload or live query', to: { name: 'datasets' } },
+  { label: 'Train new model', desc: 'Auto or manual mode', to: { name: 'model_new' } },
+  { label: 'Explore heatmap', desc: 'Financial ratios by sector', to: { name: 'analysis_heatmap' } },
+  { label: 'Review audit trail', desc: 'System activity records', to: { name: 'log' } }
 ]
 
 const systemStatus = [
-  { label: 'API', ok: true },
-  { label: 'Task queue', ok: true },
-  { label: 'Object storage', ok: true }
+  { label: 'API', value: 'Operational' },
+  { label: 'Task queue', value: 'Operational' },
+  { label: 'Object storage', value: 'Operational' }
 ]
 </script>
 
@@ -123,19 +138,23 @@ const systemStatus = [
   <div>
     <PageHeader :title="`${greeting}, ${firstName}`" :subtitle="todayLabel">
       <template #actions>
-        <Button label="Job History" outlined @click="router.push({ name: 'jobs_history' })" />
-        <Button label="New Model" icon="pi pi-plus" @click="router.push({ name: 'model_new' })" />
+        <Button class="btn-job-history" outlined label="Job History" @click="router.push({ name: 'jobs_history' })" />
+        <Button class="btn-new-model" @click="router.push({ name: 'model_new' })">
+          <span class="btn-plus">+</span>
+          <span>New Model</span>
+        </Button>
       </template>
     </PageHeader>
 
     <!-- KPI strip -->
     <div class="kpi-grid">
       <StatCard label="Datasets" :value="loading ? '—' : datasets.length" />
-      <StatCard label="Model runs" :value="loading ? '—' : calibrationRuns.length" />
-      <StatCard label="Analysis runs" :value="loading ? '—' : analysisRunsCount" />
+      <StatCard label="Model runs" :value="loading ? '—' : calibrationRuns.length" :caption="modelRunsCaption" />
+      <StatCard label="Analysis runs" :value="loading ? '—' : analysisRunsCount" :caption="analysisRunsCaption" />
       <StatCard
         label="Failed · Last 7 days"
-        :value="loading ? '—' : failedLast7Days"
+        :value="loading ? '—' : failedRuns.length"
+        :caption="failedCaption"
         tone="error"
       />
     </div>
@@ -143,62 +162,53 @@ const systemStatus = [
     <!-- Main content -->
     <div class="dashboard-grid">
       <!-- Recent runs -->
-      <div class="surface-card border-round shadow-1 recent-runs-card">
+      <div class="panel recent-runs-card">
         <div class="recent-runs-header">
-          <h3 class="m-0">Recent runs</h3>
+          <h3>Recent runs</h3>
           <a class="view-all-link" @click="router.push({ name: 'jobs_history' })">View all</a>
         </div>
-        <DataTable :value="recentRuns" :loading="loading" size="small" rowHover @row-click="(e) => openRun(e.data)">
-          <template #empty>
-            <div class="empty-state">
-              <i class="pi pi-inbox" />
-              <p class="m-0">No runs yet.</p>
-            </div>
-          </template>
-          <Column header="Run">
-            <template #body="{ data }">
-              <div>
-                <div class="run-name">{{ data.name }}</div>
-                <div class="font-mono run-id">{{ data.run_id }}</div>
-              </div>
-            </template>
-          </Column>
-          <Column header="Type" style="width: 7rem">
-            <template #body="{ data }">
-              <span class="type-tag">{{ data.kind }}</span>
-            </template>
-          </Column>
-          <Column header="Status" style="width: 8rem">
-            <template #body="{ data }">
-              <StatusDot :status="data.status" />
-            </template>
-          </Column>
-          <Column header="Finished" style="width: 9rem">
-            <template #body="{ data }">
-              <span class="font-mono cell-muted">{{ data.finished_at ? fmtDate(data.finished_at) : '—' }}</span>
-            </template>
-          </Column>
-          <Column header="By" style="width: 7rem">
-            <template #body="{ data }">
-              <span class="cell-muted">{{ data.triggered_by ? data.triggered_by.split('@')[0] : '—' }}</span>
-            </template>
-          </Column>
-        </DataTable>
+
+        <div class="runs-grid runs-grid--head">
+          <div>RUN</div><div>TYPE</div><div>STATUS</div><div>FINISHED</div><div>BY</div>
+        </div>
+
+        <div v-if="!loading && recentRuns.length === 0" class="empty-state">
+          <i class="pi pi-inbox" />
+          <p>No runs yet.</p>
+        </div>
+
+        <div
+          v-for="r in recentRuns"
+          :key="r.run_id"
+          class="runs-grid runs-grid--row"
+          @click="openRun(r)"
+        >
+          <div class="run-name-cell">
+            <div class="run-name">{{ r.name }}</div>
+            <div class="font-mono run-id">{{ r.run_id }}</div>
+          </div>
+          <div><span class="type-tag">{{ r.kind }}</span></div>
+          <div><StatusDot :status="r.status" /></div>
+          <div class="font-mono cell-finished">{{ r.finished_at ? fmtDate(r.finished_at) : '—' }}</div>
+          <div class="cell-by">{{ r.triggered_by ? r.triggered_by.split('@')[0] : '—' }}</div>
+        </div>
       </div>
 
       <!-- Side column: quick actions + system status -->
       <div class="side-column">
-        <div class="surface-card border-round shadow-1 quick-actions-card">
-          <h3 class="m-0 mb-2">Quick actions</h3>
+        <div class="panel quick-actions-card">
+          <h3 class="quick-actions-title">Quick actions</h3>
           <a
             v-for="a in quickActions"
             :key="a.label"
             class="quick-action-row"
             @click="router.push(a.to)"
           >
-            <i :class="a.icon" />
-            <span class="quick-action-label">{{ a.label }}</span>
-            <i class="pi pi-arrow-right quick-action-arrow" />
+            <div class="quick-action-text">
+              <div class="quick-action-label">{{ a.label }}</div>
+              <div class="quick-action-desc">{{ a.desc }}</div>
+            </div>
+            <span class="quick-action-arrow">&rarr;</span>
           </a>
         </div>
 
@@ -207,7 +217,7 @@ const systemStatus = [
           <div v-for="s in systemStatus" :key="s.label" class="system-row">
             <span class="system-dot" />
             <span class="system-label">{{ s.label }}</span>
-            <span class="system-value">Operational</span>
+            <span class="system-value font-mono">{{ s.value }}</span>
           </div>
         </div>
       </div>
@@ -216,93 +226,165 @@ const systemStatus = [
 </template>
 
 <style scoped>
+.btn-job-history,
+.btn-new-model {
+  height: 38px;
+}
+.btn-job-history {
+  padding: 0 16px;
+}
+.btn-new-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
+}
+.btn-plus {
+  color: var(--yellow);
+  font-weight: 700;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1.7fr 1fr;
-  gap: 1.5rem;
+  gap: 16px;
   align-items: start;
 }
 
-.recent-runs-card {
-  padding: 1.25rem;
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
 }
+
 .recent-runs-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
+  padding: 14px 16px;
+}
+.recent-runs-header h3 {
+  flex: 1;
 }
 .view-all-link {
-  font-size: 0.8125rem;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-color-secondary);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: 2px solid var(--yellow);
   padding-bottom: 1px;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
 .view-all-link:hover {
-  color: var(--text-color);
-  border-bottom-color: var(--yellow);
+  color: var(--ink);
 }
 
-.run-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-color);
+.runs-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.4fr) 120px 120px 150px 80px;
+  column-gap: 12px;
+  align-items: center;
+  padding: 0 16px;
 }
-.run-id {
-  font-size: 0.75rem;
+.runs-grid--head {
+  height: 38px;
+  border-bottom: 2px solid var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
   color: var(--text-color-muted);
 }
-.cell-muted {
-  font-size: 0.8125rem;
+.runs-grid--row {
+  height: 48px;
+  border-bottom: 1px solid var(--surface-border-row);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+.runs-grid--row:hover {
+  background: var(--surface-hover);
+}
+.runs-grid--row:last-child {
+  border-bottom: none;
+}
+
+.run-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  overflow: hidden;
+}
+.run-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-id {
+  font-size: 10px;
+  color: var(--text-color-muted-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-finished {
+  font-size: 11.5px;
+  color: var(--text-color-secondary);
+}
+.cell-by {
+  font-size: 12.5px;
   color: var(--text-color-secondary);
 }
 .type-tag {
   display: inline-block;
-  padding: 0.15rem 0.45rem;
-  font-size: 0.6875rem;
+  padding: 3px 7px;
+  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--text-color-secondary);
   border: 1px solid var(--surface-border-input);
+  border-radius: 2px;
 }
 
 .empty-state {
   text-align: center;
-  padding: 2.5rem 0;
+  padding: 40px 0;
   color: var(--text-color-muted);
 }
 .empty-state i {
-  font-size: 1.5rem;
+  font-size: 24px;
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: 8px;
   opacity: 0.6;
+}
+.empty-state p {
+  margin: 0;
 }
 
 .side-column {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 16px;
 }
 
 .quick-actions-card {
-  padding: 1.25rem;
+  padding: 6px 0;
+}
+.quick-actions-title {
+  padding: 10px 16px 6px;
 }
 .quick-action-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 0.625rem 0.625rem 0.5rem;
+  gap: 12px;
+  padding: 11px 16px;
   border-left: 3px solid transparent;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -311,51 +393,58 @@ const systemStatus = [
   background: var(--surface-hover);
   border-left-color: var(--yellow);
 }
-.quick-action-row i:first-child {
-  color: var(--text-color-muted);
-  width: 1.25rem;
-  text-align: center;
+.quick-action-text {
+  flex: 1;
 }
 .quick-action-label {
-  flex: 1;
-  font-size: 0.875rem;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-color);
 }
-.quick-action-arrow {
-  font-size: 0.75rem;
+.quick-action-desc {
+  font-size: 11.5px;
   color: var(--text-color-muted-2);
+  margin-top: 1px;
+}
+.quick-action-arrow {
+  font-size: 14px;
+  color: var(--text-color-muted);
 }
 
 .system-card {
   background: var(--ink);
-  padding: 1.125rem 1.25rem;
+  border-radius: 2px;
+  padding: 16px 18px;
 }
 .system-eyebrow {
   color: var(--chrome-text-muted) !important;
-  margin-bottom: 0.75rem;
+  margin-bottom: 10px;
 }
 .system-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--chrome-hover);
+}
+.system-row:last-child {
+  border-bottom: none;
 }
 .system-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--success-color);
   flex-shrink: 0;
 }
 .system-label {
   flex: 1;
-  font-size: 0.8125rem;
-  color: #fff;
+  font-size: 12.5px;
+  color: var(--chrome-item-muted);
 }
 .system-value {
-  font-size: 0.75rem;
-  font-family: 'IBM Plex Mono', monospace;
-  color: var(--chrome-text-muted);
+  font-size: 11.5px;
+  color: #fff;
 }
 
 @media (max-width: 1200px) {

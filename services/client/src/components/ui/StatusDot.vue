@@ -4,7 +4,8 @@ import { computed } from 'vue'
 const props = defineProps({
   // Backend status values map directly: queued | running | success | failed
   status: { type: String, required: true },
-  label: { type: String, default: null }
+  label: { type: String, default: null },
+  size: { type: Number, default: 8 }
 })
 
 const STATUS_MAP = {
@@ -20,8 +21,11 @@ const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
 
 <template>
   <span class="status-dot-wrap">
-    <span class="status-dot" :style="{ backgroundColor: config.dot }"></span>
-    <span class="status-text font-mono" :style="{ color: config.text }">{{ label || config.label }}</span>
+    <span
+      class="status-dot"
+      :style="{ backgroundColor: config.dot, width: size + 'px', height: size + 'px' }"
+    ></span>
+    <span class="status-text" :style="{ color: config.text }">{{ label || config.label }}</span>
   </span>
 </template>
 
@@ -29,16 +33,14 @@ const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
 .status-dot-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 7px;
 }
 .status-dot {
-  width: 6px;
-  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .status-text {
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
 }
 </style>

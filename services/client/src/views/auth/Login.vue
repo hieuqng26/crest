@@ -42,8 +42,8 @@ const notConfigured = (feature) => {
   <div class="login-page">
     <div class="login-left">
       <router-link to="/auth/login" class="login-logo-lockup">
-        <svg class="logo-beam" viewBox="0 0 62 7" xmlns="http://www.w3.org/2000/svg">
-          <polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600" />
+        <svg class="logo-beam" viewBox="0 0 78 9" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="0,9 78,0 78,4.2 0,9" fill="#FFE600" />
         </svg>
         <span class="login-brand-name">{{ appName }}</span>
       </router-link>
@@ -52,40 +52,43 @@ const notConfigured = (feature) => {
         <div class="login-yellow-bar" />
         <h1 class="login-headline">Credit Risk &amp; Economic Stress Testing</h1>
         <p class="login-support">
-          ML-driven calibration, forecasting and IFRS 9 credit-risk analytics for
-          banking-grade stress testing.
+          Calibrate models, forecast macro scenarios, and quantify expected
+          credit losses across your portfolio.
         </p>
       </div>
 
       <div class="login-left-bottom">
-        <span class="prod-badge">PROD</span>
-        <span class="login-footnote">Internal use only &middot; &copy; 2026</span>
+        <span class="login-footnote">EY &middot; &copy; 2026</span>
       </div>
     </div>
 
     <div class="login-right">
       <div class="login-card card--emphasis">
         <h2 class="login-heading">Sign in</h2>
+        <p class="login-subtitle">Use your organisation account</p>
 
-        <div class="login-field">
+        <div class="login-field-email">
           <label for="email" class="login-label">Email</label>
           <InputText
             id="email"
             v-model="email"
             type="text"
-            placeholder="you@bank.com"
+            placeholder="name@bank.com"
             class="w-full login-input"
             autocomplete="username"
             @keyup.enter="login"
           />
         </div>
 
-        <div class="login-field">
-          <label for="password" class="login-label">Password</label>
+        <div class="login-field-password">
+          <div class="login-row-label">
+            <label for="password" class="login-label login-label--inline">Password</label>
+            <a class="login-forgot-link" @click="notConfigured('Password reset')">Forgot?</a>
+          </div>
           <Password
             id="password"
             v-model="password"
-            placeholder="Enter your password"
+            placeholder="••••••••"
             :toggleMask="true"
             :feedback="false"
             class="w-full"
@@ -95,11 +98,7 @@ const notConfigured = (feature) => {
           />
         </div>
 
-        <div class="login-forgot-row">
-          <a class="login-forgot-link" @click="notConfigured('Password reset')">Forgot?</a>
-        </div>
-
-        <Button label="Sign In" class="w-full login-btn" @click="login" />
+        <Button label="Sign in" class="w-full login-btn btn-cta" @click="login" />
 
         <div class="login-divider-row">
           <span class="login-divider-line" />
@@ -135,22 +134,24 @@ const notConfigured = (feature) => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 2rem 3rem;
+  padding: 48px 52px;
 }
 
 .login-logo-lockup {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 5px;
 }
 .logo-beam {
-  width: 40px;
-  height: auto;
+  width: 78px;
+  height: 9px;
+  display: block;
 }
 .login-brand-name {
-  font-size: 1.125rem;
+  font-size: 22px;
   font-weight: 800;
   letter-spacing: 0.18em;
+  line-height: 1;
   color: #fff;
 }
 
@@ -161,42 +162,32 @@ const notConfigured = (feature) => {
   width: 48px;
   height: 4px;
   background: var(--yellow);
-  margin-bottom: 1.25rem;
+  margin-bottom: 22px;
 }
 .login-headline {
-  font-size: 2.125rem;
+  font-size: 34px;
   font-weight: 700;
-  line-height: 1.15;
+  line-height: 1.2;
   letter-spacing: -0.01em;
   color: #fff;
-  margin: 0 0 0.75rem;
+  margin: 0;
+  max-width: 420px;
 }
 .login-support {
-  font-size: 0.875rem;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--chrome-text-muted);
-  margin: 0;
+  margin: 16px 0 0;
+  max-width: 400px;
 }
 
 .login-left-bottom {
   display: flex;
   align-items: center;
-  gap: 0.875rem;
-}
-.prod-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 1.375rem;
-  padding: 0 0.5rem;
-  font-size: 0.65625rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--yellow);
-  border: 1px solid var(--chrome-border);
 }
 .login-footnote {
-  font-size: 0.75rem;
-  color: var(--chrome-text-muted);
+  font-size: 12px;
+  color: #5A5A66;
 }
 
 /* ── Right: sign-in card ───────────────────────────────────────────── */
@@ -210,79 +201,88 @@ const notConfigured = (feature) => {
 }
 
 .login-card {
-  width: 100%;
-  max-width: 400px;
-  padding: 2rem 2.25rem 2.25rem;
+  width: 400px;
+  padding: 36px 40px 40px;
 }
 
 .login-heading {
-  margin: 0 0 1.5rem;
-  font-size: 1.3125rem;
+  margin: 0 0 4px;
+  font-size: 21px;
   font-weight: 700;
   color: var(--text-color);
-  letter-spacing: -0.01em;
+}
+.login-subtitle {
+  margin: 0 0 26px;
+  font-size: 13px;
+  color: var(--text-color-muted);
 }
 
-.login-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 1.1rem;
+.login-field-email {
+  margin-bottom: 16px;
+}
+.login-field-password {
+  margin-bottom: 24px;
 }
 .login-label {
-  font-size: 0.75rem;
+  display: block;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-color-secondary);
+  color: var(--text-color-muted);
+  margin-bottom: 6px;
+}
+.login-row-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.login-row-label .login-label--inline {
+  margin-bottom: 0;
 }
 :deep(.login-input) {
   height: 42px;
+  font-size: 13.5px;
 }
 
-.login-forgot-row {
-  display: flex;
-  justify-content: flex-end;
-  margin: -0.4rem 0 1rem;
-}
 .login-forgot-link {
-  font-size: 0.8125rem;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-color-secondary);
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  border-bottom: 2px solid var(--yellow);
   padding-bottom: 1px;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
 .login-forgot-link:hover {
-  color: var(--text-color);
-  border-bottom-color: var(--yellow);
+  color: var(--ink);
 }
 
 .login-btn {
   height: 44px;
-  font-size: 0.9375rem;
+  font-size: 14px;
 }
 
 .login-divider-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin: 1.25rem 0;
+  gap: 12px;
+  margin: 18px 0;
 }
 .login-divider-line {
   flex: 1;
   height: 1px;
-  background: var(--surface-border);
+  background: var(--surface-border-row);
 }
 .login-divider-text {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 11px;
   color: var(--text-color-muted-2);
 }
 
 .login-sso-btn {
-  height: 42px;
+  height: 44px;
+  font-size: 13.5px;
 }
 
 /* Password component full width */
@@ -296,10 +296,10 @@ const notConfigured = (feature) => {
   .login-left {
     flex: none;
     min-width: 0;
-    padding: 1.5rem;
+    padding: 24px;
   }
   .login-left-center {
-    margin: 2rem 0;
+    margin: 32px 0;
   }
 }
 </style>

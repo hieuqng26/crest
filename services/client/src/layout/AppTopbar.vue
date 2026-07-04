@@ -24,9 +24,10 @@ const { onMenuToggle } = useLayout()
 const outsideClickListener = ref(null)
 const topbarMenuActive = ref(false)
 
+const username = computed(() => (user.value?.email || '').split('@')[0] || '')
+
 const initials = computed(() => {
-  const email = user.value?.email || ''
-  const name = email.split('@')[0] || ''
+  const name = username.value
   const parts = name.split(/[._-]/).filter(Boolean)
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
   return name.slice(0, 2).toUpperCase() || '—'
@@ -156,10 +157,12 @@ const toggleMenu = (event) => {
 <template>
   <div class="layout-topbar">
     <router-link to="/" class="layout-topbar-logo">
-      <svg class="logo-beam" viewBox="0 0 62 7" xmlns="http://www.w3.org/2000/svg">
-        <polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600" />
-      </svg>
-      <span class="brand-name">{{ appName }}</span>
+      <div class="logo-lockup">
+        <svg class="logo-beam" viewBox="0 0 62 7" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600" />
+        </svg>
+        <span class="brand-name">{{ appName }}</span>
+      </div>
       <div class="brand-divider" />
       <span class="brand-tagline">Credit Risk &amp;<br />Economic Stress Testing</span>
     </router-link>
@@ -178,8 +181,6 @@ const toggleMenu = (event) => {
       <i class="pi pi-ellipsis-v"></i>
     </button>
     <div class="layout-topbar-menu" :class="topbarMenuClasses">
-      <span class="prod-badge">PROD</span>
-
       <router-link
         v-if="!store.getters.isAuthenticated"
         to="/auth/login"
@@ -193,7 +194,7 @@ const toggleMenu = (event) => {
         @click="toggleMenu"
       >
         <span class="user-avatar">{{ initials }}</span>
-        <span class="user-email">{{ user?.email }}</span>
+        <span class="user-email">{{ username }}</span>
       </button>
       <Menu ref="menu" id="overlay_menu" :model="items" :popup="true" />
     </div>
@@ -247,58 +248,53 @@ const toggleMenu = (event) => {
 <style lang="scss" scoped>
 .layout-topbar-logo {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.logo-lockup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .logo-beam {
-  width: 32px;
-  height: auto;
-  margin-right: 0.625rem;
-  flex-shrink: 0;
+  width: 62px;
+  height: 7px;
+  display: block;
 }
 
 .brand-name {
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.18em;
+  line-height: 1;
   color: var(--chrome-text);
 }
 
 .brand-divider {
   width: 1px;
-  align-self: stretch;
-  margin: 0 0.875rem;
+  height: 24px;
+  margin: 0 2px;
   background: var(--chrome-border);
 }
 
 .brand-tagline {
-  font-size: 0.65625rem;
+  font-size: 10.5px;
   line-height: 1.3;
   color: var(--chrome-text-muted);
-  letter-spacing: 0.01em;
-}
-
-.prod-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 1.375rem;
-  padding: 0 0.5rem;
-  margin-right: 0.75rem;
-  font-size: 0.65625rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--yellow);
-  border: 1px solid var(--chrome-border);
+  letter-spacing: 0.02em;
+  padding-bottom: 2px;
 }
 
 .user-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 0.25rem 0.375rem;
+  padding: 5px 8px;
   border-radius: var(--radius-sm);
   transition: background-color 0.15s ease;
 
@@ -314,16 +310,16 @@ const toggleMenu = (event) => {
   width: 28px;
   height: 28px;
   flex-shrink: 0;
+  border-radius: var(--radius-sm);
   background: var(--yellow);
   color: var(--ink);
-  font-size: 0.6875rem;
+  font-size: 12px;
   font-weight: 700;
-  font-family: 'IBM Plex Mono', monospace;
 }
 
 .user-email {
-  font-size: 0.8125rem;
-  color: var(--chrome-item-text);
+  font-size: 13px;
+  color: #E7E7EA;
 }
 
 @media (max-width: 991px) {

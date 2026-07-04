@@ -1,11 +1,12 @@
 .layout-topbar {
     position: fixed;
-    height: 3.375rem; /* 54px */
+    height: 54px;
     z-index: 997;
     left: 0;
     top: 0;
     width: 100%;
-    padding: 0 1.25rem;
+    padding: 0 20px;
+    gap: 16px;
     background-color: var(--surface-card);
     transition: left $transitionDuration;
     display: flex;
@@ -106,7 +107,7 @@
             border-radius: 12px;
             padding: 1rem;
             right: 2rem;
-            top: 3.375rem;
+            top: 54px;
             min-width: 15rem;
             display: none;
             -webkit-animation: scalein 0.15s linear;
