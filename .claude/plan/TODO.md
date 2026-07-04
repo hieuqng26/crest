@@ -34,7 +34,7 @@
 - Create staging ETL: transform bank's raw data, merge files, ...
 - Cleanup unused env variables
 - Email when training jobs complete
-
+- Dont store json in database tables
 ---
 
 - [x] Results table in Forecast job and Backtesting's prediction table in Calibration job: show the row number "x to y" corresponding to the selected page
