@@ -6,45 +6,52 @@ import AppMenuItem from './AppMenuItem.vue'
 const store = useStore()
 const can = (p) => store.getters.can(p)
 
+// v2 IA: OVERVIEW / DATA / MODEL / ANALYSIS / JOBS / SYSTEM.
+// New-model, model-results, heatmap, financial-forecast and job-history/detail
+// routes resolve to a ComingSoon placeholder until their screens are built —
+// see router/index.js.
 const model = [
+  {
+    label: 'Overview',
+    items: [
+      { label: 'Dashboard', icon: 'pi pi-fw pi-home', to: { name: 'dashboard' } }
+    ]
+  },
   {
     label: 'Data',
     items: [
-      { label: 'Datasets', to: { name: 'datasets' }, module: 'ingest', perm: 'dataset:read' }
+      { label: 'Datasets', icon: 'pi pi-fw pi-database', to: { name: 'datasets' }, perm: 'dataset:read' }
     ]
   },
   {
-    label: 'Models',
+    label: 'Model',
     items: [
-      { label: 'Model Catalog',          to: { name: 'models' },               module: 'configure', perm: 'model_config:read' },
-      { label: 'Model Configurations',   to: { name: 'configurations' },       module: 'configure', perm: 'model_config:read' },
-      { label: 'New Calibration',        to: { name: 'calibrate_new' },        module: 'calibrate', perm: 'calibration:read' },
-      { label: 'Calibration Jobs',       to: { name: 'calibrate_jobs' },       module: 'calibrate', perm: 'calibration:read' }
+      { label: 'New Model',     icon: 'pi pi-fw pi-plus-circle', to: { name: 'model_new' },     perm: 'calibration:read' },
+      { label: 'Model Results', icon: 'pi pi-fw pi-chart-bar',   to: { name: 'model_results' }, perm: 'calibration:read' }
     ]
   },
   {
-    label: 'Forecast',
+    label: 'Analysis',
     items: [
-      { label: 'New Forecast',  to: { name: 'forecast_new' },  module: 'forecast', perm: 'forecast:read' },
-      { label: 'Forecast Jobs', to: { name: 'forecast_jobs' }, module: 'forecast', perm: 'forecast:read' }
+      { label: 'Heatmap',            icon: 'pi pi-fw pi-th-large',  to: { name: 'analysis_heatmap' },       perm: 'credit_risk:read' },
+      { label: 'Financial Forecast', icon: 'pi pi-fw pi-chart-line', to: { name: 'analysis_forecast' },      perm: 'credit_risk:read' },
+      { label: 'PD / LGD',           icon: 'pi pi-fw pi-percentage', to: { name: 'credit_risk_pd_lgd' },     perm: 'credit_risk:read' },
+      { label: 'IFRS 9 ECL',         icon: 'pi pi-fw pi-calculator', to: { name: 'credit_risk_ecl' },        perm: 'credit_risk:read' },
+      { label: 'Transitions',        icon: 'pi pi-fw pi-arrows-h',   to: { name: 'credit_risk_transitions' }, perm: 'credit_risk:read' }
     ]
   },
   {
-    label: 'Credit Risk',
+    label: 'Jobs',
     items: [
-      { label: 'New Analysis',  to: { name: 'credit_risk_new' },        module: 'credit_risk', perm: 'credit_risk:read' },
-      { label: 'Analysis Jobs', to: { name: 'credit_risk_jobs' },       module: 'credit_risk', perm: 'credit_risk:read' },
-      { label: 'IFRS 9 ECL',   to: { name: 'credit_risk_ecl' },        module: 'credit_risk', perm: 'credit_risk:read' },
-      { label: 'PD / LGD',     to: { name: 'credit_risk_pd_lgd' },     module: 'credit_risk', perm: 'credit_risk:read' },
-      { label: 'Transitions',  to: { name: 'credit_risk_transitions' }, module: 'credit_risk', perm: 'credit_risk:read' }
+      { label: 'Job History', icon: 'pi pi-fw pi-history', to: { name: 'jobs_history' }, perm: 'calibration:read' }
     ]
   },
   {
     label: 'System',
     items: [
-      { label: 'User Access Management', to: { name: 'uam' },             module: 'uam',  perm: 'user:read' },
-      { label: 'Role Management',        to: { name: 'role-management' }, icon: 'pi pi-shield',              perm: 'role:read' },
-      { label: 'Audit Logs',             to: { name: 'log' },             module: 'log',  perm: 'auditlog:read' }
+      { label: 'User Access Management', icon: 'pi pi-fw pi-users',  to: { name: 'uam' },             perm: 'user:read' },
+      { label: 'Role Management',        icon: 'pi pi-fw pi-shield', to: { name: 'role-management' }, perm: 'role:read' },
+      { label: 'Audit Logs',             icon: 'pi pi-fw pi-list',   to: { name: 'log' },             perm: 'auditlog:read' }
     ]
   }
 ]

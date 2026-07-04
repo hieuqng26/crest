@@ -3,7 +3,7 @@
     flex-direction: column;
     min-height: 100vh;
     justify-content: space-between;
-    padding: 7rem 2rem 2rem 4rem;
+    padding: calc(3.375rem + 1.75rem) 2rem 2rem 2rem; /* topbar height + page gutter */
     transition: margin-left $transitionDuration;
 }
 

@@ -1,88 +1,113 @@
 /*
- * CREST brand overrides — sits on top of the PrimeVue theme to refine tokens,
- * typography, and component appearance toward the ey.com aesthetic:
- * light, airy content surfaces framed by dark charcoal chrome (topbar + sidebar),
- * with EY Yellow reserved for sparse accents. See .claude/docs/design.md before changing.
+ * CREST brand overrides — v2. EY-style: ink black, a single sparse yellow
+ * accent, squared corners (2px everywhere), and a strict Archivo + IBM Plex
+ * Mono type pairing. Yellow is NEVER a large fill or body text — only
+ * active/selected states, focus rings, and the primary-button bottom border.
+ * See .claude/docs/design.md before changing.
  */
 
 /* ─────────────────────────────────────────────────────────────────────
- * Fonts — Inter is our delivered face (a near-twin of EYInterstate that
- * is open-source). The theme already self-hosts Inter var.
+ * Fonts — Archivo (UI) + IBM Plex Mono (data/numeric/code). Loaded via
+ * Google Fonts <link> in index.html.
  * ───────────────────────────────────────────────────────────────────── */
 :root {
-  /* Content surfaces — light & airy (ey.com content area) */
-  --surface-ground:  #EDEEF2;  /* app canvas — light lavender-grey */
-  --surface-section: #F6F7F9;  /* faint fills, inputs */
-  --surface-card:    #FFFFFF;  /* cards lift off the canvas */
-  --surface-overlay: #FFFFFF;  /* dialogs, menus, toasts */
-  --surface-border:  #E1E3E9;
-  --surface-hover:   #EBECF1;
+  /* Ink scale — dark surfaces & primary text/buttons */
+  --ink:   #1A1A24;
+  --ink-2: #2E2E38;
+  --ink-3: #3A3A46;
 
-  /* Numbered ramp — re-based light (low = light surface, high = dark).
-     Components use --surface-100/200/300 for pill/badge fills. */
+  /* Accent — THE sparse yellow. Active states, focus rings, progress,
+     primary-button bottom border, logo beam. Never a large decorative fill. */
+  --yellow:       #FFE600;
+  --yellow-chart: #E8C400; /* darkened for chart-line readability on white */
+
+  /* Grays */
+  --surface-ground:  #F4F4F6; /* app canvas */
+  --surface-inset:   #F7F7F9; /* inset panel / customize panel */
+  --surface-hover:   #FAFAF2; /* row hover — warm tint */
+  --surface-card:    #FFFFFF;
+  --surface-overlay: #FFFFFF;
+  --surface-border:      #E1E1E6; /* card borders */
+  --surface-border-row:  #ECECF0; /* row dividers */
+  --surface-border-input:#D8D8DE; /* input borders */
+
   --surface-0:   #FFFFFF;
-  --surface-50:  #F6F7F9;
-  --surface-100: #EDEEF2;
-  --surface-200: #E1E3E9;
-  --surface-300: #CFD2DA;
-  --surface-400: #A1A1AA;
-  --surface-500: #71717A;
-  --surface-600: #52525B;
-  --surface-700: #3F3F46;
-  --surface-800: #27272A;
-  --surface-900: #18181B;
+  --surface-50:  #F7F7F9;
+  --surface-100: #F4F4F6;
+  --surface-200: #ECECF0;
+  --surface-300: #E1E1E6;
+  --surface-400: #D8D8DE;
+  --surface-500: #C4C4CD;
+  --surface-600: #9B9BA6;
+  --surface-700: #747480;
+  --surface-800: #4A4A55;
+  --surface-900: #2E2E38;
 
-  /* Text — EY black on light reads crisp, not harsh */
-  --text-color:           #2E2E38;  /* EY black */
-  --text-color-secondary: #5C5C68;
-  --text-color-muted:     #8E8E9A;
+  /* Text */
+  --text-color:           #1A1A24;
+  --text-color-secondary: #4A4A55;
+  --text-color-muted:     #747480;
+  --text-color-muted-2:   #9B9BA6;
 
-  /* Chrome — persistent dark charcoal that frames the light content */
-  --chrome-bg:           #2E2E38;  /* EY black */
-  --chrome-border:       #3D3D49;
-  --chrome-text:         #FFFFFF;
-  --chrome-text-muted:   #B7B7C2;
-  --chrome-hover:        rgba(255, 255, 255, 0.08);
-  --chrome-active:       rgba(255, 255, 255, 0.07);
+  /* Chrome — persistent dark frame (topbar + sidebar) */
+  --chrome-bg:         #1A1A24; /* topbar */
+  --chrome-bg-2:       #2E2E38; /* sidebar */
+  --chrome-border:     #3A3A46;
+  --chrome-text:       #FFFFFF;
+  --chrome-text-muted: #8A8A98;
+  --chrome-item-text:  #B9B9C4;
+  --chrome-item-muted: #C9C9D4;
+  --chrome-section:    #7A7A88;
+  --chrome-hover:      #3A3A46;
+  --chrome-active-bg:  #1A1A24;
 
-  /* Brand — EY's light-mode gold (less neon than #FFE600); accent only */
-  --primary-color:      #F2C200;
-  --primary-color-text: #2E2E38;
-  --primary-color-hover:#FFD42E;
+  /* Brand */
+  --primary-color:       #FFE600;
+  --primary-color-text:  #1A1A24;
+  --primary-color-hover: #FFE600;
 
-  /* Primary action button — solid EY charcoal, white text */
-  --button-primary-bg:    #2E2E38;
-  --button-primary-hover: #3D3D49;
-  --button-primary-text:  #FFFFFF;
+  /* Primary action button — ink bg, white text, yellow bottom border */
+  --button-primary-bg:     #1A1A24;
+  --button-primary-hover:  #3A3A46;
+  --button-primary-text:   #FFFFFF;
+  --button-primary-border: #FFE600;
 
   /* Highlights & state */
-  --highlight-bg:           rgba(242, 194, 0, 0.16);
-  --highlight-text-color:   #2E2E38;
-  --focus-ring:             0 0 0 3px rgba(242, 194, 0, 0.22);
-  --p-focus-ring-color:     #F2C200;
+  --highlight-bg:         rgba(255, 230, 0, 0.22);
+  --highlight-text-color: #1A1A24;
+  --focus-ring:           0 0 0 2px #FFE600;
+  --p-focus-ring-color:   #FFE600;
 
-  /* Semantic — only used for status, never decoration */
-  --success-color: #1F9D63;
-  --warning-color: #C77700;
-  --danger-color:  #D64545;
+  /* Semantic — muted, banking-appropriate (fill / text pairs) */
+  --success-color:      #188647;
+  --success-text-color: #146B39;
+  --error-color:        #C4331D;
+  --error-text-color:   #A32B18;
+  --running-color:      #D6B600;
+  --running-text-color: #8A7600;
+  --queued-color:       #9B9BA6;
+  --queued-text-color:  #747480;
+  /* legacy aliases kept for existing component styles */
+  --warning-color: var(--running-color);
+  --danger-color:  var(--error-color);
   --info-color:    #2D6FD6;
 
-  /* Radii — softened for a calmer, modern feel */
-  --radius-sm:  6px;
-  --radius-md:  8px;
-  --radius-lg:  10px;
-  --radius-xl:  14px;
-  --border-radius: var(--radius-md);
+  /* Radii — 2px everywhere. Status/radio dots are the only circles. */
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 2px;
+  --border-radius: 2px;
 
-  /* Chart palette — first slot is always EY Yellow */
-  --chart-1: #E6CF00;
-  --chart-2: #2D6FD6;
-  --chart-3: #1F9D63;
-  --chart-4: #D6489B;
+  /* Chart palette — yellow-chart first, ink second, then muted supporting hues */
+  --chart-1: #E8C400;
+  --chart-2: #2E2E38;
+  --chart-3: #9B9BA6;
+  --chart-4: #2D6FD6;
   --chart-5: #7C5CD6;
   --chart-6: #E0792A;
   --chart-7: #0E9BB5;
-  --chart-8: #D64545;
+  --chart-8: #C4331D;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -91,61 +116,66 @@
 html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-family: "EYInterstate", "Inter var", "Inter", -apple-system,
-               BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   letter-spacing: -0.005em;
   background: var(--surface-ground);
   color: var(--text-color);
 }
 
 h1, h2, h3, h4, h5, h6 {
-  letter-spacing: -0.015em;
-  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-weight: 700;
   color: var(--text-color);
 }
-h1 { font-size: 1.75rem;  line-height: 1.15; }
-h2 { font-size: 1.375rem; line-height: 1.2;  }
-h3 { font-size: 1.125rem; line-height: 1.25; }
-h4 { font-size: 1rem;     line-height: 1.3;  }
-h5 { font-size: 0.875rem; line-height: 1.35; }
-h6 { font-size: 0.75rem;  line-height: 1.4;  text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-color-secondary); }
+h1 { font-size: 1.5rem;   line-height: 1.2;  } /* page title 24px/700 */
+h2 { font-size: 1.25rem;  line-height: 1.25; }
+h3 { font-size: 1.0625rem;line-height: 1.3;  } /* card title ~13.5px/700 at body scale */
+h4 { font-size: 0.9375rem;line-height: 1.3;  }
+h5 { font-size: 0.8125rem;line-height: 1.35; }
+h6 {
+  font-size: 0.6875rem; /* 11px eyebrow / section label */
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-color-muted);
+}
+
+/* Eyebrow utility — 11px/700, tracking .1em, uppercase, muted */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-color-muted);
+}
 
 code, kbd, pre, .font-mono {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular,
-               Menlo, Consolas, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-feature-settings: "calt" 0;
 }
 
-/* Soft scrollbar */
+/* Scrollbar — square, unobtrusive */
 ::-webkit-scrollbar        { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track  { background: transparent; }
 ::-webkit-scrollbar-thumb  {
-  background: #CFD2DA;
-  border-radius: 999px;
+  background: var(--surface-500);
+  border-radius: 2px;
   border: 2px solid var(--surface-ground);
 }
-::-webkit-scrollbar-thumb:hover { background: #B6BAC5; }
+::-webkit-scrollbar-thumb:hover { background: var(--surface-600); }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Topbar — dark charcoal chrome, brand-led
+ * Topbar — ink, brand-led. Sized/positioned in AppTopbar.vue + _topbar.scss.
  * ───────────────────────────────────────────────────────────────────── */
 .layout-topbar {
   background-color: var(--chrome-bg) !important;
   border-bottom: 1px solid var(--chrome-border);
   box-shadow: none !important;
-  height: 4.5rem !important;
-}
-
-.layout-topbar .layout-topbar-logo {
-  color: var(--chrome-text) !important;
-  letter-spacing: -0.015em;
-}
-.layout-topbar .layout-topbar-logo img {
-  height: 2rem !important;
 }
 
 .layout-topbar .layout-topbar-button {
   color: var(--chrome-text-muted);
+  border-radius: var(--radius-sm) !important;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 .layout-topbar .layout-topbar-button:hover {
@@ -166,39 +196,42 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Sidebar — light card (airy), framed only by the dark topbar
+ * Sidebar — dark, flush against the topbar (no floating card).
  * ───────────────────────────────────────────────────────────────────── */
 .layout-sidebar {
-  background-color: var(--surface-card) !important;
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-lg) !important;
+  background-color: var(--chrome-bg-2) !important;
+  border: none !important;
+  border-right: 1px solid var(--chrome-border);
+  border-radius: 0 !important;
   box-shadow: none !important;
-  padding: 0.75rem 0.75rem !important;
+  padding: 0.75rem 0 !important;
 }
 
 .layout-menu .layout-root-menuitem > .layout-menuitem-root-text {
-  font-size: 0.68rem !important;
+  font-size: 0.65625rem !important; /* 10.5px */
+  font-weight: 700;
   letter-spacing: 0.08em;
-  color: var(--text-color-muted) !important;
-  margin: 1rem 0.75rem 0.5rem !important;
+  color: var(--chrome-section) !important;
+  margin: 1rem 1rem 0.5rem !important;
 }
 
 .layout-menu ul a {
-  border-radius: var(--radius-md) !important;
-  padding: 0.55rem 0.75rem !important;
-  font-size: 0.875rem;
-  color: var(--text-color-secondary) !important;
+  border-radius: 0 !important;
+  padding: 0.5rem 1rem !important;
+  min-height: 34px;
+  font-size: 0.84375rem; /* 13.5px */
+  color: var(--chrome-item-text) !important;
   position: relative;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.layout-menu ul a .layout-menuitem-icon { color: var(--text-color-muted); }
+.layout-menu ul a .layout-menuitem-icon { color: var(--chrome-item-muted); }
 .layout-menu ul a:hover {
-  background-color: var(--surface-hover) !important;
-  color: var(--text-color) !important;
+  background-color: var(--chrome-hover) !important;
+  color: #FFFFFF !important;
 }
 .layout-menu ul a.active-route {
-  color: var(--text-color) !important;
-  background-color: var(--surface-100) !important;
+  color: #FFFFFF !important;
+  background-color: var(--chrome-active-bg) !important;
   font-weight: 600 !important;
   box-shadow: none !important;
   outline: none !important;
@@ -207,10 +240,9 @@ code, kbd, pre, .font-mono {
 .layout-menu ul a.active-route::before {
   content: '';
   position: absolute;
-  left: 0; top: 25%;
-  width: 3px; height: 50%;
-  background: var(--primary-color);
-  border-radius: 999px;
+  left: 0; top: 0;
+  width: 3px; height: 100%;
+  background: var(--yellow);
 }
 /* Kill PrimeVue focus ring on all menu links */
 .layout-menu ul a:focus,
@@ -221,8 +253,8 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Buttons — EY look: square corners, charcoal primary, outlined secondary.
- * Severity variants (danger/success/etc.) keep their own colours.
+ * Buttons — squared, ink primary with a yellow bottom border, outlined
+ * secondary. Severity variants (danger/success/etc.) keep their own colours.
  * ───────────────────────────────────────────────────────────────────── */
 .p-button {
   border-radius: var(--radius-sm) !important;
@@ -234,15 +266,17 @@ code, kbd, pre, .font-mono {
 .p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warning):not(.p-button-danger):not(.p-button-help) {
   background: var(--button-primary-bg);
   border: 1px solid var(--button-primary-bg);
+  border-bottom: 3px solid var(--button-primary-border);
   color: var(--button-primary-text);
 }
 .p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warning):not(.p-button-danger):not(.p-button-help):hover {
   background: var(--button-primary-hover);
   border-color: var(--button-primary-hover);
+  border-bottom-color: var(--button-primary-border);
   color: var(--button-primary-text);
 }
 .p-button.p-button-outlined {
-  border: 1px solid var(--surface-border);
+  border: 1px solid var(--surface-border-input);
   color: var(--text-color);
   background: transparent;
 }
@@ -264,7 +298,7 @@ code, kbd, pre, .font-mono {
  * .p-highlight::before white pill must also be neutralized. */
 .p-selectbutton .p-button:not(.p-highlight) {
   background: transparent !important;
-  border: 1px solid var(--surface-border) !important;
+  border: 1px solid var(--surface-border-input) !important;
   color: var(--text-color) !important;
 }
 .p-selectbutton .p-button:not(.p-highlight):hover {
@@ -273,9 +307,9 @@ code, kbd, pre, .font-mono {
   color: var(--text-color) !important;
 }
 .p-selectbutton .p-button.p-highlight {
-  background: var(--button-primary-bg) !important;
-  border: 1px solid var(--button-primary-bg) !important;
-  color: var(--button-primary-text) !important;
+  background: var(--ink) !important;
+  border: 1px solid var(--ink) !important;
+  color: var(--yellow) !important;
 }
 .p-selectbutton .p-button.p-highlight::before {
   background: transparent !important;
@@ -283,7 +317,7 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Inputs — light surface with subtle border, yellow on focus
+ * Inputs — square, subtle border, ink + yellow ring on focus
  * ───────────────────────────────────────────────────────────────────── */
 .p-inputtext,
 .p-dropdown,
@@ -291,7 +325,7 @@ code, kbd, pre, .font-mono {
 .p-password input,
 .p-inputnumber-input {
   background: var(--surface-card) !important;
-  border: 1px solid var(--surface-border) !important;
+  border: 1px solid var(--surface-border-input) !important;
   color: var(--text-color) !important;
   border-radius: var(--radius-sm) !important;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -304,31 +338,38 @@ code, kbd, pre, .font-mono {
 .p-inputtext:enabled:focus,
 .p-dropdown:not(.p-disabled).p-focus,
 .p-multiselect:not(.p-disabled).p-focus {
-  border-color: var(--primary-color) !important;
-  box-shadow: 0 0 0 3px rgba(242, 194, 0, 0.20) !important;
+  border-color: var(--ink) !important;
+  box-shadow: 0 0 0 2px var(--yellow) !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Cards / panels — white, hairline border, whisper of elevation
+ * Cards / panels — flat, hairline border. Emphasis card = 3px ink top border.
  * ───────────────────────────────────────────────────────────────────── */
 .surface-card {
   background: var(--surface-card) !important;
   border-radius: var(--radius-lg) !important;
 }
 .shadow-1, .shadow-2, .shadow-3 {
-  box-shadow: 0 1px 3px rgba(20, 20, 40, 0.05) !important;
+  box-shadow: none !important;
   border: 1px solid var(--surface-border);
+}
+.card--emphasis {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-top: 3px solid var(--ink);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Progress bar — gold fill, dark readable label
+ * Progress bar — yellow fill, ink readable label
  * ───────────────────────────────────────────────────────────────────── */
 .p-progressbar {
   background: var(--surface-200) !important;
-  border-radius: 999px !important;
+  border-radius: var(--radius-sm) !important;
+  height: 5px;
 }
 .p-progressbar .p-progressbar-value {
-  border-radius: 999px !important;
+  background: var(--yellow) !important;
+  border-radius: var(--radius-sm) !important;
 }
 .p-progressbar .p-progressbar-label {
   color: var(--primary-color-text) !important;
@@ -336,19 +377,19 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * DataTable — white surface so it lifts off the canvas, hover-only emphasis
+ * DataTable — 2px ink rule under the header row, hairline row dividers
  * ───────────────────────────────────────────────────────────────────── */
 .p-datatable {
   background: var(--surface-card) !important;
 }
 .p-datatable .p-datatable-thead > tr > th {
-  background: var(--surface-section) !important;
-  color: var(--text-color-secondary) !important;
-  font-size: 0.7rem !important;
+  background: var(--surface-card) !important;
+  color: var(--text-color-muted) !important;
+  font-size: 0.6875rem !important;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600 !important;
-  border-bottom: 1px solid var(--surface-border) !important;
+  letter-spacing: 0.07em;
+  font-weight: 700 !important;
+  border-bottom: 2px solid var(--ink) !important;
   padding: 0.6rem 0.875rem !important;
 }
 .p-datatable .p-datatable-tbody > tr {
@@ -356,9 +397,9 @@ code, kbd, pre, .font-mono {
 }
 .p-datatable .p-datatable-tbody > tr > td {
   background: transparent !important;
-  border-bottom: 1px solid var(--surface-border) !important;
+  border-bottom: 1px solid var(--surface-border-row) !important;
   padding: 0.6rem 0.875rem !important;
-  font-size: 0.875rem;
+  font-size: 0.84375rem;
   color: var(--text-color);
 }
 .p-datatable .p-datatable-tbody > tr:hover > td {
@@ -366,12 +407,12 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Tags / chips / badges — flat, brand-aware
+ * Tags / chips / badges — flat, square, brand-aware
  * ───────────────────────────────────────────────────────────────────── */
 .p-tag {
   border-radius: var(--radius-sm) !important;
-  font-weight: 600 !important;
-  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  font-size: 0.6875rem !important;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 0.15rem 0.45rem !important;
@@ -383,7 +424,7 @@ code, kbd, pre, .font-mono {
 .p-dialog {
   border-radius: var(--radius-lg) !important;
   border: 1px solid var(--surface-border);
-  box-shadow: 0 16px 40px rgba(20, 20, 40, 0.18), 0 4px 8px rgba(20, 20, 40, 0.08) !important;
+  box-shadow: 0 16px 40px rgba(26, 26, 36, 0.18), 0 4px 8px rgba(26, 26, 36, 0.08) !important;
 }
 .p-dialog .p-dialog-header,
 .p-dialog .p-dialog-content,
@@ -399,20 +440,15 @@ code, kbd, pre, .font-mono {
   border-radius: var(--radius-md) !important;
   border: 1px solid var(--surface-border) !important;
   background: var(--surface-overlay) !important;
-  box-shadow: 0 12px 24px rgba(20, 20, 40, 0.16) !important;
+  box-shadow: 0 12px 24px rgba(26, 26, 36, 0.16) !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Dropdown / MultiSelect — matches the reference design:
- *   clean panel with shadow, rounded pill highlights, compact icons.
+ * Dropdown / MultiSelect — square panel, flat highlights.
  * Panel is body-appended so these must be global (no scoped styles).
  * ───────────────────────────────────────────────────────────────────── */
 
 /* ── Closed trigger ─────────────────────────────────────────────────── */
-/* The label span also carries .p-inputtext, so the broad input border
- * rule above re-applies a full border to it — its right edge shows up as
- * a stray vertical line between the clear icon and the trigger chevron.
- * The outer .p-dropdown/.p-multiselect already draws the visible border. */
 .p-dropdown .p-dropdown-label,
 .p-multiselect .p-multiselect-label {
   padding: 0.5rem 0.75rem !important;
@@ -420,13 +456,11 @@ code, kbd, pre, .font-mono {
   background: transparent !important;
 }
 
-/* Compact chevron */
 .p-dropdown .p-dropdown-trigger,
 .p-multiselect .p-multiselect-trigger {
   width: 2.25rem !important;
 }
 
-/* Clear × — smaller so it doesn't dominate */
 .p-dropdown .p-dropdown-clear-icon,
 .p-multiselect .p-multiselect-clear-icon {
   font-size: 0.625rem !important;
@@ -440,26 +474,23 @@ code, kbd, pre, .font-mono {
   background: var(--surface-card) !important;
   border: 1px solid var(--surface-border) !important;
   border-radius: var(--radius-md) !important;
-  box-shadow: 0 4px 16px rgba(20, 20, 40, 0.10), 0 1px 4px rgba(20, 20, 40, 0.05) !important;
+  box-shadow: 0 4px 16px rgba(26, 26, 36, 0.10), 0 1px 4px rgba(26, 26, 36, 0.05) !important;
   margin-top: 4px;
 }
 
-/* Panel header (filter row) */
 .p-dropdown-panel .p-dropdown-header,
 .p-multiselect-panel .p-multiselect-header {
   background: var(--surface-card) !important;
   border-bottom: 1px solid var(--surface-border) !important;
   padding: 0.4rem 0.4rem !important;
-  border-radius: var(--radius-md) var(--radius-md) 0 0 !important;
+  border-radius: 0 !important;
 }
 
-/* Item list — inner padding so highlights don't bleed to panel edge */
 .p-dropdown-items,
 .p-multiselect-items {
   padding: 0.3rem !important;
 }
 
-/* Items — rounded pill highlight */
 .p-dropdown-panel .p-dropdown-items .p-dropdown-item,
 .p-multiselect-panel .p-multiselect-items .p-multiselect-item {
   border-radius: var(--radius-sm) !important;
@@ -478,14 +509,12 @@ code, kbd, pre, .font-mono {
   color: var(--highlight-text-color) !important;
 }
 
-/* Empty message */
 .p-dropdown-panel .p-dropdown-items .p-dropdown-empty-message,
 .p-multiselect-panel .p-multiselect-items .p-multiselect-empty-message {
   padding: 0.55rem 0.75rem !important;
   color: var(--text-color-secondary) !important;
 }
 
-/* MultiSelect chip tokens */
 .p-multiselect-token {
   background: var(--surface-ground) !important;
   border: 1px solid var(--surface-border) !important;
@@ -500,15 +529,20 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * Page chrome — main container rhythm
+ * Page chrome — main container rhythm (28px 32px page padding, 1440px max)
  * ───────────────────────────────────────────────────────────────────── */
 .layout-main-container {
-  padding: 6rem 1.75rem 2rem 1.75rem !important;
+  padding: calc(3.375rem + 1.75rem) 2rem 2rem 2rem !important; /* 54px topbar + 28px gutter */
   background: var(--surface-ground);
+}
+.layout-main {
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* Selection — brand-coloured */
 ::selection {
-  background: rgba(242, 194, 0, 0.32);
-  color: #2E2E38;
+  background: rgba(255, 230, 0, 0.4);
+  color: #1A1A24;
 }
