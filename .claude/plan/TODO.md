@@ -1,3 +1,13 @@
+- [ ] Restructure:
+    The current workflow is not quite intuitive and requires a lot of mouse clicking, e.g. select data, config, model, etc. I'm thinking of restructure the modules to make the workflow smoother. There are 2 main types of users: one wants to draw insights from the data and take actions, and another focuses on the technical side and needs to make sure the models run correctly. Dashboard, Datasets and System modules can stay the same. We will restructure the rest into: Model, Analysis, Jobs. 
+    Model should have New Model & Model Results. New Model has 2 mode: auto mode and manual mode. Auto mode can be used for experimenting, or high-level work, while manual mode is built purposefully for people with technical expertise. Take inspirations from Vertex AI for the model build and train. The Model Results section just shows model evaluation (diagnosis and backtesting), and model properties when user selects a trained model.
+    Analysis: this section presents the results forecasted by the model with insightful visualizations, for example: 
+        - Heatmap: changes in financial ratio (e.g COGS/Revenue, Revenue Change) by sectors, for each forecasted years. User can deep dive into a sector, which shows heatmap by selected companies
+        - Financial Forecast: show charts on model forecast for each financial items
+        - PD/LGD: same
+        - ECL: same
+        - Transition: same
+    Jobs section: this stores the history of model runs. When user inspects a model run, they can have option to customize a specific segment model and rerun that segment
 - [x] Revise data and model:
     - [x] Modify @services/server/project/data/test_data/demo_macro_forecast.csv :remove columns sector,subsector,base_year,total_assets,total_longterm_debts,total_shortterm_debts,country
     - [x] When performing forecast job, we just use the MEVs the model required. That means each country/subsector model with generate 1 dataset of forecasts.
@@ -23,6 +33,7 @@
 - Develop PD model by logistic regression
 - Create staging ETL: transform bank's raw data, merge files, ...
 - Cleanup unused env variables
+- Email when training jobs complete
 
 ---
 
