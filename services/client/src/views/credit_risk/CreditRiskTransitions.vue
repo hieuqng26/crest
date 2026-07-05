@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const ratings = ['AAA', 'AA', 'A', 'BBB', 'BB', 'B', 'CCC', 'D']
 
@@ -14,45 +14,72 @@ const matrix = [
   [ 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,100.0]
 ]
 
-const cellColor = (val, rowIdx, colIdx) => {
-  if (rowIdx === colIdx) return 'rgba(96,165,250,0.35)'
-  if (colIdx === ratings.length - 1 && rowIdx !== ratings.length - 1) {
-    if (val > 10) return 'rgba(248,113,113,0.6)'
-    if (val > 2)  return 'rgba(251,191,36,0.4)'
-    return 'rgba(248,113,113,0.15)'
+// Diagonal (stable) = ink bg, yellow figures. Everything else = gray-intensity
+// scaled by magnitude — flat monochrome, no red/green traffic-light coloring.
+const cellStyle = (val, rowIdx, colIdx) => {
+  if (rowIdx === colIdx) {
+    return { background: 'var(--ink)', color: 'var(--yellow)' }
   }
-  if (colIdx > rowIdx) return `rgba(248,113,113,${Math.min(val / 30, 0.7)})`
-  return `rgba(52,211,153,${Math.min(val / 30, 0.5)})`
+  const alpha = Math.min(0.08 + val / 30 * 0.8, 0.85)
+  return {
+    background: `rgba(46, 46, 56, ${alpha.toFixed(2)})`,
+    color: alpha > 0.45 ? '#FFFFFF' : 'var(--text-color)'
+  }
 }
 </script>
 
 <template>
-  <div class="p-4">
-    <h2 class="text-2xl font-semibold mb-1">Credit Grade Transition Matrix</h2>
-    <p class="text-color-secondary text-sm mb-4">1-year transition probabilities (%). Blue = diagonal (stable), green = upgrade, red = downgrade.</p>
+  <div>
+    <PageHeader eyebrow="ANALYSIS" title="Transitions" subtitle="1-year credit-grade transition probabilities (%). Ink diagonal = stable; gray intensity = migration size." />
 
-    <div class="surface-card border-round shadow-1 p-4 overflow-x-auto">
-      <table class="w-full text-center text-sm" style="border-collapse:separate; border-spacing:2px">
-        <thead>
-          <tr>
-            <th class="text-color-secondary text-xs px-2 py-2 text-left">From \ To</th>
-            <th v-for="r in ratings" :key="r" class="text-color-secondary text-xs px-2 py-2">{{ r }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, ri) in matrix" :key="ri">
-            <td class="text-color-secondary text-xs font-medium px-2 py-2 text-left">{{ ratings[ri] }}</td>
-            <td
-              v-for="(val, ci) in row"
-              :key="ci"
-              class="border-round px-2 py-2 font-mono text-xs font-semibold"
-              :style="{ backgroundColor: cellColor(val, ri, ci), minWidth: '52px' }"
-            >
-              {{ val.toFixed(1) }}%
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="panel">
+      <div class="matrix-grid matrix-grid--head">
+        <div>FROM &#8594; TO</div>
+        <div v-for="r in ratings" :key="r" class="ta-center">{{ r }}</div>
+      </div>
+      <div v-for="(row, ri) in matrix" :key="ri" class="matrix-grid matrix-grid--row">
+        <div class="row-label">{{ ratings[ri] }}</div>
+        <div
+          v-for="(val, ci) in row" :key="ci"
+          class="font-mono cell"
+          :style="cellStyle(val, ri, ci)"
+        >{{ val.toFixed(1) }}%</div>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  padding: 16px;
+}
+
+.matrix-grid {
+  display: grid;
+  grid-template-columns: 90px repeat(8, 1fr);
+  column-gap: 8px;
+  align-items: center;
+}
+.matrix-grid--head {
+  height: 36px;
+  border-bottom: 2px solid var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-color-muted);
+}
+.matrix-grid--row { padding: 2px 0; }
+.ta-center { text-align: center; }
+.row-label { font-size: 13px; font-weight: 600; }
+.cell {
+  margin: 2px 0;
+  padding: 11px 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 2px;
+}
+</style>

@@ -1,10 +1,6 @@
 <template>
-  <div class="p-5 mx-auto" style="max-width: 1400px">
-    <!-- Header -->
-    <header class="mb-5">
-      <h1 class="text-3xl font-semibold m-0 tracking-tight">Audit Logs</h1>
-      <p class="text-color-secondary text-sm m-0 mt-1">Search and export system activity records.</p>
-    </header>
+  <div>
+    <PageHeader eyebrow="SYSTEM" title="Audit Logs" subtitle="Search and export system activity records." />
 
     <!-- Filters panel -->
     <div class="panel mb-4">
@@ -186,6 +182,7 @@ import { useToast } from 'primevue/usetoast'
 import { saveFile } from '@/views/composables/views.js'
 import { formatDate } from '@/utils'
 import Paginator from '@/components/Paginator.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const store = useStore()
 const toast = useToast()
@@ -538,7 +535,7 @@ const toDate = (date) => {
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
-  border-radius: 12px;
+  border-radius: 2px;
   padding: 1.25rem;
 }
 .panel-section-label {
@@ -567,36 +564,37 @@ const toDate = (date) => {
   width: 2.25rem;
   height: 2.25rem;
   flex-shrink: 0;
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
+  border: 1px solid var(--surface-border-input);
+  border-radius: 2px;
   background: var(--surface-ground);
   color: var(--text-color-secondary);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
 }
 .sort-dir-btn:hover {
-  border-color: var(--primary-color);
+  border-color: var(--ink);
   color: var(--text-color);
 }
 
 .bare-table { margin: 0 -1.25rem; }
 :deep(.bare-table-inner .p-datatable-thead > tr > th) {
   background: transparent;
-  color: var(--text-color-secondary);
-  font-weight: 500;
-  font-size: 0.7rem;
+  color: var(--text-color-muted);
+  font-weight: 700;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 2px solid var(--ink);
   padding: 0.6rem 1.25rem;
 }
 :deep(.bare-table-inner .p-datatable-tbody > tr > td) {
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 1px solid var(--surface-border-row);
   padding: 0.75rem 1.25rem;
   font-size: 0.875rem;
 }
+:deep(.bare-table-inner .p-datatable-tbody > tr:hover > td) { background: var(--surface-hover); }
 :deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 :deep(.bare-table-inner .p-datatable-header) {
   background: transparent;

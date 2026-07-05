@@ -431,6 +431,16 @@ code, kbd, pre, .font-mono {
   letter-spacing: 0.06em;
   padding: 3px 7px !important;
 }
+/* Severity variants — muted tints over the semantic tokens, not PrimeVue's
+   default pastel palette (kept flat/banking-appropriate, no bright fills). */
+.p-tag-success { background: rgba(24, 134, 71, 0.12) !important; color: var(--success-text-color) !important; }
+.p-tag-danger  { background: rgba(196, 51, 29, 0.12) !important; color: var(--error-text-color) !important; }
+.p-tag-warning { background: rgba(214, 182, 0, 0.2) !important; color: var(--running-text-color) !important; }
+.p-tag-info    { background: rgba(45, 111, 214, 0.12) !important; color: var(--info-color) !important; }
+.p-tag-secondary, .p-tag-contrast {
+  background: var(--surface-200) !important;
+  color: var(--text-color-secondary) !important;
+}
 
 /* ─────────────────────────────────────────────────────────────────────
  * Dialogs & overlays

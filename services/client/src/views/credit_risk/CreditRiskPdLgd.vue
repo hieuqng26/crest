@@ -6,6 +6,7 @@ import { useToast } from 'primevue/usetoast'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { localFetchPage } from '@/utils/tableQuery'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
 const toast  = useToast()
@@ -32,22 +33,32 @@ const METRIC_OPTIONS = [
 const selectedMetric = ref(METRIC_OPTIONS[0])
 
 // ── chart data ────────────────────────────────────────────────────────────────
-const CHART_COLORS = ['#FFE600', '#60A5FA', '#34D399', '#F472B6', '#A78BFA', '#FB923C']
+// Fixed scenario → style mapping per the v2 design tokens; any other scenario
+// name falls back to the muted palette below.
+const SCENARIO_STYLE = {
+  Baseline: { color: '#E8C400', width: 2.6, dash: [] },
+  Adverse: { color: '#2E2E38', width: 1.6, dash: [] },
+  'Severely Adverse': { color: '#9B9BA6', width: 1.6, dash: [5, 4] }
+}
+const FALLBACK_COLORS = ['#2D6FD6', '#7C5CD6', '#E0792A', '#0E9BB5', '#C4331D']
 
 function buildChartData(field) {
   const scenarios = [...new Set((kmvRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
   const allYears  = [...new Set((kmvRows.value || []).map(r => r.YEAR))].sort()
+  let fallbackIdx = 0
   return {
     labels: allYears,
-    datasets: scenarios.map((scen, i) => {
+    datasets: scenarios.map((scen) => {
       const rows   = kmvRows.value.filter(r => r.SCENARIO === scen)
       const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
+      const style = SCENARIO_STYLE[scen] ?? { color: FALLBACK_COLORS[fallbackIdx++ % FALLBACK_COLORS.length], width: 2, dash: [] }
       return {
         label: scen,
         data: allYears.map(y => byYear[y]?.[field] ?? null),
-        borderColor: CHART_COLORS[i % CHART_COLORS.length],
+        borderColor: style.color,
         backgroundColor: 'transparent',
-        borderWidth: 2,
+        borderWidth: style.width,
+        borderDash: style.dash,
         tension: 0.3,
         pointRadius: 3,
         pointHoverRadius: 5,
@@ -85,7 +96,7 @@ const rawOptions = {
 const activeChartOptions = computed(() => selectedMetric.value.pct ? pctOptions : rawOptions)
 
 const legendItems = computed(() =>
-  (activeChartData.value.datasets || []).map((d, i) => ({ label: d.label, color: CHART_COLORS[i % CHART_COLORS.length] }))
+  (activeChartData.value.datasets || []).map((d) => ({ label: d.label, color: d.borderColor }))
 )
 
 // ── data loading ──────────────────────────────────────────────────────────────
@@ -140,16 +151,11 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
 </script>
 
 <template>
-  <div class="p-5 mx-auto" style="max-width: 1400px">
-    <!-- Header -->
-    <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
-      <div>
-        <h1 class="text-3xl font-semibold m-0 tracking-tight">PD / LGD Term Structure</h1>
-        <p class="text-color-secondary text-sm m-0 mt-1">KMV-derived probability of default, loss given default, and distance to default.</p>
-      </div>
-      <div class="flex align-items-center gap-3 flex-wrap">
-        <div class="flex flex-column gap-1">
-          <span class="text-xs text-color-secondary uppercase tracking-wide">Metric</span>
+  <div>
+    <PageHeader eyebrow="ANALYSIS" title="PD / LGD Term Structure" subtitle="KMV-derived probability of default, loss given default, and distance to default.">
+      <template #actions>
+        <div class="field-col">
+          <span class="field-label">Metric</span>
           <Dropdown
             v-model="selectedMetric"
             :options="METRIC_OPTIONS"
@@ -157,8 +163,8 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
             class="w-8rem"
           />
         </div>
-        <div class="flex flex-column gap-1">
-          <span class="text-xs text-color-secondary uppercase tracking-wide">Client</span>
+        <div class="field-col">
+          <span class="field-label">Client</span>
           <Dropdown
             v-model="selectedClient"
             :options="clients"
@@ -168,8 +174,8 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
             class="w-12rem"
           />
         </div>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <!-- No active run -->
     <div v-if="noActiveRun && !loadingRun" class="panel flex flex-column align-items-center justify-content-center gap-3" style="height: 22rem">
@@ -240,7 +246,7 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
-  border-radius: 12px;
+  border-radius: 2px;
   padding: 1.25rem 1.25rem 1rem;
 }
 .panel-head {
@@ -264,7 +270,7 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 2px;
   background: var(--surface-ground);
   font-size: 0.75rem;
   color: var(--text-color-secondary);
@@ -272,4 +278,7 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 .bare-table { margin: 0 -1.25rem -1rem; }
+
+.field-col { display: flex; flex-direction: column; gap: 4px; }
+.field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
 </style>

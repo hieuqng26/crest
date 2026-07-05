@@ -1,13 +1,11 @@
 <!-- services/client/src/views/admin/RoleManagement.vue -->
 <template>
-  <div class="p-5 mx-auto" style="max-width: 1400px">
-    <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
-      <div>
-        <h1 class="text-3xl font-semibold m-0 tracking-tight">Role Management</h1>
-        <p class="text-color-secondary text-sm m-0 mt-1">Define roles and the pages each role can read, write, or execute.</p>
-      </div>
-      <Button v-can="'role:write'" icon="pi pi-plus" label="New Role" @click="openCreate" />
-    </header>
+  <div>
+    <PageHeader eyebrow="SYSTEM" title="Role Management" subtitle="Define roles and the pages each role can read, write, or execute.">
+      <template #actions>
+        <Button v-can="'role:write'" icon="pi pi-plus" label="New Role" @click="openCreate" />
+      </template>
+    </PageHeader>
 
     <div class="panel">
       <DataTable :value="roles" dataKey="name" class="bare-table-inner">
@@ -75,6 +73,7 @@ import { useStore } from 'vuex'
 import { useToast } from 'primevue/usetoast'
 import { useConfirm } from 'primevue/useconfirm'
 import { roleAPI } from '@/api'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const store = useStore()
 const toast = useToast()
@@ -148,8 +147,18 @@ const confirmDelete = (role) => {
 </script>
 
 <style scoped>
-.panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 12px; padding: 1.25rem; }
+.panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; padding: 1.25rem; }
 .perm-matrix { width: 100%; border-collapse: collapse; }
-.perm-matrix th, .perm-matrix td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--surface-border); }
+.perm-matrix th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-color-muted);
+}
+.perm-matrix td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--surface-border-row); font-size: 13px; }
 .perm-matrix th:not(:first-child), .perm-matrix td:not(:first-child) { text-align: center; width: 5rem; }
 </style>
