@@ -21,18 +21,15 @@ const router = createRouter({
         { path: '/datasets',      name: 'datasets',      component: () => import('@/views/ingest/Datasets.vue'),    meta: { requiresAuth: true, requiresPerm: 'dataset:read' } },
         { path: '/datasets/:id',  name: 'dataset_view',  component: () => import('@/views/ingest/DatasetView.vue'), meta: { requiresAuth: true, requiresPerm: 'dataset:read' }, props: true },
 
-        // Model (v2) — new consolidated screens, built in a follow-up pass
-        { path: '/model/new',     name: 'model_new',     component: ComingSoon, meta: { requiresAuth: true, requiresPerm: 'calibration:read', eyebrow: 'MODEL', title: 'New Model' } },
-        { path: '/model/results', name: 'model_results', component: ComingSoon, meta: { requiresAuth: true, requiresPerm: 'calibration:read', eyebrow: 'MODEL', title: 'Model Results' } },
-
-        // Models (v1 — superseded by New Model / Model Results; deleted once those land)
-        { path: '/models',         name: 'models',               component: () => import('@/views/configure/Models.vue'),                         meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
-        { path: '/configurations', name: 'configurations',       component: () => import('@/views/configure/Configurations.vue'),                 meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
+        // Model (v2) — New Model launches training; Model Results browses trained models
+        { path: '/model/new',            name: 'model_new',              component: () => import('@/views/model/ModelNew.vue'),                  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
+        { path: '/model/new/features',   name: 'model_feature_selection', component: () => import('@/views/model/AdvancedFeatureSelection.vue'), meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
+        { path: '/model/configurations', name: 'model_configurations',    component: () => import('@/views/model/ModelConfigurations.vue'),      meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
+        { path: '/model/results',        name: 'model_results',          component: () => import('@/views/model/ModelResults.vue'),             meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
 
         // Calibrate (v1 — New/Jobs superseded by New Model / Job History; calibrate_run
         // stays alive as the diagnostics/backtesting deep-dive linked from Job Detail
         // until Model Results absorbs it)
-        { path: '/calibrate/new',    name: 'calibrate_new',  component: () => import('@/views/calibrate/CalibrateNew.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
         { path: '/calibrate/:run_id', name: 'calibrate_run', component: () => import('@/views/calibrate/CalibrateRun.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
 
         // Evaluate (legacy URL → redirects to unified run page)

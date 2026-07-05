@@ -6,7 +6,7 @@ Full visual redesign + IA restructure of CREST (Credit Risk & Economic Stress Te
 **v2 restructures the modules around two user types** — insight-seekers and technical model owners:
 - OVERVIEW: Dashboard
 - DATA: Datasets (+ Dataset View)
-- MODEL: New Model (Auto / Manual modes), Model Results
+- MODEL: New Model (Auto / Manual modes), Configurations, Model Results, Advanced Feature Selection
 - ANALYSIS: Heatmap, Financial Forecast, PD / LGD, IFRS 9 ECL, Transitions
 - JOBS: Job History (+ Job Detail with per-segment re-run)
 - SYSTEM: User Access Management, Role Management, Audit Logs
@@ -17,7 +17,7 @@ The bundled `CREST Redesign v2.dc.html` is a **design reference created in HTML*
 - Map the design tokens below into a **custom PrimeVue theme preset** (PrimeVue 4 `definePreset` / CSS-variable overrides; or a custom theme in PrimeVue 3) so colors, radius (2px), and typography apply globally.
 - Where the theme doesn't reach, use PrimeVue **pass-through (`pt`) options** and scoped styles to restyle components (DataTable, TabView, Chips, Dropdown, Paginator, etc.).
 - The IA change (nav sections, consolidated jobs) is intentional and should be implemented as described.
-- The prototype file also contains legacy v1 screens (Model Catalog, Model Configurations, New Calibration, New Forecast, separate job lists) that are unreachable from the v2 nav — **ignore them**; they are superseded.
+- The prototype file also contains legacy v1 screens (Model Catalog, the old per-model "Model Configurations" list, New Calibration, New Forecast, separate job lists) that are unreachable from the v2 nav — **ignore them**; they are superseded by the v2 Configurations page described below.
 
 Note: the file uses a proprietary runtime (`support.js`) and won't render standalone outside its original environment. Treat it as a **source-of-truth spec**: all styles are inline in the markup, so every exact value (hex, px, weight) can be read directly from the file. Sample data in it is illustrative only.
 
@@ -96,7 +96,8 @@ Unchanged from v1 spec (tables with 2px ink header rule, outlined/solid ink tags
 
 ## Interactions & Behavior
 - Sidebar/nav: single-page routing; active item styled as above. Avatar → Login; sign-in → Dashboard.
-- New Model: mode cards toggle Auto/Manual (step 03 content and review strip change accordingly); "Start training" → Job History.
+- New Model: mode cards toggle Auto/Manual (step 03 content and review strip change accordingly); the Model Configuration and Feature Columns dropdowns are independent multi/single-selects with "select all" affordances; per-sector "Customize" opens one inline panel at a time with its own Configuration + Feature Columns dropdowns; "Start training" → Job History.
+- Configurations page: algorithm sidebar filters the table; "+ New Configuration" / Edit open the same editor card; Duplicate clones a row; Delete removes it; hyperparameter-search checkboxes gray out disabled rows and update the combo count live.
 - Model Results: list selection swaps properties/metrics.
 - Heatmap: metric chips switch data; sector click drills to companies; back link returns.
 - Job History: type chips filter; rows → Job Detail. Job Detail: Customize toggles inline panel (one at a time); Re-run segment updates only that row's status.
@@ -104,7 +105,7 @@ Unchanged from v1 spec (tables with 2px ink header rule, outlined/solid ink tags
 - No transitions/animations required beyond default hover; keep it instant and precise.
 
 ## State Management
-- Route/screen + active nav; model mode (auto/manual); selected trained model; heatmap metric + drilled sector; job type filter; customizing segment index + re-run segment set; form state (split-by, max segments, features[]).
+- Route/screen + active nav; model mode (auto/manual); selected trained model; heatmap metric + drilled sector; job type filter; customizing segment index + re-run segment set; saved-configurations list (name, algorithm, hyperparameters, split, scaler, segmentation, search settings) with an editor-open/editing-index state; per-sector state: selected configuration index + selected feature set, keyed by sector name; global feature-column selection; Advanced Feature Selection's own per-column checkbox state (synced back to New Model on Apply).
 - Two theme flags exist in the prototype (sidebar dark/light, semantic vs monochrome status colors) — **ship dark sidebar + semantic status**.
 - Data comes from existing CREST APIs; all figures in the prototype are illustrative.
 

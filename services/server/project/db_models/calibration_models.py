@@ -52,6 +52,8 @@ class ModelConfig(db.Model):
     train_split = db.Column(db.Float, nullable=False, default=0.8)
     scaler = db.Column(db.String(32), nullable=True)
     search_config_json = db.Column(db.Text, nullable=True)
+    split_by = db.Column(db.String(32), nullable=False, default="subsector")
+    max_segments = db.Column(db.Integer, nullable=False, default=5)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
@@ -71,6 +73,8 @@ class ModelConfig(db.Model):
             train_split=self.train_split,
             scaler=self.scaler,
             search_config_json=self.search_config_json,
+            split_by=self.split_by,
+            max_segments=self.max_segments,
             created_by=self.created_by,
             created_at=self.created_at.isoformat() if self.created_at else None,
         )

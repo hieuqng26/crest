@@ -26,8 +26,9 @@ const model = [
   {
     label: 'Model',
     items: [
-      { label: 'New Model',     icon: 'pi pi-fw pi-plus-circle', to: { name: 'model_new' },     perm: 'calibration:read' },
-      { label: 'Model Results', icon: 'pi pi-fw pi-chart-bar',   to: { name: 'model_results' }, perm: 'calibration:read' }
+      { label: 'New Model',      icon: 'pi pi-fw pi-plus-circle', to: { name: 'model_new' },           perm: 'calibration:read' },
+      { label: 'Configurations', icon: 'pi pi-fw pi-sliders-h',   to: { name: 'model_configurations' }, perm: 'model_config:read' },
+      { label: 'Model Results',  icon: 'pi pi-fw pi-chart-bar',   to: { name: 'model_results' },        perm: 'calibration:read' }
     ]
   },
   {

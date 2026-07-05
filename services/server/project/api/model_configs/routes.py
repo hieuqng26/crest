@@ -7,12 +7,42 @@ from pydantic import ValidationError
 from project import app_session
 from project.api.auth.decorators import require_perm
 from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
-from project.db_models.calibration_models import CalibrationRun, ModelConfig
+from project.db_models.calibration_models import (
+    CalibrationRun,
+    CalibrationRunSegment,
+    ModelConfig,
+)
 from project.logger import get_logger
 
 from . import model_configs
 
 logger = get_logger(__name__)
+
+
+def _validate_segmentation_fields(
+    body: dict,
+) -> tuple[str | None, int | None, str | None]:
+    """Returns (split_by, max_segments, error). error is set on invalid input."""
+    split_by = body.get("split_by", "subsector")
+    if split_by not in ("subsector", "country"):
+        return None, None, "split_by must be 'subsector' or 'country'"
+    max_segments = body.get("max_segments", 5)
+    if not isinstance(max_segments, int) or not (2 <= max_segments <= 20):
+        return None, None, "max_segments must be an integer 2–20"
+    return split_by, max_segments, None
+
+
+def _used_by_label(config_id: int) -> str:
+    sectors = (
+        CalibrationRunSegment.query.with_entities(CalibrationRunSegment.sector)
+        .filter_by(model_config_id=config_id)
+        .distinct()
+        .count()
+    )
+    if sectors:
+        return f"{sectors} sector{'s' if sectors != 1 else ''}"
+    direct = CalibrationRun.query.filter_by(model_config_id=config_id).count()
+    return f"{direct} run{'s' if direct != 1 else ''}" if direct else "—"
 
 
 @model_configs.get("/registry")
@@ -25,7 +55,12 @@ def list_registry():
 @require_perm("model_config:read")
 def list_configs():
     rows = ModelConfig.query.order_by(ModelConfig.created_at.desc()).all()
-    return jsonify([r.to_dict() for r in rows]), 200
+    result = []
+    for r in rows:
+        d = r.to_dict()
+        d["used_by"] = _used_by_label(r.id)
+        result.append(d)
+    return jsonify(result), 200
 
 
 @model_configs.post("/")
@@ -55,6 +90,9 @@ def create_config():
     search_config_json_val = (
         json.dumps(search_config_raw) if search_config_raw else None
     )
+    split_by, max_segments, seg_error = _validate_segmentation_fields(body)
+    if seg_error:
+        return jsonify({"error": seg_error}), 400
 
     with app_session() as session:
         cfg = ModelConfig(
@@ -65,6 +103,8 @@ def create_config():
             train_split=train_split,
             scaler=scaler,
             search_config_json=search_config_json_val,
+            split_by=split_by,
+            max_segments=max_segments,
             created_by=get_jwt_identity(),
         )
         session.add(cfg)
@@ -119,6 +159,17 @@ def update_config(config_id):
             cfg.search_config_json = (
                 json.dumps(body["search_config"]) if body["search_config"] else None
             )
+        if "split_by" in body or "max_segments" in body:
+            split_by, max_segments, seg_error = _validate_segmentation_fields(
+                {
+                    "split_by": body.get("split_by", cfg.split_by),
+                    "max_segments": body.get("max_segments", cfg.max_segments),
+                }
+            )
+            if seg_error:
+                return jsonify({"error": seg_error}), 400
+            cfg.split_by = split_by
+            cfg.max_segments = max_segments
         session.add(cfg)
         session.flush()
         result = cfg.to_dict()
