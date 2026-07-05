@@ -82,6 +82,7 @@ def list_runs():
     for r in runs.items:
         d = r.to_dict()
         d["config_name"] = r.model_config.name if r.model_config else None
+        d["run_name"] = r.name or d["config_name"]
         d["dataset_name"] = r.dataset.name if r.dataset else None
         d["algorithm"] = r.model_config.algorithm if r.model_config else None
         d["model_family"] = r.model_config.family if r.model_config else None
@@ -209,6 +210,7 @@ def create_run():
 
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
+    run_name = (body.get("name") or "").strip() or None
 
     # Build resolved CV search config from model config's saved search settings
     search_config_json = None
@@ -236,6 +238,7 @@ def create_run():
     with app_session() as session:
         run = CalibrationRun(
             run_id=run_id,
+            name=run_name,
             dataset_id=ds.id,
             model_config_id=cfg.id,
             status="queued",
@@ -266,6 +269,7 @@ def get_run(run_id):
         return jsonify({"error": "Not found"}), 404
     d = run.to_dict()
     d["config_name"] = run.model_config.name if run.model_config else None
+    d["run_name"] = run.name or d["config_name"]
     d["dataset_name"] = run.dataset.name if run.dataset else None
     d["algorithm"] = run.model_config.algorithm if run.model_config else None
     d["model_family"] = run.model_config.family if run.model_config else None

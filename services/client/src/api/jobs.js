@@ -11,7 +11,7 @@ export const KIND = { TRAINING: 'training', FORECAST: 'forecast', ANALYSIS: 'ana
 const normalizeCalibration = (r) => ({
   run_id: r.run_id,
   kind: KIND.TRAINING,
-  name: r.config_name || r.run_id.slice(0, 8),
+  name: r.run_name || r.config_name || r.run_id.slice(0, 8),
   ref: r.dataset_name || '—',
   status: r.status,
   progress: r.progress ?? (r.status === 'success' ? 100 : 0),

@@ -204,7 +204,7 @@ onMounted(async () => {
           class="model-row" :class="{ 'is-active': r.run_id === selectedRunId }"
           @click="selectRun(r)"
         >
-          <div class="model-row-name">{{ r.config_name ?? r.run_id.slice(0, 8) }}</div>
+          <div class="model-row-name">{{ r.run_name ?? r.config_name ?? r.run_id.slice(0, 8) }}</div>
           <div class="font-mono model-row-caption">{{ rowCaption(r) }}</div>
           <div class="font-mono model-row-date">{{ r.finished_at ? fmtDate(r.finished_at) : '—' }}</div>
         </div>
@@ -214,7 +214,7 @@ onMounted(async () => {
       <div v-if="selectedRun" class="detail-col">
         <div class="card--emphasis properties-card">
           <div class="properties-head">
-            <span class="font-mono model-name">{{ selectedRun.config_name }}</span>
+            <span class="font-mono model-name">{{ selectedRun.run_name ?? selectedRun.config_name }}</span>
             <span class="tag-fill">MANUAL</span>
             <span class="tag-outline">{{ selectedRun.algorithm }}</span>
           </div>

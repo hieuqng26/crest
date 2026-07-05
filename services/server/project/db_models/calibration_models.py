@@ -85,6 +85,9 @@ class CalibrationRun(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
+    name = db.Column(
+        db.String(255), nullable=True
+    )  # user-facing run label; falls back to model_config.name when unset
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
     model_config_id = db.Column(
         db.Integer, db.ForeignKey("model_configs.id"), nullable=False
@@ -139,6 +142,7 @@ class CalibrationRun(db.Model):
         return dict(
             id=self.id,
             run_id=self.run_id,
+            name=self.name,
             dataset_id=self.dataset_id,
             model_config_id=self.model_config_id,
             status=self.status,

@@ -200,7 +200,7 @@ const statusLabel = (s) => ({ success: 'Success', running: 'Running', queued: 'Q
             <span class="text-xs text-color-secondary font-mono">{{ duration(run.started_at, run.finished_at, run.status) }}</span>
           </div>
 
-          <h1 class="text-3xl font-semibold m-0 tracking-tight">{{ run.config_name }}</h1>
+          <h1 class="text-3xl font-semibold m-0 tracking-tight">{{ run.run_name ?? run.config_name }}</h1>
         </div>
 
         <div class="flex gap-2 flex-shrink-0">

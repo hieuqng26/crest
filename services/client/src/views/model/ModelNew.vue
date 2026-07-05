@@ -151,6 +151,7 @@ const launch = async () => {
       }
     }
     const payload = {
+      name: modelName.value.trim(),
       dataset_id: selectedDatasetId.value,
       model_config_id: cfg.id,
       target_col: targetCol.value,
