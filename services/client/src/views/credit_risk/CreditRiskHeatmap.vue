@@ -117,7 +117,7 @@ onMounted(fetchHeatmap)
         <div class="text-sm font-medium mb-1">Heatmap data unavailable</div>
         <div class="text-xs text-color-secondary">{{ errorMessage }}</div>
       </div>
-      <Button label="Edit analysis run" icon="pi pi-cog" size="small" @click="router.push({ name: 'credit_risk_new' })" />
+      <Button label="Job History" icon="pi pi-list" size="small" @click="router.push({ name: 'jobs_history' })" />
     </div>
 
     <!-- Loading -->

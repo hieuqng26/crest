@@ -6,10 +6,7 @@ import AppMenuItem from './AppMenuItem.vue'
 const store = useStore()
 const can = (p) => store.getters.can(p)
 
-// v2 IA: OVERVIEW / DATA / MODEL / ANALYSIS / JOBS / SYSTEM.
-// New-model, model-results, heatmap, financial-forecast and job-history/detail
-// routes resolve to a ComingSoon placeholder until their screens are built —
-// see router/index.js.
+// v2 IA: OVERVIEW / DATA / MODEL / ANALYSIS / JOBS / SYSTEM. See router/index.js.
 const model = [
   {
     label: 'Overview',

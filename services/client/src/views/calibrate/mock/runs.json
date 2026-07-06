@@ -1,7 +1,0 @@
-[
-  { "run_id": "a1b2c3d4", "config_name": "PD_LR_2024_Q4",  "dataset_name": "PD_2024_Q4.csv",          "status": "success", "progress": 100, "triggered_by": "analyst@bank.com", "started_at": "2026-06-11 09:10", "finished_at": "2026-06-11 09:14" },
-  { "run_id": "e5f6a7b8", "config_name": "Macro_ARIMA_Q3", "dataset_name": "MacroFactors_Q3.parquet",  "status": "success", "progress": 100, "triggered_by": "quant@bank.com",   "started_at": "2026-06-10 17:28", "finished_at": "2026-06-10 17:32" },
-  { "run_id": "c9d0e1f2", "config_name": "PD_GLM_Retail",  "dataset_name": "LGD_Corp_2023.xlsx",       "status": "failed",  "progress": 43,  "triggered_by": "analyst@bank.com", "started_at": "2026-06-10 11:01", "finished_at": "2026-06-10 11:05" },
-  { "run_id": "b3c4d5e6", "config_name": "LGD_GBM_Corp",   "dataset_name": "PD_Retail_2024.csv",       "status": "running", "progress": 67,  "triggered_by": "quant@bank.com",   "started_at": "2026-06-11 10:55", "finished_at": null },
-  { "run_id": "f7a8b9c0", "config_name": "PD_LR_2024_Q4",  "dataset_name": "MacroFactors_Q2.parquet",  "status": "success", "progress": 100, "triggered_by": "risk@bank.com",    "started_at": "2026-06-09 14:15", "finished_at": "2026-06-09 14:21" }
-]

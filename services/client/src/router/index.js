@@ -31,18 +31,11 @@ const router = createRouter({
         // until Model Results absorbs it)
         { path: '/calibrate/:run_id', name: 'calibrate_run', component: () => import('@/views/calibrate/CalibrateRun.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
 
-        // Evaluate (legacy URL → redirects to unified run page)
-        { path: '/evaluate/:run_id', name: 'evaluate_run', component: () => import('@/views/evaluate/EvaluateRedirect.vue'), meta: { requiresAuth: true } },
-
-        // Forecast module (v1 — jobs list/detail superseded by Job History/Detail)
-        { path: '/forecast/new',     name: 'forecast_new',  component: () => import('@/views/forecast/ForecastNew.vue'),     meta: { requiresAuth: true, requiresPerm: 'forecast:read' } },
-
         // Analysis (v2)
         { path: '/analysis/heatmap',  name: 'analysis_heatmap',  component: () => import('@/views/credit_risk/CreditRiskHeatmap.vue'),  meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
         { path: '/analysis/forecast', name: 'analysis_forecast', component: () => import('@/views/credit_risk/CreditRiskForecast.vue'), meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
 
         // Credit Risk (v1 — jobs list/detail superseded by Job History/Detail)
-        { path: '/credit-risk/new',          name: 'credit_risk_new',         component: () => import('@/views/credit_risk/CreditRiskNew.vue'),        meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
         { path: '/credit-risk/ecl',          name: 'credit_risk_ecl',         component: () => import('@/views/credit_risk/CreditRiskECL.vue'),        meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
         { path: '/credit-risk/pd-lgd',       name: 'credit_risk_pd_lgd',      component: () => import('@/views/credit_risk/CreditRiskPdLgd.vue'),     meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
         { path: '/credit-risk/transitions',  name: 'credit_risk_transitions', component: () => import('@/views/credit_risk/CreditRiskTransitions.vue'), meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
