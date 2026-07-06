@@ -113,33 +113,35 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
     <div class="showing-line">Showing {{ filtered.length }} of {{ jobs.length }} runs</div>
 
     <div class="panel">
-      <div class="jobs-grid jobs-grid--head">
-        <div>RUN</div><div>TYPE</div><div>INPUT</div><div>STATUS</div><div>PROGRESS</div><div>STARTED</div><div>FINISHED</div><div>BY</div>
-      </div>
-
-      <div v-if="!loading && filtered.length === 0" class="empty-state">
-        <i class="pi pi-inbox" />
-        <p>No runs match your filters.</p>
-      </div>
-
-      <div v-for="j in filtered" :key="j.run_id" class="jobs-grid jobs-grid--row" @click="openJob(j)">
-        <div class="run-name-cell">
-          <div class="run-name">{{ j.name }}</div>
-          <div class="font-mono run-id">{{ j.run_id }}</div>
+      <div class="table-scroll">
+        <div class="jobs-grid jobs-grid--head">
+          <div>RUN</div><div>TYPE</div><div>INPUT</div><div>STATUS</div><div>PROGRESS</div><div>STARTED</div><div>FINISHED</div><div>BY</div>
         </div>
-        <div><span class="type-tag">{{ j.kind === KIND.TRAINING ? 'TRAINING' : j.kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS' }}</span></div>
-        <div class="font-mono cell-ref">{{ j.ref }}</div>
-        <div><StatusDot :status="j.status" /></div>
-        <div class="progress-cell">
-          <div v-if="j.status === 'running'" class="progress-row">
-            <div class="progress-track"><div class="progress-fill" :style="{ width: j.progress + '%' }" /></div>
-            <span class="font-mono progress-pct">{{ j.progress }}%</span>
+
+        <div v-if="!loading && filtered.length === 0" class="empty-state">
+          <i class="pi pi-inbox" />
+          <p>No runs match your filters.</p>
+        </div>
+
+        <div v-for="j in filtered" :key="j.run_id" class="jobs-grid jobs-grid--row" @click="openJob(j)">
+          <div class="run-name-cell">
+            <div class="run-name">{{ j.name }}</div>
+            <div class="font-mono run-id">{{ j.run_id }}</div>
           </div>
-          <span v-else class="progress-label">{{ progressLabel(j) }}</span>
+          <div><span class="type-tag">{{ j.kind === KIND.TRAINING ? 'TRAINING' : j.kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS' }}</span></div>
+          <div class="font-mono cell-ref">{{ j.ref }}</div>
+          <div><StatusDot :status="j.status" /></div>
+          <div class="progress-cell">
+            <div v-if="j.status === 'running'" class="progress-row">
+              <div class="progress-track"><div class="progress-fill" :style="{ width: j.progress + '%' }" /></div>
+              <span class="font-mono progress-pct">{{ j.progress }}%</span>
+            </div>
+            <span v-else class="progress-label">{{ progressLabel(j) }}</span>
+          </div>
+          <div class="font-mono cell-mono">{{ j.started_at ? fmtDate(j.started_at) : '—' }}</div>
+          <div class="font-mono cell-mono">{{ j.finished_at ? fmtDate(j.finished_at) : '—' }}</div>
+          <div class="cell-by">{{ j.triggered_by ? j.triggered_by.split('@')[0] : '—' }}</div>
         </div>
-        <div class="font-mono cell-mono">{{ j.started_at ? fmtDate(j.started_at) : '—' }}</div>
-        <div class="font-mono cell-mono">{{ j.finished_at ? fmtDate(j.finished_at) : '—' }}</div>
-        <div class="cell-by">{{ j.triggered_by ? j.triggered_by.split('@')[0] : '—' }}</div>
       </div>
     </div>
   </div>
@@ -206,12 +208,20 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
   border-radius: 2px;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+
 .jobs-grid {
   display: grid;
   grid-template-columns: minmax(200px, 1.3fr) 110px minmax(190px, 1fr) 125px 150px 140px 140px 70px;
   column-gap: 12px;
   align-items: center;
   padding: 6px 16px;
+  /* Fixed floor (not width:max-content) so every row resolves its fr tracks
+     against the same total width — max-content would size each row to its own
+     content, misaligning columns row-to-row when cell text lengths differ. */
+  min-width: 1241px;
 }
 .jobs-grid--head {
   height: 40px;
