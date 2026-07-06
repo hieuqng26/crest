@@ -4,8 +4,8 @@
     {
       "name": "client-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "services/client"],
-      "port": 5173,
+      "runtimeArgs": ["run", "dev", "--prefix", "services/client", "--", "--port", "5183", "--strictPort"],
+      "port": 5183,
       "autoPort": true
     }
   ]

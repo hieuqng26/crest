@@ -1,19 +1,14 @@
 <template>
-  <div class="p-5 mx-auto" style="max-width: 1400px">
-    <!-- Page header -->
-    <header class="flex align-items-end justify-content-between mb-5 flex-wrap gap-3">
-      <div>
-        <h1 class="text-3xl font-semibold m-0 tracking-tight">User Access Management</h1>
-        <p class="text-color-secondary text-sm m-0 mt-1">Manage platform users and their roles.</p>
-      </div>
-      <div class="flex align-items-center gap-2">
+  <div>
+    <PageHeader eyebrow="SYSTEM" title="User Access Management" subtitle="Manage platform users and their roles.">
+      <template #actions>
         <input ref="fileInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" @change="onFileChange" />
-        <Button icon="pi pi-upload" label="Import" text class="action-btn" v-tooltip.bottom="'CSV must include a role column (an existing role name) per row.'" @click="fileInput.click()" />
-        <Button icon="pi pi-download" label="Export" text class="action-btn" @click="exportMenu.toggle($event)" />
-        <Menu ref="exportMenu" :model="exportOptions" popup :pt="{ label: { style: 'font-size:0.7rem' }, icon: { style: 'font-size:0.7rem' } }" />
+        <Button icon="pi pi-upload" label="Import" outlined v-tooltip.bottom="'CSV must include a role column (an existing role name) per row.'" @click="fileInput.click()" />
+        <Button icon="pi pi-download" label="Export" outlined @click="exportMenu.toggle($event)" />
+        <Menu ref="exportMenu" :model="exportOptions" popup />
         <Button v-can="'user:write'" icon="pi pi-plus" label="New User" @click="onAddUser" />
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <!-- Users table -->
     <div class="panel">
@@ -275,6 +270,7 @@ import { useToast } from 'primevue/usetoast'
 import { formatDate } from '@/utils'
 import { saveFile } from '@/views/composables/views.js'
 import { roleAPI } from '@/api'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const store = useStore()
 const toast = useToast()
@@ -555,7 +551,7 @@ const downloadData = computed(() => {
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
-  border-radius: 12px;
+  border-radius: 2px;
   padding: 1.25rem;
 }
 .panel-section-label {
@@ -566,33 +562,31 @@ const downloadData = computed(() => {
   color: var(--text-color-secondary);
 }
 
-.action-btn { color: var(--text-color-secondary) !important; font-size: 0.85rem; }
-.action-btn:hover { color: var(--text-color) !important; background: var(--surface-hover) !important; }
-
 :deep(.bare-table-inner .p-datatable-thead > tr > th) {
   background: transparent;
-  color: var(--text-color-secondary);
-  font-weight: 500;
-  font-size: 0.7rem;
+  color: var(--text-color-muted);
+  font-weight: 700;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 2px solid var(--ink);
   padding: 0.6rem 0.75rem;
 }
 :deep(.bare-table-inner .p-datatable-tbody > tr > td) {
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
+  border-bottom: 1px solid var(--surface-border-row);
   padding: 0.75rem 0.75rem;
   font-size: 0.875rem;
 }
+:deep(.bare-table-inner .p-datatable-tbody > tr:hover > td) { background: var(--surface-hover); }
 :deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
 :deep(.bare-table-inner .p-datatable-header) {
   background: transparent;
   border: 0;
   padding: 0 0 0.75rem;
 }
-.status-active   { font-size: 0.875rem; font-weight: 500; color: #16a34a; }
+.status-active   { font-size: 0.875rem; font-weight: 500; color: var(--success-text-color); }
 .status-inactive { font-size: 0.875rem; font-weight: 500; color: var(--text-color-secondary); }
 
 :deep(.bare-table-inner .p-paginator) {

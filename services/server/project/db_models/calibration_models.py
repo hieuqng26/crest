@@ -52,6 +52,8 @@ class ModelConfig(db.Model):
     train_split = db.Column(db.Float, nullable=False, default=0.8)
     scaler = db.Column(db.String(32), nullable=True)
     search_config_json = db.Column(db.Text, nullable=True)
+    split_by = db.Column(db.String(32), nullable=False, default="subsector")
+    max_segments = db.Column(db.Integer, nullable=False, default=5)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
@@ -71,6 +73,8 @@ class ModelConfig(db.Model):
             train_split=self.train_split,
             scaler=self.scaler,
             search_config_json=self.search_config_json,
+            split_by=self.split_by,
+            max_segments=self.max_segments,
             created_by=self.created_by,
             created_at=self.created_at.isoformat() if self.created_at else None,
         )
@@ -81,6 +85,9 @@ class CalibrationRun(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_id = db.Column(db.String(64), unique=True, nullable=False)
+    name = db.Column(
+        db.String(255), nullable=True
+    )  # user-facing run label; falls back to model_config.name when unset
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
     model_config_id = db.Column(
         db.Integer, db.ForeignKey("model_configs.id"), nullable=False
@@ -135,6 +142,7 @@ class CalibrationRun(db.Model):
         return dict(
             id=self.id,
             run_id=self.run_id,
+            name=self.name,
             dataset_id=self.dataset_id,
             model_config_id=self.model_config_id,
             status=self.status,
@@ -217,8 +225,11 @@ class CalibrationRunSegment(db.Model):
     val_metrics_json = db.Column(db.Text, nullable=True)
     status = db.Column(
         db.String(32), nullable=False, default="pending"
-    )  # success|failed|skipped
+    )  # success|failed|skipped|queued|running
     error_message = db.Column(db.Text, nullable=True)
+    hyperparams_json = db.Column(
+        db.Text, nullable=True
+    )  # per-segment override, if customized
 
     def to_dict(self):
         return dict(
@@ -240,6 +251,9 @@ class CalibrationRunSegment(db.Model):
             else None,
             status=self.status,
             error_message=self.error_message,
+            hyperparams=json.loads(self.hyperparams_json)
+            if self.hyperparams_json
+            else None,
         )
 
 

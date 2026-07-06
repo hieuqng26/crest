@@ -270,6 +270,59 @@ def get_dataset_sectors(dataset_id):
     return jsonify({"sectors": sectors}), 200
 
 
+@datasets.get("/<int:dataset_id>/column-stats")
+@require_perm("dataset:read")
+def get_dataset_column_stats(dataset_id):
+    """Per-numeric-column stats (missing %, distinct count, mean, std, and
+    Pearson correlation with the target column) for the Advanced Feature
+    Selection screen. Non-numeric columns (ids, dates, categoricals) are
+    excluded — they can't be model features anyway."""
+    ds = Dataset.query.filter_by(id=dataset_id).first()
+    if not ds or ds.status == "deleted":
+        return jsonify({"error": "Not found"}), 404
+    target = request.args.get("target")
+    if not ds.file_path:
+        return jsonify({"columns": []}), 200
+
+    try:
+        df = _load_dataset_dataframe(ds)
+    except Exception as e:
+        logger.error(f"Failed to load dataset {dataset_id} for column stats: {e}")
+        return jsonify({"error": f"Could not load file: {e}"}), 500
+
+    numeric_df = df.select_dtypes(include=["number"])
+    feature_cols = [c for c in numeric_df.columns if c != target]
+    target_series = (
+        numeric_df[target] if target and target in numeric_df.columns else None
+    )
+    n = len(df)
+
+    columns = []
+    for col in feature_cols:
+        series = numeric_df[col]
+        missing_pct = float(series.isna().mean() * 100) if n else 0.0
+        distinct = int(series.nunique(dropna=True))
+        mean = float(series.mean()) if series.notna().any() else None
+        std = float(series.std()) if series.notna().any() else None
+        corr = None
+        if target_series is not None:
+            c = series.corr(target_series)
+            corr = float(c) if pd.notna(c) else None
+        columns.append(
+            {
+                "name": col,
+                "type": "float" if str(series.dtype).startswith("float") else "int",
+                "missing_pct": round(missing_pct, 2),
+                "distinct": distinct,
+                "mean": round(mean, 4) if mean is not None else None,
+                "std": round(std, 4) if std is not None else None,
+                "corr": round(corr, 4) if corr is not None else None,
+            }
+        )
+
+    return jsonify({"columns": columns, "row_count": n}), 200
+
+
 @datasets.delete("/<int:dataset_id>")
 @require_perm("dataset:write")
 def delete_dataset(dataset_id):

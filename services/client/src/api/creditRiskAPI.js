@@ -30,6 +30,11 @@ const creditRiskAPI = {
   cancelRun:       (runId)         => httpClient.post(`/credit-risk/runs/${runId}/cancel`),
   rerunRun:        (runId)         => httpClient.post(`/credit-risk/runs/${runId}/rerun`),
   deleteRun:       (runId)         => httpClient.delete(`/credit-risk/runs/${runId}`),
+
+  // Analysis: Sector Heatmap & Financial Forecast (sourced from the active run)
+  analysisMeta:     (runId = null) => httpClient.get('/credit-risk/analysis/meta', { params: runId ? { run_id: runId } : {} }),
+  analysisHeatmap:  (params)       => httpClient.get('/credit-risk/analysis/heatmap', { params }),
+  analysisForecast: (params)       => httpClient.get('/credit-risk/analysis/forecast', { params }),
 }
 
 export default creditRiskAPI

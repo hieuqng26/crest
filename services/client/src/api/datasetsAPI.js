@@ -34,6 +34,8 @@ const datasetsAPI = {
 
   sectors: (id) => httpClient.get(`/datasets/${id}/sectors`),
 
+  columnStats: (id, target) => httpClient.get(`/datasets/${id}/column-stats`, { params: { target } }),
+
   // Rows endpoint — used by DatasetView via CommonDataTable's fetchPage
   // GET /api/datasets/:id/rows?page=&page_size=&sort_column=&sort_order=&filters=
   rows: (id, pageState) => httpClient.get(`/datasets/${id}/rows`, { params: toPageParams(pageState) }),

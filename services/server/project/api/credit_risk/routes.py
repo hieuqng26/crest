@@ -711,3 +711,586 @@ def _load_client_data(dataset_id: int, client_id: str):
         forecast["SCENARIO"] = "Baseline"
 
     return com_info, forecast
+
+
+# ── Analysis: Sector Heatmap & Financial Forecast ─────────────────────────────
+#
+# Both screens read from the active CreditRiskRun: its credit + financial-portfolio
+# datasets (for sector/subsector/country routing, same merge the Celery task does)
+# and its linked ForecastRun "slots". total_assets / short_term_debts /
+# long_term_debts are the 3 slots required to run KMV at all; total_revenue and
+# total_cogs are optional extra slots (added via the same New Analysis form) that
+# unlock these two Analysis screens. "History" comes from the actual dataset each
+# forecast run's calibration was trained on (real historical actuals), not mocked.
+
+_HEATMAP_METRICS = {
+    "revenue_growth": {
+        "label": "Revenue growth",
+        "unit": "% YoY",
+        "needs": {"total_revenue"},
+    },
+    "cogs_margin": {
+        "label": "COGS / Revenue",
+        "unit": "Δ pp",
+        "needs": {"total_revenue", "total_cogs"},
+    },
+    "leverage": {
+        "label": "Net debt / EBITDA",
+        "unit": "Δ turns",
+        "needs": {"total_revenue", "total_cogs", "short_term_debts", "long_term_debts"},
+    },
+}
+
+_FORECAST_METRIC_DEFS = [
+    {
+        "key": "total_revenue",
+        "title": "Revenue",
+        "slot": "total_revenue",
+        "indexed": True,
+    },
+    {
+        "key": "cogs_to_revenue",
+        "title": "COGS / Revenue",
+        "slot": None,
+        "indexed": False,
+    },
+    {
+        "key": "total_assets",
+        "title": "Total Assets",
+        "slot": "total_assets",
+        "indexed": True,
+    },
+    {
+        "key": "short_term_debts",
+        "title": "Short-term Debts",
+        "slot": "short_term_debts",
+        "indexed": True,
+    },
+]
+
+
+def _load_dataset_df(dataset) -> pd.DataFrame:
+    """Download + parse a Dataset's file from MinIO — same object-key convention
+    as the credit-risk analysis Celery task (`run_credit_analysis`). Memoized on
+    Flask's request-scoped `g` since one heatmap/forecast request can reference the
+    same dataset (e.g. a forecast run's calibration source) several times over."""
+    import io
+
+    from flask import g
+
+    from project.core import storage
+
+    cache_key = f"_dataset_df_{dataset.id}"
+    cached = getattr(g, cache_key, None)
+    if cached is not None:
+        return cached
+
+    file_bytes = storage.download_bytes(dataset.file_path.split("/", 1)[-1])
+    ext = dataset.file_path.rsplit(".", 1)[-1].lower()
+    buf = io.BytesIO(file_bytes)
+    if ext == "csv":
+        df = pd.read_csv(buf)
+    elif ext == "xlsx":
+        df = pd.read_excel(buf)
+    elif ext == "parquet":
+        df = pd.read_parquet(buf)
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    setattr(g, cache_key, df)
+    return df
+
+
+def _get_analysis_run(run_id: str | None) -> "CreditRiskRun":
+    from project.db_models.credit_models import CreditRiskRun
+
+    cr = (
+        CreditRiskRun.query.filter_by(run_id=run_id).first()
+        if run_id
+        else CreditRiskRun.query.filter_by(is_active=True).first()
+    )
+    if not cr:
+        raise ValueError("No active credit risk run" if not run_id else "Run not found")
+    if cr.status != "success":
+        raise ValueError("This run has not completed successfully")
+    return cr
+
+
+def _slot_forecast_runs(cr) -> dict[str, ForecastRun]:
+    from project.db_models.credit_models import CreditRiskForecastInput
+
+    slots = {}
+    for inp in CreditRiskForecastInput.query.filter_by(credit_risk_run_id=cr.id).all():
+        fr = ForecastRun.query.get(inp.forecast_run_id)
+        if fr and fr.status == "success":
+            slots[inp.slot] = fr
+    return slots
+
+
+def _analysis_portfolio_df(cr) -> pd.DataFrame:
+    credit_ds = Dataset.query.get(cr.dataset_id)
+    if not credit_ds or not credit_ds.file_path:
+        raise ValueError("Credit dataset not found")
+    portfolio_df = _load_dataset_df(credit_ds)
+
+    if cr.financial_portfolio_dataset_id:
+        fin_ds = Dataset.query.get(cr.financial_portfolio_dataset_id)
+        if fin_ds and fin_ds.file_path:
+            fin_df = _load_dataset_df(fin_ds)
+            meta_cols = [
+                c
+                for c in ("client_id", "country", "sector", "subsector")
+                if c in fin_df.columns
+            ]
+            if "client_id" in meta_cols:
+                fin_meta = fin_df[meta_cols].drop_duplicates(subset=["client_id"])
+                new_cols = ["client_id"] + [
+                    c
+                    for c in meta_cols
+                    if c != "client_id" and c not in portfolio_df.columns
+                ]
+                portfolio_df = portfolio_df.merge(
+                    fin_meta[new_cols], on="client_id", how="left"
+                )
+    return portfolio_df
+
+
+def _historical_series(
+    fr: ForecastRun, sector: str | None, client_id: str | None
+) -> dict:
+    """Actual historical {year: summed target value} from the dataset this forecast
+    run's calibration was trained on — filtered to one client, or summed across a
+    whole sector. Drill-down calls this once per client, so the expensive part
+    (date parsing) is cached per calibration run on Flask's `g` — only the cheap
+    boolean-filter + groupby repeats per call."""
+    from flask import g
+
+    from project.db_models.calibration_models import CalibrationRun
+
+    cal_run = CalibrationRun.query.get(fr.calibration_run_id)
+    if not cal_run or not cal_run.target_col:
+        return {}
+    target = cal_run.target_col
+
+    cache_key = f"_hist_frame_{cal_run.id}"
+    work = getattr(g, cache_key, None)
+    if work is None:
+        ds = Dataset.query.get(cal_run.dataset_id)
+        if not ds or not ds.file_path:
+            setattr(g, cache_key, pd.DataFrame())
+            return {}
+        try:
+            df = _load_dataset_df(ds)
+        except Exception:
+            setattr(g, cache_key, pd.DataFrame())
+            return {}
+        date_col = next(
+            (c for c in ("date", "YEAR", "year", "period") if c in df.columns), None
+        )
+        if not date_col or target not in df.columns:
+            setattr(g, cache_key, pd.DataFrame())
+            return {}
+        work = df.copy()
+        work["_year"] = pd.to_datetime(work[date_col], errors="coerce").dt.year
+        if work["_year"].isna().all():
+            # Already a bare year column (e.g. int 2024)
+            work["_year"] = pd.to_numeric(df[date_col], errors="coerce")
+        work = work.dropna(subset=["_year"])
+        setattr(g, cache_key, work)
+
+    if work.empty or target not in work.columns:
+        return {}
+    if client_id and "client_id" in work.columns:
+        subset = work[work["client_id"] == client_id]
+    elif sector and "sector" in work.columns:
+        subset = work[work["sector"] == sector]
+    else:
+        subset = work
+    if subset.empty:
+        return {}
+    grouped = subset.groupby("_year")[target].sum()
+    return {int(y): float(v) for y, v in grouped.items()}
+
+
+def _cached_variable_index(fr: ForecastRun) -> tuple[dict, dict]:
+    """Memoized build_variable_index — the heatmap drill-down and forecast screen
+    call this once per client row (dozens to hundreds per request); rebuilding the
+    segmentation info + prediction index from ForecastRunResult rows each time would
+    be an N+1 query pattern, so cache it per forecast run on Flask's request-scoped
+    `g`."""
+    from flask import g
+
+    from project.core.credit_risk.forecast_lookup import build_variable_index
+
+    cache_key = f"_variable_index_{fr.id}"
+    cached = getattr(g, cache_key, None)
+    if cached is not None:
+        return cached
+    result = build_variable_index(fr)
+    setattr(g, cache_key, result)
+    return result
+
+
+def _variable_levels(
+    rows_df: pd.DataFrame, fr: ForecastRun, scenario: str, hist: dict
+) -> dict:
+    """{year: value} — historical actuals merged with the forecast sum across every
+    row in rows_df (one sector's clients, or a single client) for one scenario."""
+    from project.core.credit_risk.forecast_lookup import lookup_forecast
+
+    seg_info, idx_map = _cached_variable_index(fr)
+    totals: dict[int, float] = {}
+    for _, r in rows_df.iterrows():
+        series = lookup_forecast(
+            seg_info,
+            idx_map,
+            str(r.get("sector") or ""),
+            str(r.get("subsector") or ""),
+            str(r.get("country") or ""),
+        )
+        for yr, v in series.get(scenario, {}).items():
+            totals[yr] = totals.get(yr, 0.0) + v
+    levels = dict(hist)
+    levels.update(totals)
+    return levels
+
+
+def _all_scenarios(fr: ForecastRun) -> list[str]:
+    _, idx_map = _cached_variable_index(fr)
+    scens: set[str] = set()
+    for ctx_map in idx_map.values():
+        scens.update(ctx_map.keys())
+    order = {"Baseline": 0, "Adverse": 1, "Severely Adverse": 2}
+    return sorted(scens, key=lambda s: (order.get(s, 99), s))
+
+
+@credit_risk.get("/analysis/meta")
+@require_perm("credit_risk:read")
+def get_analysis_meta():
+    try:
+        cr = _get_analysis_run(request.args.get("run_id"))
+        portfolio_df = _analysis_portfolio_df(cr)
+        slots = _slot_forecast_runs(cr)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+    if "sector" not in portfolio_df.columns:
+        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
+
+    companies_by_sector: dict[str, list[str]] = {}
+    for sector, grp in portfolio_df.groupby("sector"):
+        companies_by_sector[str(sector)] = sorted(
+            grp["client_id"].astype(str).unique().tolist()
+        )
+
+    return jsonify(
+        {
+            "run_id": cr.run_id,
+            "sectors": sorted(companies_by_sector.keys()),
+            "companies_by_sector": companies_by_sector,
+            "available_metrics": {
+                k: k in slots
+                for k in (
+                    "total_assets",
+                    "short_term_debts",
+                    "long_term_debts",
+                    "total_revenue",
+                    "total_cogs",
+                )
+            },
+        }
+    ), 200
+
+
+@credit_risk.get("/analysis/heatmap")
+@require_perm("credit_risk:read")
+def get_analysis_heatmap():
+    metric = request.args.get("metric", "revenue_growth")
+    if metric not in _HEATMAP_METRICS:
+        return jsonify({"error": f"Unknown metric '{metric}'"}), 400
+    sector_filter = request.args.get("sector") or None
+    spec = _HEATMAP_METRICS[metric]
+
+    try:
+        cr = _get_analysis_run(request.args.get("run_id"))
+        portfolio_df = _analysis_portfolio_df(cr)
+        slots = _slot_forecast_runs(cr)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+    missing = spec["needs"] - set(slots)
+    if missing:
+        return jsonify(
+            {
+                "error": f"This metric needs forecast inputs for: {', '.join(sorted(missing))}. "
+                "Link them on the active analysis run."
+            }
+        ), 422
+    if "sector" not in portfolio_df.columns:
+        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
+
+    rev_fr, cogs_fr = slots.get("total_revenue"), slots.get("total_cogs")
+    st_fr, lt_fr = slots.get("short_term_debts"), slots.get("long_term_debts")
+
+    # The forecast run itself (not the historical dataset) defines which years are
+    # "forecast" columns — using an arbitrary year cutoff would misalign whenever a
+    # forecast doesn't happen to start the year right after the training data ends.
+    anchor_fr = rev_fr or cogs_fr or st_fr or lt_fr
+    _, anchor_idx = _cached_variable_index(anchor_fr)
+    forecast_years = sorted(
+        {yr for ctx_map in anchor_idx.values() for yr in ctx_map.get("Baseline", {})}
+    )
+
+    def levels_for(rows_df, sector_for_hist, client_for_hist, fr, scenario="Baseline"):
+        hist = _historical_series(fr, sector_for_hist, client_for_hist)
+        return _variable_levels(rows_df, fr, scenario, hist)
+
+    def metric_series(rows_df, sector_for_hist, client_for_hist) -> dict:
+        rev = (
+            levels_for(rows_df, sector_for_hist, client_for_hist, rev_fr)
+            if rev_fr
+            else {}
+        )
+        cogs = (
+            levels_for(rows_df, sector_for_hist, client_for_hist, cogs_fr)
+            if cogs_fr
+            else {}
+        )
+        st = (
+            levels_for(rows_df, sector_for_hist, client_for_hist, st_fr)
+            if st_fr
+            else {}
+        )
+        lt = (
+            levels_for(rows_df, sector_for_hist, client_for_hist, lt_fr)
+            if lt_fr
+            else {}
+        )
+
+        if metric == "revenue_growth":
+            series = rev
+        elif metric == "cogs_margin":
+            years = sorted(set(rev) & set(cogs))
+            series = {y: (cogs[y] / rev[y] * 100) for y in years if rev[y]}
+        else:  # leverage
+            years = sorted(set(rev) & set(cogs) & set(st) & set(lt))
+            series = {}
+            for y in years:
+                ebitda = rev[y] - cogs[y]
+                if ebitda:
+                    series[y] = (st[y] + lt[y]) / ebitda
+        return series
+
+    def yoy_deltas(series: dict, target_years: list[int]) -> list[float | None]:
+        all_years = sorted(series.keys())
+        out = []
+        for y in target_years:
+            prior = [yy for yy in all_years if yy < y]
+            if y not in series or not prior:
+                out.append(None)
+                continue
+            prev_y = prior[-1]
+            prev_v, cur_v = series[prev_y], series[y]
+            if metric == "revenue_growth":
+                out.append(
+                    round((cur_v - prev_v) / prev_v * 100, 1) if prev_v else None
+                )
+            else:
+                out.append(round(cur_v - prev_v, 1))
+        return out
+
+    if sector_filter:
+        sector_rows = portfolio_df[portfolio_df["sector"] == sector_filter]
+        if sector_rows.empty:
+            return jsonify({"error": f"Sector '{sector_filter}' not found"}), 404
+        rows_out = []
+        for _, client_row in sector_rows.iterrows():
+            client_id = str(client_row["client_id"])
+            client_df = sector_rows[sector_rows["client_id"] == client_row["client_id"]]
+            series = metric_series(client_df, None, client_id)
+            rows_out.append(
+                {
+                    "key": client_id,
+                    "label": client_id,
+                    "drillable": False,
+                    "values": yoy_deltas(series, forecast_years),
+                }
+            )
+        return jsonify(
+            {
+                "metric": metric,
+                "label": spec["label"],
+                "unit": spec["unit"],
+                "years": forecast_years,
+                "drilled": True,
+                "title": sector_filter,
+                "subtitle": f"Company-level {spec['label'].lower()} across forecast years",
+                "rows": rows_out,
+            }
+        ), 200
+
+    sectors = sorted(portfolio_df["sector"].dropna().unique().tolist())
+    rows_out = []
+    for sector in sectors:
+        sector_rows = portfolio_df[portfolio_df["sector"] == sector]
+        series = metric_series(sector_rows, sector, None)
+        rows_out.append(
+            {
+                "key": sector,
+                "label": sector,
+                "drillable": True,
+                "values": yoy_deltas(series, forecast_years),
+            }
+        )
+
+    return jsonify(
+        {
+            "metric": metric,
+            "label": spec["label"],
+            "unit": spec["unit"],
+            "years": forecast_years,
+            "drilled": False,
+            "title": "Sector Heatmap",
+            "subtitle": "Forecasted change by sector and year",
+            "rows": rows_out,
+        }
+    ), 200
+
+
+@credit_risk.get("/analysis/forecast")
+@require_perm("credit_risk:read")
+def get_analysis_forecast():
+    sector = request.args.get("sector")
+    client_id = request.args.get("client_id") or None
+    if not sector:
+        return jsonify({"error": "sector is required"}), 400
+
+    try:
+        cr = _get_analysis_run(request.args.get("run_id"))
+        portfolio_df = _analysis_portfolio_df(cr)
+        slots = _slot_forecast_runs(cr)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+    if "sector" not in portfolio_df.columns:
+        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
+
+    rows_df = portfolio_df[portfolio_df["sector"] == sector]
+    if client_id:
+        rows_df = rows_df[rows_df["client_id"].astype(str) == client_id]
+    if rows_df.empty:
+        return jsonify({"error": "No matching clients found"}), 404
+
+    def series_points(levels: dict) -> list[dict]:
+        return [{"year": y, "value": round(levels[y], 4)} for y in sorted(levels)]
+
+    metrics_out = []
+    for spec in _FORECAST_METRIC_DEFS:
+        if spec["key"] == "cogs_to_revenue":
+            rev_fr, cogs_fr = slots.get("total_revenue"), slots.get("total_cogs")
+            if not rev_fr or not cogs_fr:
+                metrics_out.append(
+                    {
+                        "key": spec["key"],
+                        "title": spec["title"],
+                        "unit": "%",
+                        "available": False,
+                    }
+                )
+                continue
+            rev_hist = _historical_series(rev_fr, sector, client_id)
+            cogs_hist = _historical_series(cogs_fr, sector, client_id)
+            hist_years = sorted(set(rev_hist) & set(cogs_hist))
+            history = [
+                {"year": y, "value": round(cogs_hist[y] / rev_hist[y] * 100, 2)}
+                for y in hist_years
+                if rev_hist[y]
+            ]
+            scenarios_out = {}
+            for scen in _all_scenarios(rev_fr):
+                rev_lv = _variable_levels(rows_df, rev_fr, scen, {})
+                cogs_lv = _variable_levels(rows_df, cogs_fr, scen, {})
+                years = sorted(set(rev_lv) & set(cogs_lv))
+                scenarios_out[scen] = [
+                    {"year": y, "value": round(cogs_lv[y] / rev_lv[y] * 100, 2)}
+                    for y in years
+                    if rev_lv[y]
+                ]
+            baseline_pts = scenarios_out.get("Baseline", [])
+            metrics_out.append(
+                {
+                    "key": spec["key"],
+                    "title": spec["title"],
+                    "unit": "%",
+                    "available": True,
+                    "history": history,
+                    "scenarios": scenarios_out,
+                    "value": baseline_pts[-1]["value"] if baseline_pts else None,
+                    "delta_pct": (
+                        round(baseline_pts[-1]["value"] - history[-1]["value"], 2)
+                        if baseline_pts and history
+                        else None
+                    ),
+                    "base_year": hist_years[0] if hist_years else None,
+                }
+            )
+            continue
+
+        fr = slots.get(spec["slot"])
+        if not fr:
+            metrics_out.append(
+                {
+                    "key": spec["key"],
+                    "title": spec["title"],
+                    "unit": "Indexed",
+                    "available": False,
+                    "slot": spec["slot"],
+                }
+            )
+            continue
+
+        hist = _historical_series(fr, sector, client_id)
+        base_year = min(hist) if hist else None
+        base_val = hist.get(base_year) if base_year is not None else None
+
+        def to_index(levels: dict) -> list[dict]:
+            if not base_val:
+                return series_points(levels)
+            return [
+                {"year": y, "value": round(levels[y] / base_val * 100, 2)}
+                for y in sorted(levels)
+            ]
+
+        history_points = to_index(hist)
+        scenarios_out = {}
+        for scen in _all_scenarios(fr):
+            levels = _variable_levels(rows_df, fr, scen, {})
+            scenarios_out[scen] = to_index(levels)
+
+        baseline_pts = scenarios_out.get("Baseline", [])
+        metrics_out.append(
+            {
+                "key": spec["key"],
+                "title": spec["title"],
+                "unit": f"Indexed · {base_year} = 100" if base_year else "Indexed",
+                "available": True,
+                "history": history_points,
+                "scenarios": scenarios_out,
+                "value": baseline_pts[-1]["value"] if baseline_pts else None,
+                "delta_pct": (
+                    round(
+                        (baseline_pts[-1]["value"] - history_points[-1]["value"])
+                        / history_points[-1]["value"]
+                        * 100,
+                        1,
+                    )
+                    if baseline_pts and history_points and history_points[-1]["value"]
+                    else None
+                ),
+                "base_year": base_year,
+            }
+        )
+
+    return jsonify(
+        {"sector": sector, "client_id": client_id, "metrics": metrics_out}
+    ), 200

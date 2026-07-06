@@ -14,4 +14,4 @@ $gutter: 1rem; //for primeflex grid system
  * render `text-primary` identifiers as ink, but highlight gold on hover.
  * ───────────────────────────────────────────────────────────────────── */
 .text-primary { color: var(--text-color) !important; }
-.hover\:text-primary:hover { color: #B8920A !important; }
+.hover\:text-primary:hover { color: var(--ink) !important; }

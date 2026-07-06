@@ -27,17 +27,50 @@ const fetchPage = (params) => datasetsAPI.rows(dataset.value.id, params)
 const fetchDistinct = (column) => datasetsAPI.rowsDistinct(dataset.value.id, column)
 </script>
 
+<style scoped>
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-color-muted);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.back-link:hover { color: var(--text-color); }
+
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+}
+
+.meta-strip { display: flex; flex-wrap: wrap; }
+.meta-cell {
+  flex: 1;
+  min-width: 10rem;
+  padding: 16px 20px;
+  border-right: 1px solid var(--surface-border-row);
+}
+.meta-cell:last-child { border-right: none; }
+.meta-label { margin-bottom: 6px; }
+.meta-value { font-size: 19px; font-weight: 600; }
+</style>
+
 <template>
-  <div v-if="dataset" class="p-4">
+  <div v-if="dataset">
 
     <!-- Header -->
+    <button class="back-link" @click="router.push(backRoute)">
+      <i class="pi pi-arrow-left text-xs" /><span>Datasets</span>
+    </button>
     <div class="flex align-items-center gap-3 mb-4">
-      <Button icon="pi pi-arrow-left" text rounded @click="router.push(backRoute)" />
       <div class="flex-1 min-w-0">
-        <div class="text-xs text-color-secondary uppercase" style="letter-spacing: 0.06em">Dataset</div>
-        <h2 class="text-2xl font-semibold m-0 white-space-nowrap overflow-hidden text-overflow-ellipsis">
-          {{ dataset.name }}
-        </h2>
+        <div class="eyebrow mb-1">DATASET</div>
+        <h1 class="white-space-nowrap overflow-hidden text-overflow-ellipsis">{{ dataset.name }}</h1>
       </div>
       <Tag
         :value="dataset.source === 'live_query' ? 'Live Query' : 'Upload'"
@@ -47,29 +80,27 @@ const fetchDistinct = (column) => datasetsAPI.rowsDistinct(dataset.value.id, col
     </div>
 
     <!-- Metadata strip -->
-    <div class="surface-card border-round shadow-1 mb-4" style="padding: 0">
-      <div class="flex flex-wrap" style="gap: 0">
-        <div class="flex flex-column justify-content-center p-4" style="min-width: 10rem; border-right: 1px solid var(--surface-border)">
-          <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Total Rows</div>
-          <div class="text-xl font-semibold">{{ (dataset.row_count ?? 0).toLocaleString() }}</div>
-        </div>
-        <div class="flex flex-column justify-content-center p-4" style="min-width: 10rem; border-right: 1px solid var(--surface-border)">
-          <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Columns</div>
-          <div class="text-xl font-semibold">{{ dataset.columns.length }}</div>
-        </div>
-        <div class="flex flex-column justify-content-center p-4" style="min-width: 12rem; border-right: 1px solid var(--surface-border)">
-          <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Created</div>
-          <div class="text-xl font-semibold">{{ formatDate(dataset.created_at) }}</div>
-        </div>
-        <div class="flex flex-column justify-content-center p-4">
-          <div class="text-xs text-color-secondary uppercase mb-1" style="letter-spacing: 0.06em">Created By</div>
-          <div class="text-xl font-semibold">{{ dataset.created_by }}</div>
-        </div>
+    <div class="panel meta-strip mb-4">
+      <div class="meta-cell">
+        <div class="eyebrow meta-label">Total rows</div>
+        <div class="font-mono meta-value">{{ (dataset.row_count ?? 0).toLocaleString() }}</div>
+      </div>
+      <div class="meta-cell">
+        <div class="eyebrow meta-label">Columns</div>
+        <div class="font-mono meta-value">{{ dataset.columns.length }}</div>
+      </div>
+      <div class="meta-cell">
+        <div class="eyebrow meta-label">Created</div>
+        <div class="font-mono meta-value">{{ formatDate(dataset.created_at) }}</div>
+      </div>
+      <div class="meta-cell">
+        <div class="eyebrow meta-label">Created by</div>
+        <div class="font-mono meta-value">{{ dataset.created_by }}</div>
       </div>
     </div>
 
     <!-- Data table -->
-    <div class="surface-card border-round shadow-1 p-4">
+    <div class="panel p-4">
       <CommonDataTable
         v-if="tableColumns.length"
         :key="dataset.id"

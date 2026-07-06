@@ -5,6 +5,7 @@ import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
 import { datasets, loading, fetchDatasets, addDataset, deleteDataset } from './datasetsStore'
 import { fmtDate as formatDate } from '@/utils/datetime'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -140,19 +141,15 @@ const saveQuery = () => {
 </script>
 
 <template>
-  <div class="p-4">
-    <div class="flex align-items-center justify-content-between mb-4">
-      <div>
-        <h2 class="text-2xl font-semibold m-0">Datasets</h2>
-        <p class="text-color-secondary text-sm m-0 mt-1">Registered datasets available for calibration.</p>
-      </div>
-      <div class="flex gap-2">
-        <Button label="Upload"     icon="pi pi-upload"   size="small" @click="openUpload" />
-        <Button label="Live Query" icon="pi pi-database" size="small" severity="secondary" @click="openQuery" />
-      </div>
-    </div>
+  <div>
+    <PageHeader eyebrow="DATA" title="Datasets" subtitle="Registered datasets available for calibration.">
+      <template #actions>
+        <Button label="Upload"     icon="pi pi-upload"   outlined @click="openUpload" />
+        <Button label="Live Query" icon="pi pi-database" outlined @click="openQuery" />
+      </template>
+    </PageHeader>
 
-    <div class="surface-card border-round shadow-1 p-4">
+    <div class="panel p-4">
       <!-- Toolbar -->
       <div class="flex flex-wrap align-items-center gap-3 mb-3">
         <IconField class="flex-1" style="min-width: 16rem">
@@ -337,3 +334,11 @@ const saveQuery = () => {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+}
+</style>

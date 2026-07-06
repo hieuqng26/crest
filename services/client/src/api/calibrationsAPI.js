@@ -22,6 +22,8 @@ const calibrationsAPI = {
   segmentBacktestPredictionsDistinct: (runId, segKey, column) =>
     httpClient.get(`/calibrations/${runId}/segments/${segKey}/backtest/predictions/distinct`, { params: { column } }),
   recalibrate: (runId, body)  => httpClient.post(`/calibrations/${runId}/recalibrate`, body),
+  rerunSegment: (runId, segmentKey, body) =>
+    httpClient.post(`/calibrations/${runId}/segments/${segmentKey}/recalibrate`, body),
   logs:        (runId)        => httpClient.get(`/calibrations/${runId}/logs`),
   cancel:      (runId)        => httpClient.post(`/calibrations/${runId}/cancel`),
   refs:        (runId)        => httpClient.get(`/calibrations/${runId}/refs`),

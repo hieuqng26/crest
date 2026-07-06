@@ -20,7 +20,11 @@ httpClient.interceptors.request.use((config) => {
 
 let isRefreshing = false
 let subscribers = []
-const onRefreshed = () => { subscribers.forEach((cb) => cb()); subscribers = [] }
+// Requests that piled up behind an in-flight refresh must always be settled —
+// resolved on success, rejected on failure — or callers awaiting them (e.g.
+// Promise.allSettled across several parallel calls) hang forever.
+const onRefreshed = () => { subscribers.forEach((cb) => cb.resolve()); subscribers = [] }
+const onRefreshFailed = (err) => { subscribers.forEach((cb) => cb.reject(err)); subscribers = [] }
 
 httpClient.interceptors.response.use(
   (r) => r,
@@ -36,7 +40,10 @@ httpClient.interceptors.response.use(
       return Promise.reject(error)
     }
     if (isRefreshing) {
-      return new Promise((resolve) => subscribers.push(() => { original._retry = true; resolve(httpClient(original)) }))
+      return new Promise((resolve, reject) => subscribers.push({
+        resolve: () => { original._retry = true; resolve(httpClient(original)) },
+        reject
+      }))
     }
     original._retry = true
     isRefreshing = true
@@ -47,7 +54,7 @@ httpClient.interceptors.response.use(
       return httpClient(original)
     } catch (e) {
       isRefreshing = false
-      subscribers = []
+      onRefreshFailed(e)
       store.dispatch('logout', true)
       router.push({ name: 'login' })
       return Promise.reject(e)

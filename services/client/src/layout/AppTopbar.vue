@@ -17,13 +17,21 @@ const toast = useToast()
 const currentUser = store.getters.getCurrentUser
 const user = ref(currentUser)
 
-const appName = import.meta.env.VITE_APP_NAME
+const appName = import.meta.env.VITE_APP_NAME || 'CREST'
 
 const { onMenuToggle } = useLayout()
 
-const logoUrl = '/layout/images/logo-ey.svg'
 const outsideClickListener = ref(null)
 const topbarMenuActive = ref(false)
+
+const username = computed(() => (user.value?.email || '').split('@')[0] || '')
+
+const initials = computed(() => {
+  const name = username.value
+  const parts = name.split(/[._-]/).filter(Boolean)
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+  return name.slice(0, 2).toUpperCase() || '—'
+})
 
 onMounted(() => {
   bindOutsideClickListener()
@@ -122,7 +130,6 @@ const updateUser = () => {
 const menu = ref()
 const items = ref([
   {
-    // label: 'Options',
     items: [
       {
         label: 'Change password',
@@ -150,11 +157,14 @@ const toggleMenu = (event) => {
 <template>
   <div class="layout-topbar">
     <router-link to="/" class="layout-topbar-logo">
-      <img :src="logoUrl" alt="logo" />
-      <div class="brand-text">
+      <div class="logo-lockup">
+        <svg class="logo-beam" viewBox="0 0 62 7" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="0,7 62,0 62,3.4 0,7" fill="#FFE600" />
+        </svg>
         <span class="brand-name">{{ appName }}</span>
-        <span class="brand-tagline">Credit Risk &amp; Economic Stress Testing</span>
       </div>
+      <div class="brand-divider" />
+      <span class="brand-tagline">Credit Risk &amp;<br />Economic Stress Testing</span>
     </router-link>
 
     <button
@@ -180,10 +190,11 @@ const toggleMenu = (event) => {
       </router-link>
       <button
         v-if="store.getters.isAuthenticated"
-        class="p-link layout-topbar-button"
+        class="p-link user-chip"
         @click="toggleMenu"
       >
-        <i class="pi pi-user"></i>
+        <span class="user-avatar">{{ initials }}</span>
+        <span class="user-email">{{ username }}</span>
       </button>
       <Menu ref="menu" id="overlay_menu" :model="items" :popup="true" />
     </div>
@@ -235,66 +246,85 @@ const toggleMenu = (event) => {
 </template>
 
 <style lang="scss" scoped>
-.brand-text {
+.layout-topbar-logo {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.logo-lockup {
   display: flex;
   flex-direction: column;
-  margin-left: 0.625rem;
-  line-height: 1.15;
+  gap: 4px;
 }
+
+.logo-beam {
+  width: 62px;
+  height: 7px;
+  display: block;
+}
+
 .brand-name {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  line-height: 1;
   color: var(--chrome-text);
 }
-.brand-tagline {
-  font-size: 0.6875rem;
-  color: var(--chrome-text-muted);
-  letter-spacing: 0.02em;
+
+.brand-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  background: var(--chrome-border);
 }
 
-.notification-button {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  position: relative;
+.brand-tagline {
+  font-size: 10.5px;
+  line-height: 1.3;
   color: var(--chrome-text-muted);
-  border-radius: 50%;
-  width: 3rem;
-  height: 3rem;
+  letter-spacing: 0.02em;
+  padding-bottom: 2px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: background-color 0.2s;
-  background-color: transparent;
-  border-width: 0px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.15s ease;
+
   &:hover {
-    color: var(--chrome-text);
     background-color: var(--chrome-hover);
   }
+}
 
-  i {
-    font-size: 1.5rem;
-  }
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-email {
+  font-size: 13px;
+  color: #E7E7EA;
 }
 
 @media (max-width: 991px) {
-  .notification-button {
-    margin-left: 0;
-    display: flex;
-    width: 100%;
-    height: auto;
-    justify-content: flex-start;
-    border-radius: 12px;
-    padding: 1rem;
-
-    i {
-      font-size: 1rem;
-      margin-right: 0.5rem;
-    }
-
-    span {
-      font-weight: medium;
-      display: block;
-    }
+  .brand-tagline {
+    display: none;
   }
 }
 </style>
