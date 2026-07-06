@@ -1188,7 +1188,7 @@ def run_credit_analysis(self, cr_run_id: str):
         from project.core.credit_risk.kmv import run_kmv
         from project.db_models.calibration_models import Dataset
         from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
-        from project.db_models.forecast_models import ForecastRun, ForecastRunResult
+        from project.db_models.forecast_models import ForecastRun
 
         cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
         if not cr:
@@ -1288,9 +1288,9 @@ def run_credit_analysis(self, cr_run_id: str):
             #      - a segment_key (calibration was segmented — the forecast run scored
             #        every trained segment against the MEV-only dataset)
             #      - None (single portfolio-wide trajectory, non-segmented calibration)
-            from project.db_models.calibration_models import (
-                CalibrationRun,
-                CalibrationRunSegment,
+            from project.core.credit_risk.forecast_lookup import (
+                build_variable_index,
+                lookup_forecast,
             )
 
             REQUIRED_INPUTS = ("total_assets", "short_term_debts", "long_term_debts")
@@ -1315,43 +1315,8 @@ def run_credit_analysis(self, cr_run_id: str):
                     raise ValueError(
                         f"Forecast run for '{key}' ({fr_run_uuid[:8]}…) not found or not successful"
                     )
-                fr_rows = (
-                    ForecastRunResult.query.filter_by(forecast_run_id=fr.id)
-                    .order_by(ForecastRunResult.id)
-                    .all()
-                )
-                if not fr_rows:
-                    raise ValueError(
-                        f"Forecast run for '{key}' ({fr_run_uuid[:8]}…) has no results"
-                    )
-
-                seg_info = {"split_by": {}, "top_values": {}, "fallback": {}}
-                cal_run_for_key = CalibrationRun.query.get(fr.calibration_run_id)
-                if cal_run_for_key and cal_run_for_key.seg_sectors_json:
-                    cal_segments = CalibrationRunSegment.query.filter_by(
-                        calibration_run_id=cal_run_for_key.id, status="success"
-                    ).all()
-                    for s in cal_segments:
-                        seg_info["split_by"][s.sector] = s.split_by
-                        seg_info["top_values"].setdefault(s.sector, set()).add(
-                            s.split_value
-                        )
-                        seg_info["fallback"].setdefault(s.sector, s.segment_key)
+                seg_info, idx_map = build_variable_index(fr)
                 forecast_segmentation[key] = seg_info
-
-                idx_map: dict[str | None, dict[str, dict[int, float]]] = {}
-                for row in fr_rows:
-                    meta = json.loads(row.meta_json or "{}")
-                    ctx = meta.get("segment_key")
-                    scen = str(meta.get("scenario", "Baseline"))
-                    try:
-                        yr = int(pd.to_datetime(str(row.date)).year)
-                    except Exception:
-                        yr = int(str(row.date)[:4]) if row.date else 2024
-                    if row.predicted is not None:
-                        idx_map.setdefault(ctx, {}).setdefault(scen, {})[yr] = float(
-                            row.predicted
-                        )
                 forecast_by_var[key] = idx_map
 
                 ctx_desc = (
@@ -1364,30 +1329,16 @@ def run_credit_analysis(self, cr_run_id: str):
                     f"Loaded '{key}' forecast from run {fr_run_uuid[:8]}… ({ctx_desc})",
                 )
 
-            def _resolve_segment_key(
-                seg_info: dict, sector: str, subsector: str, country: str
-            ) -> str | None:
-                split_by = seg_info["split_by"].get(sector)
-                if not split_by:
-                    return None
-                split_val = subsector if split_by == "subsector" else country
-                top_vals = seg_info["top_values"].get(sector, set())
-                if split_val in top_vals:
-                    return f"{sector}__{split_val}"
-                if "Others" in top_vals:
-                    return f"{sector}__Others"
-                return seg_info["fallback"].get(sector)
-
             def _lookup_forecast(
                 key: str, sector: str, subsector: str, country: str
             ) -> dict:
-                seg_info = forecast_segmentation[key]
-                var_map = forecast_by_var[key]
-                if seg_info["split_by"]:
-                    target = _resolve_segment_key(seg_info, sector, subsector, country)
-                    if target and target in var_map:
-                        return var_map[target]
-                return var_map.get(None, {})
+                return lookup_forecast(
+                    forecast_segmentation[key],
+                    forecast_by_var[key],
+                    sector,
+                    subsector,
+                    country,
+                )
 
             # 4. Load PD ratings
             pd_rating_df = _pd_rating_df(curve)

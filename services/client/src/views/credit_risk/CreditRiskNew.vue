@@ -29,7 +29,16 @@ const KMV_INPUTS = [
   { key: 'long_term_debts',  label: 'Long-term Debts',  hint: 'Forecast of non-current liabilities (NonCL)' },
 ]
 
-const calInputs = ref({ total_assets: null, short_term_debts: null, long_term_debts: null })
+// ── Analysis calibration inputs (2 optional — unlock the Heatmap/Financial Forecast screens) ──
+const ANALYSIS_INPUTS = [
+  { key: 'total_revenue', label: 'Total Revenue', hint: 'Forecast of revenue — powers Sector Heatmap and Financial Forecast' },
+  { key: 'total_cogs',    label: 'Total COGS',     hint: 'Forecast of cost of goods sold — powers Sector Heatmap and Financial Forecast' },
+]
+
+const calInputs = ref({
+  total_assets: null, short_term_debts: null, long_term_debts: null,
+  total_revenue: null, total_cogs: null,
+})
 
 const runOptions = computed(() =>
   forecastRuns.value.map(r => ({
@@ -60,10 +69,13 @@ const launch = async () => {
   if (!canLaunch.value) return
   submitting.value = true
   try {
+    const filledInputs = Object.fromEntries(
+      Object.entries(calInputs.value).filter(([, v]) => v != null)
+    )
     const { data } = await creditRiskAPI.createRun({
       dataset_id:                     selectedDatasetId.value,
       financial_portfolio_dataset_id: selectedFinancialDatasetId.value,
-      cal_inputs:                     calInputs.value,
+      cal_inputs:                     filledInputs,
       exposure:                       exposure.value,
       discount_rate:                  discountRate.value,
       lifetime_horizon:               lifetimeHorizon.value,
@@ -241,6 +253,54 @@ onMounted(async () => {
               showClear
             />
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card: Analysis Inputs (optional) -->
+    <div class="form-card mb-4">
+      <div class="form-card-head flex align-items-center justify-content-between">
+        <div class="text-xs text-color-secondary uppercase font-semibold" style="letter-spacing: 0.06em">
+          Analysis Inputs <span class="font-normal normal-case text-color-secondary">(optional)</span>
+        </div>
+        <div class="text-xs text-color-secondary">
+          {{ ANALYSIS_INPUTS.filter(i => calInputs[i.key]).length }} / {{ ANALYSIS_INPUTS.length }} selected
+        </div>
+      </div>
+
+      <div class="p-3 pb-0 text-xs text-color-secondary">
+        Not required for KMV/ECL. Link both to unlock the Sector Heatmap and Financial Forecast screens under Analysis.
+      </div>
+
+      <div
+        v-for="inp in ANALYSIS_INPUTS"
+        :key="inp.key"
+        class="form-row"
+      >
+        <div class="form-label">
+          <div class="flex align-items-center gap-2">
+            <i
+              class="pi text-xs"
+              :class="calInputs[inp.key] ? 'pi-check-circle' : 'pi-circle'"
+              :style="calInputs[inp.key] ? 'color:#34d399' : 'color:var(--text-color-secondary)'"
+            />
+            <span class="font-medium text-sm">{{ inp.label }}</span>
+          </div>
+          <div class="text-xs text-color-secondary mt-1 ml-4">{{ inp.hint }}</div>
+        </div>
+        <div class="form-input">
+          <Dropdown
+            v-model="calInputs[inp.key]"
+            :options="runOptions"
+            optionLabel="label"
+            optionValue="value"
+            :loading="loadingInit"
+            :disabled="loadingInit || forecastRuns.length === 0"
+            placeholder="Select forecast run"
+            class="w-full"
+            filter
+            showClear
+          />
         </div>
       </div>
     </div>

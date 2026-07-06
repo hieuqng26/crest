@@ -4,7 +4,6 @@ import NotFound from '@/views/auth/NotFound.vue'
 import Login from '@/views/auth/Login.vue'
 import Access from '@/views/auth/Access.vue'
 import Error from '@/views/auth/Error.vue'
-import ComingSoon from '@/views/_ComingSoon.vue'
 import store from '@/store'
 
 const router = createRouter({
@@ -39,8 +38,8 @@ const router = createRouter({
         { path: '/forecast/new',     name: 'forecast_new',  component: () => import('@/views/forecast/ForecastNew.vue'),     meta: { requiresAuth: true, requiresPerm: 'forecast:read' } },
 
         // Analysis (v2)
-        { path: '/analysis/heatmap',  name: 'analysis_heatmap', component: ComingSoon, meta: { requiresAuth: true, requiresPerm: 'credit_risk:read', eyebrow: 'ANALYSIS', title: 'Sector Heatmap' } },
-        { path: '/analysis/forecast', name: 'analysis_forecast', component: ComingSoon, meta: { requiresAuth: true, requiresPerm: 'credit_risk:read', eyebrow: 'ANALYSIS', title: 'Financial Forecast' } },
+        { path: '/analysis/heatmap',  name: 'analysis_heatmap',  component: () => import('@/views/credit_risk/CreditRiskHeatmap.vue'),  meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
+        { path: '/analysis/forecast', name: 'analysis_forecast', component: () => import('@/views/credit_risk/CreditRiskForecast.vue'), meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
 
         // Credit Risk (v1 — jobs list/detail superseded by Job History/Detail)
         { path: '/credit-risk/new',          name: 'credit_risk_new',         component: () => import('@/views/credit_risk/CreditRiskNew.vue'),        meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
