@@ -8,14 +8,17 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
 
 ### `calibration_models.py`
 - **`datasets`** — uploaded files. `created_by`→users.email, `status` (default `ready`),
-  **`kind`** ∈ `calibration` | `credit` | `forecast` (default `calibration`).
-  The `kind` column gates which dropdowns a dataset appears in (New Calibration /
-  New Analysis / New Forecast filter by kind). `file_path` points into MinIO.
+  **`kind`** ∈ `calibration` | `credit` | `forecast` | `financial_portfolio` (default
+  `calibration`). The `kind` column gates which dropdowns a dataset appears in (New
+  Calibration / New Analysis / New Forecast filter by kind), and which dataset a
+  workflow launch auto-resolves as "latest per kind" (`GET /api/workflows/resolve-datasets`).
+  `file_path` points into MinIO.
 - **`model_configs`** — algorithm + hyperparameter config. `created_by`→users.email.
 - **`calibration_runs`** — one training run. Immutable `run_id` (UUID, unique),
   `dataset_id`→datasets, `model_config_id`→model_configs, `status`
   (`queued`/`running`/`success`/`failed`), `val_metrics_json`, `error_message`,
-  `triggered_by`→users.email.
+  `triggered_by`→users.email, **`workflow_run_id`**→workflow_runs.id (nullable —
+  NULL for standalone runs launched via `POST /api/calibrations/`).
   - `seg_sector_overrides_json` — sparse per-sector override of
     segmentation settings/model/features: `{sector: {split_by?, max_segments?,
     model_config_id?, feature_cols?}}`. Missing keys per sector fall back to the
@@ -28,7 +31,8 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
 
 ### `forecast_models.py`
 - **`forecast_runs`** — applies a calibrated model to a forecast dataset. `run_id`
-  (UUID), `calibration_run_id`→calibration_runs.id, `dataset_id`→datasets, `status`.
+  (UUID), `calibration_run_id`→calibration_runs.id, `dataset_id`→datasets, `status`,
+  **`workflow_run_id`**→workflow_runs.id (nullable).
 - **`forecast_run_results`** — `forecast_run_id`→forecast_runs.id **ON DELETE CASCADE**.
   Per-client/per-year predictions.
 - **`forecast_run_logs`** — `run_id` (string, indexed; no FK).
@@ -36,12 +40,32 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
 ### `credit_models.py`
 - **`pd_ratings`** — static lookup: credit `rating` → PD/LGD curve. Used by KMV.
 - **`credit_risk_runs`** — `run_id` (UUID), `dataset_id`→datasets, `status`, params
-  (exposure, discount_rate, lifetime_horizon).
+  (exposure, discount_rate, lifetime_horizon), **`workflow_run_id`**→workflow_runs.id
+  (nullable).
 - **`credit_risk_run_forecast_inputs`** — join: `credit_risk_run_id`→credit_risk_runs.id
   **ON DELETE CASCADE**, `forecast_run_id`→forecast_runs.id. Maps the 3 KMV inputs
   (total_assets, short_term_debts, long_term_debts) to forecast runs.
 - **`credit_risk_results`** — `run_id`→credit_risk_runs.run_id. Per-client PD/LGD/ECL.
 - **`credit_risk_run_logs`** — `run_id`→credit_risk_runs.run_id.
+
+### `workflow_models.py`
+- **`workflow_runs`** — groups a multi-target train → forecast → credit-analysis
+  pipeline launched from a single New Model submission (`POST /api/workflows/`).
+  `run_id` (UUID), `name`, `status` (`queued`/`running`/`success`/`failed`),
+  `current_stage` (`training`/`forecast`/`analysis`/`done`), `triggered_by`→users.email,
+  `error_message`, `analysis_skipped_reason` (set when the analysis stage is skipped —
+  e.g. a required target like `total_shortterm_debts` wasn't included, or no credit
+  portfolio dataset exists), and a snapshot of the datasets resolved at launch time
+  (`calibration_dataset_id`/`forecast_dataset_id` not null, `credit_dataset_id`/
+  `financial_dataset_id` nullable) — reproducibility requires that a later upload never
+  silently changes what an already-running workflow scores against.
+  Child `calibration_runs`/`forecast_runs`/`credit_risk_runs` rows reference this via
+  `workflow_run_id`; legacy standalone runs keep it NULL.
+  Orchestration is a DB-driven completion-check (`advance_workflow_impl` in
+  `project/workers/tasks.py`), not a Celery chain/chord — each child task already owns
+  its own status transitions, so a small hook re-checks the workflow's children after
+  every status change and decides what to do next. See `architecture.md` for the full
+  trigger/stage-guard design.
 
 ## Dependency chain (matters for deletes)
 
@@ -58,6 +82,11 @@ datasets ──< calibration_runs ──< forecast_runs ──< credit_risk_run_
   `credit_risk_run_forecast_inputs.forecast_run_id` (no cascade on that column).
 - Always pre-check references and block with a clear 409 + dependency list rather
   than letting the DB raise. Use the pattern in `.claude/skills/delete-with-refs.md`.
+- A run with `workflow_run_id` set cannot be deleted or rerun individually via
+  `/api/calibrations`, `/api/forecast-runs`, or `/api/credit-risk` — those routes
+  return 409 pointing at `DELETE /api/workflows/<run_id>` instead, which deletes the
+  whole workflow (credit run → forecast runs → calibration runs → workflow row) in
+  dependency order inside one transaction.
 
 ## Auth & RBAC tables (`api/auth/models.py`, `api/roles/models.py`)
 

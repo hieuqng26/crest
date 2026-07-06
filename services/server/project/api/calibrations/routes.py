@@ -1,5 +1,4 @@
 import json
-import math
 import uuid
 from datetime import datetime, timezone
 
@@ -10,6 +9,10 @@ from flask_jwt_extended import get_jwt_identity
 from project import app_session
 from project.api.auth.decorators import require_perm
 from project.core import table_query
+from project.core.calibration_launch import (
+    build_search_config_json,
+    validate_segmentation,
+)
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
@@ -25,40 +28,6 @@ from project.workers.tasks import run_calibration, run_segment_calibration
 from . import calibrations
 
 logger = get_logger(__name__)
-
-
-def _expand_param_values(defn: dict) -> list:
-    """Expand a frontend param-grid definition into a flat list of candidate values."""
-    kind = defn.get("kind", "list")
-    if kind == "list":
-        raw = str(defn.get("values", ""))
-        parts = [s.strip() for s in raw.split(",") if s.strip()]
-        result = []
-        for p in parts:
-            try:
-                result.append(int(p))
-            except ValueError:
-                try:
-                    result.append(float(p))
-                except ValueError:
-                    if p.lower() == "true":
-                        result.append(True)
-                    elif p.lower() == "false":
-                        result.append(False)
-                    else:
-                        result.append(p)
-        return result
-    lo = float(defn.get("min", 0))
-    hi = float(defn.get("max", 1))
-    n = max(2, min(50, int(defn.get("steps", 5))))
-    if lo == hi or n < 2:
-        return [lo]
-    if kind == "logspace":
-        if lo <= 0 or hi <= 0:
-            return []
-        a, b = math.log10(lo), math.log10(hi)
-        return [round(10 ** (a + (b - a) * i / (n - 1)), 10) for i in range(n)]
-    return [round(lo + (hi - lo) * i / (n - 1), 10) for i in range(n)]
 
 
 @calibrations.get("/")
@@ -113,126 +82,19 @@ def create_run():
         return jsonify({"error": "ModelConfig not found"}), 404
 
     seg = body.get("segmentation") or None
-    seg_sectors_json = None
-    seg_split_by = None
-    seg_max_segments = None
-    seg_sector_overrides_json = None
-    if seg:
-        sectors = seg.get("sectors") or []
-        split_by = seg.get("split_by") or ""
-        max_segs = seg.get("max_segments")
-        if not sectors or not isinstance(sectors, list):
-            return jsonify(
-                {"error": "segmentation.sectors must be a non-empty list"}
-            ), 400
-        if split_by not in ("subsector", "country"):
-            return jsonify(
-                {"error": "segmentation.split_by must be 'subsector' or 'country'"}
-            ), 400
-        if not isinstance(max_segs, int) or not (2 <= max_segs <= 20):
-            return jsonify(
-                {"error": "segmentation.max_segments must be an integer 2–20"}
-            ), 400
-        seg_sectors_json = json.dumps(sectors)
-        seg_split_by = split_by
-        seg_max_segments = max_segs
-
-        sector_overrides = seg.get("sector_overrides") or {}
-        if sector_overrides:
-            if not isinstance(sector_overrides, dict):
-                return jsonify(
-                    {"error": "segmentation.sector_overrides must be an object"}
-                ), 400
-            for sector_name, override in sector_overrides.items():
-                if sector_name not in sectors:
-                    return jsonify(
-                        {
-                            "error": f"segmentation.sector_overrides has an entry "
-                            f"for '{sector_name}', which is not in "
-                            f"segmentation.sectors"
-                        }
-                    ), 400
-                if not isinstance(override, dict):
-                    return jsonify(
-                        {
-                            "error": f"segmentation.sector_overrides['{sector_name}'] "
-                            f"must be an object"
-                        }
-                    ), 400
-                if "split_by" in override and override["split_by"] not in (
-                    "subsector",
-                    "country",
-                ):
-                    return jsonify(
-                        {
-                            "error": f"segmentation.sector_overrides['{sector_name}']"
-                            f".split_by must be 'subsector' or 'country'"
-                        }
-                    ), 400
-                if "max_segments" in override and (
-                    not isinstance(override["max_segments"], int)
-                    or not (2 <= override["max_segments"] <= 20)
-                ):
-                    return jsonify(
-                        {
-                            "error": f"segmentation.sector_overrides['{sector_name}']"
-                            f".max_segments must be an integer 2–20"
-                        }
-                    ), 400
-                if "model_config_id" in override:
-                    model_cfg_id = override["model_config_id"]
-                    if not isinstance(model_cfg_id, int):
-                        return jsonify(
-                            {
-                                "error": f"segmentation.sector_overrides['{sector_name}']"
-                                f".model_config_id must be an integer"
-                            }
-                        ), 400
-                    override_cfg = ModelConfig.query.get(model_cfg_id)
-                    if not override_cfg:
-                        return jsonify(
-                            {
-                                "error": f"segmentation.sector_overrides"
-                                f"['{sector_name}'].model_config_id "
-                                f"{model_cfg_id} not found"
-                            }
-                        ), 400
-                if "feature_cols" in override and not isinstance(
-                    override["feature_cols"], list
-                ):
-                    return jsonify(
-                        {
-                            "error": f"segmentation.sector_overrides['{sector_name}']"
-                            f".feature_cols must be a list"
-                        }
-                    ), 400
-            seg_sector_overrides_json = json.dumps(sector_overrides)
+    parsed_seg, seg_error = validate_segmentation(seg)
+    if seg_error:
+        return jsonify({"error": seg_error}), 400
+    seg_sectors_json = parsed_seg["seg_sectors_json"]
+    seg_split_by = parsed_seg["seg_split_by"]
+    seg_max_segments = parsed_seg["seg_max_segments"]
+    seg_sector_overrides_json = parsed_seg["seg_sector_overrides_json"]
 
     target_col = body.get("target_col") or None
     feature_cols = body.get("feature_cols") or []
     run_name = (body.get("name") or "").strip() or None
 
-    # Build resolved CV search config from model config's saved search settings
-    search_config_json = None
-    raw_search = json.loads(cfg.search_config_json or "null")
-    if raw_search and raw_search.get("mode", "none") != "none":
-        param_grid = {}
-        for param_name, defn in (raw_search.get("paramGrid") or {}).items():
-            if not defn or not defn.get("enabled"):
-                continue
-            values = _expand_param_values(defn)
-            if values:
-                param_grid[param_name] = values
-        if param_grid:
-            search_config_json = json.dumps(
-                {
-                    "type": raw_search.get("mode", "grid"),
-                    "param_grid": param_grid,
-                    "cv": int(raw_search.get("folds", 5)),
-                    "scoring": raw_search.get("scoring", "roc_auc"),
-                    "n_iter": int(raw_search.get("nIter", 20)),
-                }
-            )
+    search_config_json = build_search_config_json(cfg)
 
     run_id = str(uuid.uuid4())
     with app_session() as session:
@@ -273,6 +135,11 @@ def get_run(run_id):
     d["dataset_name"] = run.dataset.name if run.dataset else None
     d["algorithm"] = run.model_config.algorithm if run.model_config else None
     d["model_family"] = run.model_config.family if run.model_config else None
+    if run.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(run.workflow_run_id)
+        d["workflow_run_uuid"] = wf.run_id if wf else None
     return jsonify(d), 200
 
 
@@ -563,9 +430,14 @@ def cancel_run(run_id):
         r.status = "failed"
         r.finished_at = datetime.now(timezone.utc)
         r.error_message = "Cancelled by user"
+        workflow_run_id = r.workflow_run_id
         s.add(r)
         s.flush()
         result = r.to_dict()
+    if workflow_run_id:
+        from project.workers.tasks import advance_workflow
+
+        advance_workflow.delay(workflow_run_id)
     return jsonify(result), 200
 
 
@@ -617,6 +489,28 @@ def _check_forecast_references(cal_run_id: int):
     return None, None
 
 
+def _check_workflow_membership(r):
+    """Return a 409 response if this run belongs to a workflow, else None.
+    Workflow children must be deleted/rerun as part of the whole workflow so
+    downstream forecast/analysis results never desync from their training run.
+    """
+    if r.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(r.workflow_run_id)
+        wf_name = wf.name if wf else r.workflow_run_id
+        return (
+            jsonify(
+                {
+                    "error": f"This run belongs to workflow '{wf_name}' — delete "
+                    "or rerun the workflow instead."
+                }
+            ),
+            409,
+        )
+    return None
+
+
 @calibrations.delete("/<run_id>")
 @require_perm("calibration:write")
 def delete_run(run_id):
@@ -625,6 +519,9 @@ def delete_run(run_id):
         return jsonify({"error": "Not found"}), 404
     if r.status in ("queued", "running"):
         return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
+    err = _check_workflow_membership(r)
+    if err:
+        return err
     err, code = _check_forecast_references(r.id)
     if err:
         return err, code
@@ -646,6 +543,9 @@ def bulk_delete_runs():
         if not run:
             continue
         if run.status in ("queued", "running"):
+            skipped.append(rid)
+            continue
+        if run.workflow_run_id:
             skipped.append(rid)
             continue
         err, _ = _check_forecast_references(run.id)
@@ -670,6 +570,9 @@ def recalibrate(run_id):
             return jsonify({"error": "Not found"}), 404
         if r.status in ("queued", "running"):
             return jsonify({"error": "Run is already active"}), 409
+        err = _check_workflow_membership(r)
+        if err:
+            return err
 
         r.status = "queued"
         r.triggered_by = get_jwt_identity()

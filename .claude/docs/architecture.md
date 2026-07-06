@@ -18,12 +18,15 @@ docker-compose.prod.yml    Production stack
 ```
 api/             Flask blueprints, one folder per domain:
                  auth, users, roles, datasets, model_configs, calibrations,
-                 evaluations, forecasts, forecast_runs, credit_risk, auditlog
+                 evaluations, forecasts, forecast_runs, credit_risk, workflows, auditlog
 core/            Business logic (NOT in route handlers):
                  model_registry/   ML plugin system (see below)
                  calibration/      training orchestration
+                 calibration_launch.py  shared launch helpers (segmentation validation,
+                                   CV search-config resolution) — used by both
+                                   POST /api/calibrations/ and POST /api/workflows/
                  diagnostics/      metric computation
-                 credit_risk/      kmv.py, ecl.py, mock_credit.py
+                 credit_risk/      kmv.py, ecl.py, mock_credit.py, forecast_lookup.py
                  storage.py        MinIO artifact I/O
 db_models/       SQLAlchemy ORM (see .claude/docs/database_models.md)
 workers/tasks.py Celery async tasks (calibration, forecast, credit-risk runs)
@@ -127,6 +130,44 @@ Two-stage pipeline, both operate per-client over a multi-scenario yearly forecas
 - Failure: `status="failed"`, full traceback in `error_message`. Never silently swallowed.
 - Progress/logs are persisted to DB rows (`*_run_logs` tables); the frontend polls.
   (SocketIO was fully removed — do not reintroduce it.)
+
+## Modelling workflows (`api/workflows/`, `workers/tasks.py:advance_workflow*`)
+
+The New Model page's manual mode launches a **workflow**, not a single calibration
+run: the user picks one or more target columns (plus a default model config with
+optional per-target/per-sector overrides) and `POST /api/workflows/` creates a
+`WorkflowRun` row plus one `CalibrationRun` per target — training datasets are never
+picked by hand, they're resolved server-side as the newest `ready` dataset per `kind`
+(`GET /api/workflows/resolve-datasets`; see `database_models.md` for the kind list).
+
+**Chaining is a DB-driven completion check, not a Celery chain/chord.** Each of
+`run_calibration` / `run_forecast` / `run_credit_analysis` already owns its own status
+transitions; after every transition (running/success/failed) on a run that has a
+`workflow_run_id`, the task dispatches `advance_workflow(workflow_run_id)`. That task
+locks the `WorkflowRun` row (`SELECT ... FOR UPDATE`, a no-op hint on SQLite/tests),
+re-reads all its children, and — guarded by `current_stage` so a second concurrent
+call is a no-op — either: (a) propagates the first child failure to the workflow with
+a descriptive message, (b) on all-calibrations-success, creates and dispatches one
+`ForecastRun` per target, or (c) on all-forecasts-success, maps targets to the credit
+analysis slots (`total_assets`/`total_shortterm_debts`/`total_longterm_debts` →
+`total_assets`/`short_term_debts`/`long_term_debts`) and either creates+dispatches a
+`CreditRiskRun` (all 3 slots + a credit dataset present) or finalizes the workflow as
+`success` with `analysis_skipped_reason` set. Child tasks are only dispatched *after*
+their DB transaction commits, so a worker never picks up a not-yet-visible row.
+The pure decision logic lives in `advance_workflow_impl` (plain function, no Celery
+context) so it's unit-testable without a broker — see `test_workflow_chain.py`.
+
+A run with `workflow_run_id` set can't be deleted/rerun individually — only the whole
+workflow, via `DELETE /api/workflows/<run_id>` (ordered: credit run → forecast runs →
+calibration runs → workflow row). Segment-level recalibrate is still allowed (it only
+refreshes one segment's artifact/metrics).
+
+**Frontend:** `views/model/newModelStore.js` + `ModelNew.vue` build the multi-target
+launch payload; `views/jobs/JobHistory.vue` shows workflows as expandable top-level
+rows (children folded underneath, standalone legacy runs still flat); a workflow's
+own page is `views/jobs/WorkflowDetail.vue` (pipeline stage strip, one tab per target
+plus an Analysis tab, reusing `RunDetailsCard`/`LogsPanel`/`SegmentModelsPanel`/
+`CommonDataTable` from the standalone `JobDetail.vue`).
 
 ## Infra constraints
 

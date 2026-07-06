@@ -19,7 +19,7 @@ class Dataset(db.Model):
         db.DateTime, nullable=False, default=datetime.now(timezone.utc)
     )
     status = db.Column(db.String(32), nullable=False, default="ready")
-    kind = db.Column(db.String(16), nullable=False, default="calibration")
+    kind = db.Column(db.String(32), nullable=False, default="calibration")
 
     calibration_runs = db.relationship("CalibrationRun", backref="dataset", lazy=True)
 
@@ -124,6 +124,9 @@ class CalibrationRun(db.Model):
     seg_sector_overrides_json = db.Column(
         db.Text, nullable=True
     )  # JSON: {sector: {split_by?, max_segments?, model_config_id?, feature_cols?}}
+    workflow_run_id = db.Column(
+        db.Integer, db.ForeignKey("workflow_runs.id"), nullable=True, index=True
+    )
 
     forecasts = db.relationship(
         "Forecast", backref="calibration_run", cascade="all, delete", lazy=True
@@ -170,6 +173,7 @@ class CalibrationRun(db.Model):
             if self.seg_sector_overrides_json
             else None,
             is_segmented=self.is_segmented,
+            workflow_run_id=self.workflow_run_id,
         )
 
     @property

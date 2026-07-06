@@ -26,6 +26,9 @@ class ForecastRun(db.Model):
     progress = db.Column(db.Integer, nullable=False, default=0)
 
     segment_key = db.Column(db.String(128), nullable=True)
+    workflow_run_id = db.Column(
+        db.Integer, db.ForeignKey("workflow_runs.id"), nullable=True, index=True
+    )
 
     results = db.relationship(
         "ForecastRunResult", cascade="all, delete-orphan", lazy="dynamic"
@@ -66,6 +69,7 @@ class ForecastRun(db.Model):
             error_message=self.error_message,
             progress=self.progress,
             segment_key=self.segment_key,
+            workflow_run_id=self.workflow_run_id,
         )
 
 

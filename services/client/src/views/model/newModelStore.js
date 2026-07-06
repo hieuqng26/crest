@@ -2,14 +2,18 @@
 // Selection, and the "Manage configurations" link back to Configurations) so
 // navigating away and back doesn't lose in-progress form state.
 import { ref, computed } from 'vue'
-import datasetsAPI from '@/api/datasetsAPI'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
+import workflowsAPI from '@/api/workflowsAPI'
 
 export const mode = ref('manual') // 'auto' | 'manual'
 
-export const datasets = ref([])
-export const selectedDatasetId = ref(null)
-export const targetCol = ref(null)
+// Latest dataset per kind, resolved server-side — the wizard shows these
+// read-only instead of offering a dataset picker.
+export const resolvedDatasets = ref({ calibration: null, forecast: null, credit: null, financial_portfolio: null })
+export const loadingDatasets = ref(false)
+
+// Multiple targets can be trained in one launch.
+export const targetCols = ref([])
 export const selectedSectors = ref([])
 export const availableSectors = ref([])
 export const loadingSectors = ref(false)
@@ -18,35 +22,76 @@ export const configs = ref([])
 export const registry = ref([])
 export const selectedConfigId = ref(null)
 
-// Explicit list of selected feature columns. Empty means "not loaded yet" —
-// once a target is chosen this is seeded to all non-target columns (matching
-// the mockup's default "10/10 selected" state) and the user unchecks from there.
+// Default feature columns, applied to every target unless overridden.
 export const featureCols = ref([])
 
-// Per-sector override: { [sector]: { model_config_id, feature_cols } }
+// Per-target override: { [target]: { model_config_id, feature_cols } }
+export const targetOverrides = ref({})
+// Per-sector override (applies within every target): { [sector]: { model_config_id, feature_cols, split_by?, max_segments? } }
 export const sectorOverrides = ref({})
 
 export const modelName = ref('')
+export const analysisParams = ref({ exposure: 1000000, discount_rate: 0.05, lifetime_horizon: 5, curve: 'moodys' })
 
-export const selectedDataset = computed(() => datasets.value.find((d) => d.id === selectedDatasetId.value) || null)
-export const columnOptions = computed(() => selectedDataset.value?.columns ?? [])
-export const featureOptions = computed(() => columnOptions.value.filter((c) => c !== targetCol.value))
+const NUMERIC_DTYPE = /^(int|float|uint)/
+
+function parseSchema(ds) {
+  if (!ds) return { columns: [], dtypes: {} }
+  const schema = ds.schema_json ? JSON.parse(ds.schema_json) : { columns: [], dtypes: {} }
+  return { columns: schema.columns ?? [], dtypes: schema.dtypes ?? {} }
+}
+
+export const calibrationDataset = computed(() => {
+  const ds = resolvedDatasets.value.calibration
+  if (!ds) return null
+  return { ...ds, ...parseSchema(ds) }
+})
+export const forecastDataset = computed(() => {
+  const ds = resolvedDatasets.value.forecast
+  if (!ds) return null
+  return { ...ds, ...parseSchema(ds) }
+})
+export const creditDataset = computed(() => resolvedDatasets.value.credit)
+export const financialDataset = computed(() => resolvedDatasets.value.financial_portfolio)
+
+export const columnOptions = computed(() => calibrationDataset.value?.columns ?? [])
+export const numericColumnOptions = computed(() =>
+  columnOptions.value.filter((c) => NUMERIC_DTYPE.test(calibrationDataset.value?.dtypes?.[c] ?? ''))
+)
+const forecastColumnSet = computed(() => new Set(forecastDataset.value?.columns ?? []))
+
+// Columns usable as a feature: numeric in the calibration dataset, present in
+// the forecast dataset (so the auto-chained forecast stage can score it), and
+// not itself one of the selected targets (leakage guard).
+export const featureOptions = computed(() =>
+  numericColumnOptions.value.filter((c) => !targetCols.value.includes(c) && forecastColumnSet.value.has(c))
+)
+
 export const selectedConfig = computed(() => configs.value.find((c) => c.id === selectedConfigId.value) || null)
-export const targetDtype = computed(() => selectedDataset.value?.dtypes?.[targetCol.value] ?? null)
-export const objectiveLabel = computed(() => {
-  const dt = targetDtype.value
+
+export function objectiveFor(target) {
+  const dt = calibrationDataset.value?.dtypes?.[target]
   if (!dt) return null
   return /^float/.test(dt) ? 'Regression' : 'Classification'
-})
+}
 
-export async function fetchDatasets() {
-  const { data } = await datasetsAPI.list()
-  datasets.value = (data ?? [])
-    .filter((d) => d.kind === 'calibration')
-    .map((d) => {
-      const schema = d.schema_json ? JSON.parse(d.schema_json) : { columns: [], dtypes: {} }
-      return { ...d, columns: schema.columns ?? [], dtypes: schema.dtypes ?? {} }
-    })
+const REQUIRED_ANALYSIS_TARGETS = ['total_assets', 'total_shortterm_debts', 'total_longterm_debts']
+export const analysisReady = computed(() =>
+  REQUIRED_ANALYSIS_TARGETS.every((t) => targetCols.value.includes(t))
+)
+export const missingAnalysisTargets = computed(() =>
+  REQUIRED_ANALYSIS_TARGETS.filter((t) => !targetCols.value.includes(t))
+)
+export const analysisDatasetsReady = computed(() => !!creditDataset.value)
+
+export async function fetchResolvedDatasets() {
+  loadingDatasets.value = true
+  try {
+    const { data } = await workflowsAPI.resolveDatasets()
+    resolvedDatasets.value = data
+  } finally {
+    loadingDatasets.value = false
+  }
 }
 
 export async function fetchConfigs() {
@@ -60,6 +105,7 @@ export async function fetchSectors(datasetId) {
   if (!datasetId) return
   loadingSectors.value = true
   try {
+    const datasetsAPI = (await import('@/api/datasetsAPI')).default
     const { data } = await datasetsAPI.sectors(datasetId)
     availableSectors.value = data.sectors || []
   } finally {
@@ -69,11 +115,12 @@ export async function fetchSectors(datasetId) {
 
 export function resetNewModelForm() {
   mode.value = 'manual'
-  selectedDatasetId.value = null
-  targetCol.value = null
+  targetCols.value = []
   selectedSectors.value = []
   selectedConfigId.value = null
   featureCols.value = []
+  targetOverrides.value = {}
   sectorOverrides.value = {}
   modelName.value = ''
+  analysisParams.value = { exposure: 1000000, discount_rate: 0.05, lifetime_horizon: 5, curve: 'moodys' }
 }

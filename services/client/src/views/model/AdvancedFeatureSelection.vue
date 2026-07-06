@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
-import { selectedDataset, targetCol, featureCols } from './newModelStore'
+import { calibrationDataset, targetCols, featureCols, featureOptions } from './newModelStore'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
@@ -14,15 +14,22 @@ const columns = ref([]) // [{name, type, missing_pct, distinct, mean, std, corr}
 const checked = ref({}) // { [name]: bool }
 const search = ref('')
 
+// Column stats are computed against the first selected target — with several
+// targets, feature columns are shared across all of them via Step 03's
+// default set, so this screen picks one representative target for the
+// correlation column.
+const statsTarget = computed(() => targetCols.value[0] ?? null)
+
 onMounted(async () => {
-  if (!selectedDataset.value || !targetCol.value) {
+  if (!calibrationDataset.value || !statsTarget.value) {
     router.replace({ name: 'model_new' })
     return
   }
   loading.value = true
   try {
-    const { data } = await datasetsAPI.columnStats(selectedDataset.value.id, targetCol.value)
-    columns.value = data.columns ?? []
+    const { data } = await datasetsAPI.columnStats(calibrationDataset.value.id, statsTarget.value)
+    const allowed = new Set(featureOptions.value)
+    columns.value = (data.columns ?? []).filter((c) => allowed.has(c.name))
     const preselected = new Set(featureCols.value.length ? featureCols.value : columns.value.map((c) => c.name))
     checked.value = Object.fromEntries(columns.value.map((c) => [c.name, preselected.has(c.name)]))
   } catch (e) {
@@ -65,7 +72,7 @@ const cancel = () => router.push({ name: 'model_new' })
         <div class="eyebrow">MODEL</div>
         <h1>Advanced Feature Selection</h1>
         <div class="subtitle">
-          Column statistics for <span class="font-mono">{{ selectedDataset?.name }}</span> · target <span class="font-mono">{{ targetCol }}</span>
+          Column statistics for <span class="font-mono">{{ calibrationDataset?.name }}</span> · target <span class="font-mono">{{ statsTarget }}</span>
         </div>
       </div>
       <div class="method-col">

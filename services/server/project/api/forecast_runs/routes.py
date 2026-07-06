@@ -119,7 +119,13 @@ def get_run(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
-    return jsonify(fr.to_dict()), 200
+    d = fr.to_dict()
+    if fr.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(fr.workflow_run_id)
+        d["workflow_run_uuid"] = wf.run_id if wf else None
+    return jsonify(d), 200
 
 
 @forecast_runs.get("/<run_id>/refs")
@@ -145,6 +151,25 @@ def get_refs(run_id: str):
     ), 200
 
 
+def _check_workflow_membership(fr: ForecastRun):
+    """Return a 409 response if this run belongs to a workflow, else None."""
+    if fr.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(fr.workflow_run_id)
+        wf_name = wf.name if wf else fr.workflow_run_id
+        return (
+            jsonify(
+                {
+                    "error": f"This run belongs to workflow '{wf_name}' — delete "
+                    "or rerun the workflow instead."
+                }
+            ),
+            409,
+        )
+    return None
+
+
 def _cr_refs_for(fr_id: int):
     """Return CreditRiskRun objects that reference this forecast run id."""
     inputs = CreditRiskForecastInput.query.filter_by(forecast_run_id=fr_id).all()
@@ -164,6 +189,10 @@ def delete_run(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
+
+    err = _check_workflow_membership(fr)
+    if err:
+        return err
 
     cr_runs = _cr_refs_for(fr.id)
     if cr_runs:
@@ -200,6 +229,9 @@ def bulk_delete_runs():
         if fr.status in ("queued", "running"):
             skipped.append(rid)
             continue
+        if fr.workflow_run_id:
+            skipped.append(rid)
+            continue
         if _cr_refs_for(fr.id):
             skipped.append(rid)
             continue
@@ -230,10 +262,15 @@ def cancel_run(run_id: str):
         r.status = "failed"
         r.finished_at = datetime.now(timezone.utc)
         r.error_message = "Cancelled by user"
+        workflow_run_id = r.workflow_run_id
         s.add(r)
         s.flush()
         result = r.to_dict()
 
+    if workflow_run_id:
+        from project.workers.tasks import advance_workflow
+
+        advance_workflow.delay(workflow_run_id)
     return jsonify(result), 200
 
 
@@ -258,6 +295,9 @@ def rerun_run(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
+    err = _check_workflow_membership(fr)
+    if err:
+        return err
 
     with app_session() as s:
         r = ForecastRun.query.filter_by(run_id=run_id).first()

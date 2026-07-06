@@ -69,9 +69,10 @@ const uploadName = ref('')
 const uploadKind = ref('calibration')
 
 const KIND_OPTIONS = [
-  { label: 'Calibration', value: 'calibration' },
-  { label: 'Credit',      value: 'credit' },
-  { label: 'Forecast',    value: 'forecast' },
+  { label: 'Calibration',         value: 'calibration' },
+  { label: 'Credit',              value: 'credit' },
+  { label: 'Forecast',            value: 'forecast' },
+  { label: 'Financial Portfolio', value: 'financial_portfolio' },
 ]
 
 const openUpload = () => {
@@ -218,8 +219,8 @@ const saveQuery = () => {
         <Column field="kind" header="Type" sortable>
           <template #body="{ data }">
             <Tag
-              :value="{ calibration: 'Calibration', credit: 'Credit', forecast: 'Forecast' }[data.kind] ?? data.kind ?? '—'"
-              :severity="{ calibration: 'secondary', credit: 'info', forecast: 'warning' }[data.kind] ?? 'secondary'"
+              :value="{ calibration: 'Calibration', credit: 'Credit', forecast: 'Forecast', financial_portfolio: 'Financial Portfolio' }[data.kind] ?? data.kind ?? '—'"
+              :severity="{ calibration: 'secondary', credit: 'info', forecast: 'warning', financial_portfolio: 'success' }[data.kind] ?? 'secondary'"
             />
           </template>
         </Column>
@@ -283,8 +284,9 @@ const saveQuery = () => {
           <Dropdown v-model="uploadKind" :options="KIND_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
           <div class="text-xs text-color-secondary">
             <span v-if="uploadKind === 'calibration'">Used for model training and backtesting.</span>
-            <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis. Includes credit datasets and financial portfolio files.</span>
+            <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis (client_id, market_cap, vol_equity, rating).</span>
             <span v-else-if="uploadKind === 'forecast'">Feature data for generating forward-looking predictions.</span>
+            <span v-else-if="uploadKind === 'financial_portfolio'">Client financial metrics merged into credit analysis (client_id, total_assets, total_shortterm_debts, total_longterm_debts).</span>
           </div>
         </div>
       </div>

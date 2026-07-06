@@ -106,6 +106,7 @@ def create_app():
     from project.api.roles.routes import roles_bp
     from project.api.users.models import User  # noqa: F401
     from project.api.users.routes import user
+    from project.api.workflows import workflows
     from project.db_models.calibration_models import (  # noqa: F401
         CalibrationRun,
         CalibrationRunLog,
@@ -125,6 +126,7 @@ def create_app():
         ForecastRun,
         ForecastRunResult,
     )
+    from project.db_models.workflow_models import WorkflowRun  # noqa: F401
 
     app.register_blueprint(auth, url_prefix="/api/auth")
     app.register_blueprint(user, url_prefix="/api/user")
@@ -137,6 +139,7 @@ def create_app():
     app.register_blueprint(forecasts, url_prefix="/api/forecasts")
     app.register_blueprint(forecast_runs, url_prefix="/api/forecast-runs")
     app.register_blueprint(credit_risk, url_prefix="/api/credit-risk")
+    app.register_blueprint(workflows, url_prefix="/api/workflows")
 
     # add health check route
     @app.route("/api/ping", methods=["GET"])

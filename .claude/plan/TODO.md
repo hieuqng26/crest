@@ -1,4 +1,16 @@
-- [ ] Restructure:
+- [x] Modelling workflow:
+    - [x] I want to make the model setup a bit more "automated" for manual. First, user don't need to choose training dataset, the backend will pull the latest data from financial data table. 
+    - [x] Second, users can choose to run multiple targets at once, but we need to think carefully how we should design this: we need a default model configuration applied to all targets, but also need to offer capability to customize if user wants to. 
+    - [x] Third, the job will also run forecast and analysis, pulling latest data from corresponding tables.
+    - [x] Fourth, the job history will now have another level, which is Target, on top of the segments. Individual job's view should also have diagnosis & backtesting, forecast, credit analysis results.
+    - [x] I dont like the breakdown of target and analysis for each job in Job History. Just treat the whole workflow as 1 process. In individual job view, I want to see 4 tabs: 
+        - Overview: currently Training
+        - Diagnosis & Backtesting: combine Diagnosis and Backtesting tab in old version (redesign to align with current design theme), filter by target, sector, segment
+        - Forecast: display forecast results in data table, filter by target, sector, segment
+        - Credit Results: display credit results in data table
+        - Remove the process indicator 1->2->3
+
+- [x] Restructure:
     The current workflow is not quite intuitive and requires a lot of mouse clicking, e.g. select data, config, model, etc. I'm thinking of restructure the modules to make the workflow smoother. There are 2 main types of users: one wants to draw insights from the data and take actions, and another focuses on the technical side and needs to make sure the models run correctly. Dashboard, Datasets and System modules can stay the same. We will restructure the rest into: Model, Analysis, Jobs. 
     Model should have New Model & Model Results. New Model has 2 mode: auto mode and manual mode. Auto mode can be used for experimenting, or high-level work, while manual mode is built purposefully for people with technical expertise. Take inspirations from Vertex AI for the model build and train. The Model Results section just shows model evaluation (diagnosis and backtesting), and model properties when user selects a trained model.
     Analysis: this section presents the results forecasted by the model with insightful visualizations, for example: 

@@ -10,6 +10,7 @@ import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import RunDetailsCard from './parts/RunDetailsCard.vue'
 import LogsPanel from './parts/LogsPanel.vue'
 import SegmentModelsPanel from './parts/SegmentModelsPanel.vue'
+import { forecastResultColumns, analysisResultColumns } from './parts/resultColumns.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -107,20 +108,7 @@ const runDetailRows = computed(() => {
   ]
 })
 
-// ── analysis/forecast Results tab column defs ────────────────────────────────
-const forecastResultColumns = [
-  { field: 'date', header: 'Date', width: '9rem' },
-  { field: 'predicted', header: 'Predicted', width: '9rem', formatter: (v) => (v != null ? v.toFixed(4) : '—') }
-]
-const analysisResultColumns = [
-  { field: 'client_id', header: 'Client ID', width: '9rem' },
-  { field: 'scenario', header: 'Scenario', width: '9rem' },
-  { field: 'year', header: 'Year', width: '6rem' },
-  { field: 'stage', header: 'Stage', width: '5rem' },
-  { field: 'pd', header: 'PD', width: '7rem', formatter: (v) => (v != null ? (v * 100).toFixed(3) + '%' : '—') },
-  { field: 'lgd', header: 'LGD', width: '7rem', formatter: (v) => (v != null ? (v * 100).toFixed(1) + '%' : '—') },
-  { field: 'ecl', header: 'ECL', width: '9rem', formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
-]
+// ── analysis/forecast Results tab column defs (shared with WorkflowDetail.vue) ─
 const resultColumns = computed(() => (kind.value === KIND.FORECAST ? forecastResultColumns : analysisResultColumns))
 const resultsFetchPage = (params) => jobsAPI.resultsFetchPage(kind.value, runId.value, params)
 const resultsFetchDistinct = (col) => jobsAPI.resultsFetchDistinct(kind.value, runId.value, col)
@@ -209,6 +197,9 @@ const confirmDelete = () => {
             <span class="type-tag">{{ typeLabel }}</span>
           </div>
           <h1>{{ job.name }}</h1>
+          <a v-if="job.raw.workflow_run_uuid" class="workflow-breadcrumb" @click="router.push({ name: 'jobs_workflow', params: { run_id: job.raw.workflow_run_uuid } })">
+            Part of a workflow &rarr;
+          </a>
         </div>
         <div class="job-header-actions">
           <Button
@@ -219,6 +210,9 @@ const confirmDelete = () => {
             :loading="actionBusy"
             @click="cancelJob"
           />
+          <template v-else-if="job.raw.workflow_run_id">
+            <span class="grid-caption">Re-run/Delete this run from its workflow</span>
+          </template>
           <template v-else>
             <Button label="Delete" outlined class="btn-header" :disabled="actionBusy" @click="confirmDelete" />
             <Button :label="kind === KIND.TRAINING ? 'Re-run all' : 'Re-run'" class="btn-header" :loading="actionBusy" @click="rerunJob" />
@@ -294,6 +288,9 @@ const confirmDelete = () => {
   margin-bottom: 22px;
 }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.workflow-breadcrumb { font-size: 12px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; width: fit-content; }
+.workflow-breadcrumb:hover { color: var(--ink); }
+.grid-caption { font-size: 12px; color: var(--text-color-muted-2); }
 .job-status-line { display: flex; align-items: center; gap: 8px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .status-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; }

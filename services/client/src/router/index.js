@@ -41,8 +41,9 @@ const router = createRouter({
         { path: '/credit-risk/transitions',  name: 'credit_risk_transitions', component: () => import('@/views/credit_risk/CreditRiskTransitions.vue'), meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
 
         // Jobs (v2) — unifies Calibration/Forecast/Credit-Risk job lists + detail
-        { path: '/jobs',                name: 'jobs_history', component: () => import('@/views/jobs/JobHistory.vue'), meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
-        { path: '/jobs/:kind/:run_id',  name: 'jobs_detail',  component: () => import('@/views/jobs/JobDetail.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
+        { path: '/jobs',                name: 'jobs_history',  component: () => import('@/views/jobs/JobHistory.vue'),    meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
+        { path: '/jobs/workflow/:run_id', name: 'jobs_workflow', component: () => import('@/views/jobs/WorkflowDetail.vue'), meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
+        { path: '/jobs/:kind/:run_id',  name: 'jobs_detail',   component: () => import('@/views/jobs/JobDetail.vue'),     meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
 
         // System
         { path: '/uam',             name: 'uam',             component: () => import('@/views/users/UAM.vue'),              meta: { requiresAuth: true, requiresPerm: 'user:read' } },

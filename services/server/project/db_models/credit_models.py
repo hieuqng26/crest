@@ -64,6 +64,9 @@ class CreditRiskRun(db.Model):
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+    workflow_run_id = db.Column(
+        db.Integer, db.ForeignKey("workflow_runs.id"), nullable=True, index=True
+    )
 
     forecast_inputs_rel = db.relationship(
         "CreditRiskForecastInput", cascade="all, delete-orphan", lazy=True
@@ -93,6 +96,7 @@ class CreditRiskRun(db.Model):
             error_message=self.error_message,
             progress=self.progress,
             created_at=self.created_at.isoformat() if self.created_at else None,
+            workflow_run_id=self.workflow_run_id,
         )
 
 

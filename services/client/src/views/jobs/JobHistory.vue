@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import jobsAPI, { KIND } from '@/api/jobs'
 import creditRiskAPI from '@/api/creditRiskAPI'
+import workflowsAPI from '@/api/workflowsAPI'
 import { fmtDate } from '@/utils/datetime'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -11,10 +12,16 @@ import StatusDot from '@/components/ui/StatusDot.vue'
 const router = useRouter()
 
 const jobs = ref([])
+const workflows = ref([])
 const loading = ref(true)
 
 const fetchJobs = async () => {
-  jobs.value = await jobsAPI.listJobs()
+  const [jobsList, wfRes] = await Promise.all([
+    jobsAPI.listJobs(),
+    workflowsAPI.list({ per_page: 200 })
+  ])
+  jobs.value = jobsList
+  workflows.value = wfRes.data.items ?? []
 }
 
 // Mirrors the old CreditRiskJobs.vue behaviour: if no analysis run is marked
@@ -35,7 +42,10 @@ const autoSetActiveAnalysisRun = async () => {
 }
 
 let pollTimer = null
-const hasActive = computed(() => jobs.value.some((j) => j.status === 'running' || j.status === 'queued'))
+const hasActive = computed(() =>
+  jobs.value.some((j) => j.status === 'running' || j.status === 'queued') ||
+  workflows.value.some((w) => w.status === 'running' || w.status === 'queued')
+)
 const startPolling = () => {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
@@ -54,12 +64,15 @@ onMounted(async () => {
 })
 onUnmounted(stopPolling)
 
-const TYPE_CHIPS = ['All', 'Training', 'Forecast', 'Analysis']
+// ── standalone jobs (not part of any workflow) ───────────────────────────────
+const standaloneJobs = computed(() => jobs.value.filter((j) => !j.raw.workflow_run_id))
+
+const TYPE_CHIPS = ['All', 'Workflows', 'Training', 'Forecast', 'Analysis']
 const activeType = ref('All')
 
 const typeCounts = computed(() => {
-  const c = { All: jobs.value.length, Training: 0, Forecast: 0, Analysis: 0 }
-  for (const j of jobs.value) {
+  const c = { All: workflows.value.length + standaloneJobs.value.length, Workflows: workflows.value.length, Training: 0, Forecast: 0, Analysis: 0 }
+  for (const j of standaloneJobs.value) {
     const label = j.kind === KIND.TRAINING ? 'Training' : j.kind === KIND.FORECAST ? 'Forecast' : 'Analysis'
     c[label]++
   }
@@ -68,24 +81,46 @@ const typeCounts = computed(() => {
 
 const search = ref('')
 
-const filtered = computed(() => {
+// ── unified top-level rows: workflows + standalone jobs, newest first ───────
+const topLevelRows = computed(() => {
   const kindOf = { Training: KIND.TRAINING, Forecast: KIND.FORECAST, Analysis: KIND.ANALYSIS }
   const q = search.value.trim().toLowerCase()
-  return jobs.value
-    .filter((j) => activeType.value === 'All' || j.kind === kindOf[activeType.value])
-    .filter((j) => !q || (j.name + j.ref + j.run_id).toLowerCase().includes(q))
-    .sort((a, b) => new Date(b.started_at ?? 0) - new Date(a.started_at ?? 0))
+
+  const wfRows = (activeType.value === 'All' || activeType.value === 'Workflows')
+    ? workflows.value
+        .filter((w) => !q || (w.name + w.run_id).toLowerCase().includes(q))
+        .map((w) => ({ type: 'workflow', key: `wf-${w.run_id}`, sortAt: w.started_at ?? w.created_at, wf: w }))
+    : []
+
+  const jobRows = (activeType.value === 'All' || (activeType.value !== 'Workflows' && kindOf[activeType.value]))
+    ? standaloneJobs.value
+        .filter((j) => activeType.value === 'All' || j.kind === kindOf[activeType.value])
+        .filter((j) => !q || (j.name + j.ref + j.run_id).toLowerCase().includes(q))
+        .map((j) => ({ type: 'job', key: `job-${j.run_id}`, sortAt: j.started_at, job: j }))
+    : []
+
+  return [...wfRows, ...jobRows].sort((a, b) => new Date(b.sortAt ?? 0) - new Date(a.sortAt ?? 0))
 })
 
 const progressLabel = (j) =>
   j.status === 'success' ? 'Completed' : j.status === 'failed' ? `Failed at ${j.progress}%` : '—'
 
 const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
+const openWorkflow = (wf) => router.push({ name: 'jobs_workflow', params: { run_id: wf.run_id } })
+
+// Workflow is treated as one process — a single status, not a per-stage breakdown.
+const workflowRef = (wf) => (wf.targets ?? []).map((t) => t.target_col).join(', ') || '—'
+const STAGE_LABEL = { training: 'Training', forecast: 'Forecasting', analysis: 'Analyzing', done: 'Completed' }
+const workflowProgressLabel = (wf) => {
+  if (wf.status === 'success') return 'Completed'
+  if (wf.status === 'failed') return 'Failed'
+  return STAGE_LABEL[wf.current_stage] ?? '—'
+}
 </script>
 
 <template>
   <div>
-    <PageHeader title="Job History" subtitle="Every training, forecast and analysis run">
+    <PageHeader title="Job History" subtitle="Every workflow, training, forecast and analysis run">
       <template #actions>
         <Button class="btn-new-model" @click="router.push({ name: 'model_new' })">
           <span class="btn-plus">+</span>
@@ -110,7 +145,7 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
       <InputText v-model="search" placeholder="Search by run, model or dataset…" class="search-input" />
     </div>
 
-    <div class="showing-line">Showing {{ filtered.length }} of {{ jobs.length }} runs</div>
+    <div class="showing-line">Showing {{ topLevelRows.length }} of {{ workflows.length + standaloneJobs.length }} runs</div>
 
     <div class="panel">
       <div class="table-scroll">
@@ -118,30 +153,48 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
           <div>RUN</div><div>TYPE</div><div>INPUT</div><div>STATUS</div><div>PROGRESS</div><div>STARTED</div><div>FINISHED</div><div>BY</div>
         </div>
 
-        <div v-if="!loading && filtered.length === 0" class="empty-state">
+        <div v-if="!loading && topLevelRows.length === 0" class="empty-state">
           <i class="pi pi-inbox" />
           <p>No runs match your filters.</p>
         </div>
 
-        <div v-for="j in filtered" :key="j.run_id" class="jobs-grid jobs-grid--row" @click="openJob(j)">
-          <div class="run-name-cell">
-            <div class="run-name">{{ j.name }}</div>
-            <div class="font-mono run-id">{{ j.run_id }}</div>
-          </div>
-          <div><span class="type-tag">{{ j.kind === KIND.TRAINING ? 'TRAINING' : j.kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS' }}</span></div>
-          <div class="font-mono cell-ref">{{ j.ref }}</div>
-          <div><StatusDot :status="j.status" /></div>
-          <div class="progress-cell">
-            <div v-if="j.status === 'running'" class="progress-row">
-              <div class="progress-track"><div class="progress-fill" :style="{ width: j.progress + '%' }" /></div>
-              <span class="font-mono progress-pct">{{ j.progress }}%</span>
+        <template v-for="row in topLevelRows" :key="row.key">
+          <!-- Workflow row — treated as a single process, same shape as any other job row -->
+          <div v-if="row.type === 'workflow'" class="jobs-grid jobs-grid--row jobs-grid--workflow" @click="openWorkflow(row.wf)">
+            <div class="run-name-cell">
+              <div class="run-name">{{ row.wf.name }}</div>
+              <div class="font-mono run-id">{{ row.wf.run_id }}</div>
             </div>
-            <span v-else class="progress-label">{{ progressLabel(j) }}</span>
+            <div><span class="type-tag type-tag--workflow">WORKFLOW</span></div>
+            <div class="font-mono cell-ref">{{ workflowRef(row.wf) }}</div>
+            <div><StatusDot :status="row.wf.status" /></div>
+            <div class="progress-cell"><span class="progress-label">{{ workflowProgressLabel(row.wf) }}</span></div>
+            <div class="font-mono cell-mono">{{ row.wf.started_at ? fmtDate(row.wf.started_at) : '—' }}</div>
+            <div class="font-mono cell-mono">{{ row.wf.finished_at ? fmtDate(row.wf.finished_at) : '—' }}</div>
+            <div class="cell-by">{{ row.wf.triggered_by ? row.wf.triggered_by.split('@')[0] : '—' }}</div>
           </div>
-          <div class="font-mono cell-mono">{{ j.started_at ? fmtDate(j.started_at) : '—' }}</div>
-          <div class="font-mono cell-mono">{{ j.finished_at ? fmtDate(j.finished_at) : '—' }}</div>
-          <div class="cell-by">{{ j.triggered_by ? j.triggered_by.split('@')[0] : '—' }}</div>
-        </div>
+
+          <!-- Standalone job row -->
+          <div v-else class="jobs-grid jobs-grid--row" @click="openJob(row.job)">
+            <div class="run-name-cell">
+              <div class="run-name">{{ row.job.name }}</div>
+              <div class="font-mono run-id">{{ row.job.run_id }}</div>
+            </div>
+            <div><span class="type-tag">{{ row.job.kind === KIND.TRAINING ? 'TRAINING' : row.job.kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS' }}</span></div>
+            <div class="font-mono cell-ref">{{ row.job.ref }}</div>
+            <div><StatusDot :status="row.job.status" /></div>
+            <div class="progress-cell">
+              <div v-if="row.job.status === 'running'" class="progress-row">
+                <div class="progress-track"><div class="progress-fill" :style="{ width: row.job.progress + '%' }" /></div>
+                <span class="font-mono progress-pct">{{ row.job.progress }}%</span>
+              </div>
+              <span v-else class="progress-label">{{ progressLabel(row.job) }}</span>
+            </div>
+            <div class="font-mono cell-mono">{{ row.job.started_at ? fmtDate(row.job.started_at) : '—' }}</div>
+            <div class="font-mono cell-mono">{{ row.job.finished_at ? fmtDate(row.job.finished_at) : '—' }}</div>
+            <div class="cell-by">{{ row.job.triggered_by ? row.job.triggered_by.split('@')[0] : '—' }}</div>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -242,6 +295,8 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
 .jobs-grid--row:hover { background: var(--surface-hover); }
 .jobs-grid--row:last-child { border-bottom: none; }
 
+.jobs-grid--workflow { background: var(--surface-inset); }
+
 .run-name-cell { display: flex; flex-direction: column; gap: 2px; padding-right: 12px; overflow: hidden; }
 .run-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .run-id { font-size: 10.5px; color: var(--text-color-muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -256,9 +311,11 @@ const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind
   border: 1px solid var(--surface-border-input);
   border-radius: 2px;
 }
+.type-tag--workflow { background: var(--ink); color: var(--yellow); border-color: var(--ink); }
 
 .cell-ref, .cell-mono { font-size: 11.5px; color: var(--text-color-secondary); }
 .cell-by { font-size: 12.5px; color: var(--text-color-secondary); }
+.grid-caption { font-size: 11.5px; color: var(--text-color-muted-2); }
 
 .progress-cell { padding-right: 20px; }
 .progress-row { display: flex; align-items: center; gap: 8px; }

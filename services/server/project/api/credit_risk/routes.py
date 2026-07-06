@@ -343,6 +343,25 @@ def set_active_run(cr_run_id: str):
     return jsonify({"ok": True}), 200
 
 
+def _check_workflow_membership(cr: CreditRiskRun):
+    """Return a 409 response if this run belongs to a workflow, else None."""
+    if cr.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(cr.workflow_run_id)
+        wf_name = wf.name if wf else cr.workflow_run_id
+        return (
+            jsonify(
+                {
+                    "error": f"This run belongs to workflow '{wf_name}' — delete "
+                    "or rerun the workflow instead."
+                }
+            ),
+            409,
+        )
+    return None
+
+
 @credit_risk.post("/runs/<cr_run_id>/rerun")
 @require_perm("credit_risk:execute")
 def rerun_run(cr_run_id: str):
@@ -352,6 +371,9 @@ def rerun_run(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
         return jsonify({"error": "Run not found"}), 404
+    err = _check_workflow_membership(cr)
+    if err:
+        return err
 
     with app_session() as s:
         CreditRiskResult.query.filter_by(run_id=cr_run_id).delete()
@@ -383,10 +405,15 @@ def cancel_run(cr_run_id: str):
         r.status = "failed"
         r.finished_at = datetime.now(timezone.utc)
         r.error_message = "Cancelled by user"
+        workflow_run_id = r.workflow_run_id
         s.add(r)
         s.flush()
         result = r.to_dict()
 
+    if workflow_run_id:
+        from project.workers.tasks import advance_workflow
+
+        advance_workflow.delay(workflow_run_id)
     return jsonify(result), 200
 
 
@@ -536,6 +563,9 @@ def delete_run(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
         return jsonify({"error": "Run not found"}), 404
+    err = _check_workflow_membership(cr)
+    if err:
+        return err
 
     with app_session() as s:
         CreditRiskRunLog.query.filter_by(run_id=cr_run_id).delete()
@@ -556,6 +586,11 @@ def get_run(cr_run_id: str):
     d["dataset_name"] = ds.name if ds else None
     results = CreditRiskResult.query.filter_by(run_id=cr_run_id).all()
     d["client_ids"] = sorted({r.client_id for r in results})
+    if cr.workflow_run_id:
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.get(cr.workflow_run_id)
+        d["workflow_run_uuid"] = wf.run_id if wf else None
     return jsonify(d), 200
 
 
