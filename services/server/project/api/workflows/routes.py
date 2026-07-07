@@ -36,6 +36,103 @@ def _dataset_schema(ds: Dataset) -> tuple[set, dict]:
     return set(schema.get("columns", [])), schema.get("dtypes", {})
 
 
+def _launch_workflow(
+    name, resolved_targets, analysis_params, datasets, identity, parsed_seg=None
+):
+    """
+    Creates a WorkflowRun + CalibrationRuns in the DB, dispatches run_calibration.delay
+    for each, and returns (wf_dict, created_list).
+
+    datasets = {
+        'calibration': Dataset,
+        'forecast': Dataset,
+        'credit': Dataset | None,
+        'financial': Dataset | None,
+    }
+    resolved_targets = [
+        {'target_col': str, '_cfg': ModelConfig, 'feature_cols': list[str]}
+    ]
+    analysis_params = {'exposure': float, 'discount_rate': float,
+                       'lifetime_horizon': int, 'curve': str}
+    """
+    if parsed_seg is None:
+        parsed_seg = {
+            "seg_sectors_json": None,
+            "seg_split_by": None,
+            "seg_max_segments": None,
+            "seg_sector_overrides_json": None,
+        }
+
+    cal_ds = datasets["calibration"]
+    fc_ds = datasets["forecast"]
+    credit_ds = datasets.get("credit")
+    fin_ds = datasets.get("financial")
+
+    wf_run_id = str(uuid.uuid4())
+
+    with app_session() as s:
+        wf = WorkflowRun(
+            run_id=wf_run_id,
+            name=name,
+            status="queued",
+            current_stage="training",
+            triggered_by=identity,
+            created_at=datetime.now(timezone.utc),
+            calibration_dataset_id=cal_ds.id,
+            forecast_dataset_id=fc_ds.id,
+            credit_dataset_id=credit_ds.id if credit_ds else None,
+            financial_dataset_id=fin_ds.id if fin_ds else None,
+            targets_json=json.dumps(
+                [
+                    {
+                        "target_col": t["target_col"],
+                        "model_config_id": t["_cfg"].id,
+                        "feature_cols": t["feature_cols"],
+                    }
+                    for t in resolved_targets
+                ]
+            ),
+            analysis_params_json=json.dumps(analysis_params),
+        )
+        s.add(wf)
+        s.flush()
+
+        created = []
+        for t in resolved_targets:
+            cfg = t["_cfg"]
+            cal_run_id = str(uuid.uuid4())
+            run = CalibrationRun(
+                run_id=cal_run_id,
+                name=f"{name} · {t['target_col']}",
+                dataset_id=cal_ds.id,
+                model_config_id=cfg.id,
+                status="queued",
+                triggered_by=identity,
+                search_config_json=build_search_config_json(cfg),
+                train_split=cfg.train_split if cfg.train_split is not None else 0.8,
+                scaler=cfg.scaler,
+                target_col=t["target_col"],
+                feature_cols_json=json.dumps(t["feature_cols"]),
+                seg_sectors_json=parsed_seg["seg_sectors_json"],
+                seg_split_by=parsed_seg["seg_split_by"],
+                seg_max_segments=parsed_seg["seg_max_segments"],
+                seg_sector_overrides_json=parsed_seg["seg_sector_overrides_json"],
+                workflow_run_id=wf.id,
+            )
+            s.add(run)
+            s.flush()
+            created.append(
+                {"target_col": t["target_col"], "calibration_run_id": cal_run_id}
+            )
+
+        wf_dict = wf.to_dict()
+
+    for c in created:
+        run_calibration.delay(c["calibration_run_id"])
+
+    return wf_dict, created
+
+
 @workflows.get("/resolve-datasets")
 @require_perm("calibration:read")
 def resolve_datasets():
@@ -248,71 +345,22 @@ def create_workflow():
         "curve": analysis_body.get("curve", "moodys"),
     }
 
-    identity = get_jwt_identity()
-    wf_run_id = str(uuid.uuid4())
-
-    with app_session() as s:
-        wf = WorkflowRun(
-            run_id=wf_run_id,
-            name=name,
-            status="queued",
-            current_stage="training",
-            triggered_by=identity,
-            created_at=datetime.now(timezone.utc),
-            calibration_dataset_id=cal_ds.id,
-            forecast_dataset_id=fc_ds.id,
-            credit_dataset_id=credit_ds.id if credit_ds else None,
-            financial_dataset_id=fin_ds.id if fin_ds else None,
-            targets_json=json.dumps(
-                [
-                    {
-                        "target_col": t["target_col"],
-                        "model_config_id": t["_cfg"].id,
-                        "feature_cols": t["feature_cols"],
-                    }
-                    for t in resolved_targets
-                ]
-            ),
-            analysis_params_json=json.dumps(analysis_params),
-        )
-        s.add(wf)
-        s.flush()
-
-        created = []
-        for t in resolved_targets:
-            cfg = t["_cfg"]
-            cal_run_id = str(uuid.uuid4())
-            run = CalibrationRun(
-                run_id=cal_run_id,
-                name=f"{name} · {t['target_col']}",
-                dataset_id=cal_ds.id,
-                model_config_id=cfg.id,
-                status="queued",
-                triggered_by=identity,
-                search_config_json=build_search_config_json(cfg),
-                train_split=cfg.train_split if cfg.train_split is not None else 0.8,
-                scaler=cfg.scaler,
-                target_col=t["target_col"],
-                feature_cols_json=json.dumps(t["feature_cols"]),
-                seg_sectors_json=parsed_seg["seg_sectors_json"],
-                seg_split_by=parsed_seg["seg_split_by"],
-                seg_max_segments=parsed_seg["seg_max_segments"],
-                seg_sector_overrides_json=parsed_seg["seg_sector_overrides_json"],
-                workflow_run_id=wf.id,
-            )
-            s.add(run)
-            s.flush()
-            created.append(
-                {"target_col": t["target_col"], "calibration_run_id": cal_run_id}
-            )
-
-        result = wf.to_dict()
-        result["targets"] = created
-
-    for c in created:
-        run_calibration.delay(c["calibration_run_id"])
-
-    return jsonify(result), 202
+    datasets = {
+        "calibration": cal_ds,
+        "forecast": fc_ds,
+        "credit": credit_ds,
+        "financial": fin_ds,
+    }
+    wf_dict, created_list = _launch_workflow(
+        name,
+        resolved_targets,
+        analysis_params,
+        datasets,
+        get_jwt_identity(),
+        parsed_seg,
+    )
+    wf_dict["targets"] = created_list
+    return jsonify(wf_dict), 202
 
 
 @workflows.post("/<run_id>/cancel")
@@ -353,6 +401,79 @@ def cancel_workflow(run_id):
         result = wf.to_dict()
 
     return jsonify(result), 200
+
+
+@workflows.post("/<run_id>/rerun")
+@require_perm("calibration:execute")
+def rerun_workflow(run_id):
+    perms = current_permissions()
+    if not (
+        has_permission(perms, "forecast:execute")
+        and has_permission(perms, "credit_risk:execute")
+    ):
+        return jsonify(
+            {
+                "error": "Launching a workflow requires calibration, forecast and "
+                "credit_risk execute permissions"
+            }
+        ), 403
+
+    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
+    if not wf:
+        return jsonify({"error": "Not found"}), 404
+
+    targets_raw = json.loads(wf.targets_json or "[]")
+    resolved_targets = []
+    for t in targets_raw:
+        cfg = ModelConfig.query.get(t["model_config_id"])
+        if not cfg:
+            return jsonify(
+                {
+                    "error": f"ModelConfig {t['model_config_id']} not found for "
+                    f"target '{t['target_col']}' — configuration may have been deleted"
+                }
+            ), 422
+        resolved_targets.append(
+            {
+                "target_col": t["target_col"],
+                "feature_cols": t.get("feature_cols") or [],
+                "_cfg": cfg,
+            }
+        )
+
+    cal_ds = _latest_dataset("calibration")
+    if not cal_ds:
+        return jsonify(
+            {
+                "error": "No calibration dataset uploaded yet — upload a dataset "
+                "of kind 'calibration' first."
+            }
+        ), 422
+    fc_ds = _latest_dataset("forecast")
+    if not fc_ds:
+        return jsonify(
+            {
+                "error": "No forecast dataset uploaded yet — upload a macro "
+                "forecast dataset (kind 'forecast') first."
+            }
+        ), 422
+    credit_ds = _latest_dataset("credit")
+    fin_ds = _latest_dataset("financial_portfolio")
+
+    analysis_params = json.loads(wf.analysis_params_json or "{}")
+
+    datasets = {
+        "calibration": cal_ds,
+        "forecast": fc_ds,
+        "credit": credit_ds,
+        "financial": fin_ds,
+    }
+    name = wf.name + " (re-run)"
+    wf_dict, created_list = _launch_workflow(
+        name, resolved_targets, analysis_params, datasets, get_jwt_identity()
+    )
+    wf_dict["targets"] = created_list
+    return jsonify(wf_dict), 202
 
 
 @workflows.delete("/<run_id>")
