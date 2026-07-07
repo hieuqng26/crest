@@ -8,6 +8,10 @@ const props = defineProps({
   errorMessage: { type: String,  default: null },
   labelWidth:   { type: Number,  default: 95 },
   collapsible:  { type: Boolean, default: false },
+  // Bare mode: render only the rows + progress (no card chrome, no own header
+  // or collapse toggle). Used when embedded inside the combined run/log box,
+  // which owns the surrounding frame and collapse behaviour.
+  bare:         { type: Boolean, default: false },
 })
 
 const isLive = (s) => s === 'running' || s === 'queued'
@@ -23,7 +27,33 @@ watch(() => props.status, (s) => {
 </script>
 
 <template>
-  <div class="run-details card--emphasis">
+  <!-- Bare: just the content, framed by the parent box -->
+  <div v-if="bare" class="run-details-bare">
+    <span class="eyebrow">RUN DETAILS</span>
+    <div class="detail-list">
+      <div v-for="row in rows" :key="row.k" class="detail-row">
+        <div class="detail-key" :style="{ width: labelWidth + 'px' }">{{ row.k }}</div>
+        <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
+      </div>
+    </div>
+
+    <div class="progress-block">
+      <div class="progress-head">
+        <span class="progress-label">Progress</span>
+        <span class="font-mono progress-pct">{{ progress }}%</span>
+      </div>
+      <div class="progress-track">
+        <div
+          class="progress-fill"
+          :class="{ 'is-failed': status === 'failed' }"
+          :style="{ width: progress + '%' }"
+        />
+      </div>
+      <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
+    </div>
+  </div>
+
+  <div v-else class="run-details card--emphasis">
     <div
       class="run-details-header"
       :class="{ 'is-clickable': collapsible }"
@@ -59,6 +89,17 @@ watch(() => props.status, (s) => {
 
 <style scoped>
 .run-details { padding: 0; }
+
+/* Bare mode: content only, framed by the parent combined box. */
+.run-details-bare {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px 16px;
+}
+.run-details-bare .eyebrow { margin-bottom: 10px; }
+.run-details-bare .detail-row { padding-left: 0; padding-right: 0; }
+.run-details-bare .progress-block { padding: 12px 0 0; }
 
 .run-details-header {
   display: flex;

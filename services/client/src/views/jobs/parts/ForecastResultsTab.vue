@@ -2,8 +2,8 @@
 import { ref, computed, watch } from 'vue'
 import forecastRunsAPI from '@/api/forecastRunsAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
+import LogsPanel from './LogsPanel.vue'
 import { probeColumns } from './resultColumns.js'
-import ScenarioChips from './ScenarioChips.vue'
 
 const props = defineProps({
   targets: { type: Array, required: true } // [{ target_col, calibration, forecast }]
@@ -17,17 +17,13 @@ const columns = ref([])
 const fetchPage = (params) => forecastRunsAPI.results(selectedForecast.value.run_id, params)
 const fetchDistinct = (column) => forecastRunsAPI.resultsDistinct(selectedForecast.value.run_id, column)
 
-const forecastScenario = ref('All')
-
-const hasForecastScenario = computed(() => columns.value.some((c) => c.field === 'scenario'))
-
-const forecastExternalFilters = computed(() => {
-  if (!hasForecastScenario.value || forecastScenario.value === 'All') return {}
-  return { scenario: { mode: 'in', value: [forecastScenario.value] } }
+// Show live logs only while the selected forecast is still running.
+const isForecastLive = computed(() => {
+  const s = selectedForecast.value?.status
+  return s === 'running' || s === 'queued'
 })
 
 watch(selectedForecast, async (fr) => {
-  forecastScenario.value = 'All'
   columns.value = []
   if (!fr) return
   columns.value = await probeColumns(fetchPage)
@@ -49,11 +45,6 @@ watch(selectedForecast, async (fr) => {
         </div>
       </div>
 
-      <div v-if="hasForecastScenario" class="scenario-bar">
-        <span class="field-label">SCENARIO</span>
-        <ScenarioChips v-model="forecastScenario" />
-      </div>
-
       <div class="panel results-panel">
         <CommonDataTable
           v-if="columns.length"
@@ -61,10 +52,18 @@ watch(selectedForecast, async (fr) => {
           :columns="columns"
           :fetch-page="fetchPage"
           :fetch-distinct="fetchDistinct"
-          :external-filters="forecastExternalFilters"
           empty-message="No results yet."
         />
       </div>
+
+      <LogsPanel
+        v-if="isForecastLive"
+        :key="`log-${selectedForecast.run_id}`"
+        :kind="'forecast'"
+        :run-id="selectedForecast.run_id"
+        :status="selectedForecast.status"
+        collapsible
+      />
     </template>
   </div>
 </template>
@@ -75,8 +74,6 @@ watch(selectedForecast, async (fr) => {
 .filter-bar { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; background: var(--surface-inset); border-radius: 2px; padding: 14px 16px; }
 .filter-col { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
 .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
-
-.scenario-bar { display: flex; align-items: center; gap: 12px; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
 .results-panel { overflow: hidden; }

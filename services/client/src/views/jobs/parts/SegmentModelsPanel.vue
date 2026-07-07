@@ -45,6 +45,7 @@ const filtered = computed(() => {
 const fmtMetric = (v) => (v == null ? '—' : Number(v).toFixed(4))
 
 const SEG_COLS = [
+  { field: 'sector', label: 'SECTOR', width: '160px' },
   { field: 'segment', label: 'SEGMENT' },
   { field: 'n', label: 'N', align: 'right', width: '70px' },
   { field: 'r2', label: 'R²', align: 'right', width: '90px' },
@@ -132,11 +133,11 @@ const rerunSegment = async (seg) => {
         </div>
       </template>
 
+      <template #cell-sector="{ row: seg }">
+        <span class="seg-sector">{{ seg.sector }}</span>
+      </template>
       <template #cell-segment="{ row: seg }">
-        <div class="seg-name-cell">
-          <div class="seg-sector">{{ seg.sector }}</div>
-          <div class="font-mono seg-value">{{ seg.split_value }}</div>
-        </div>
+        <span class="font-mono seg-value">{{ seg.split_value }}</span>
       </template>
       <template #cell-n="{ row: seg }">
         <span class="font-mono">{{ seg.row_count ?? '—' }}</span>
@@ -220,7 +221,7 @@ const rerunSegment = async (seg) => {
 
 .seg-name-cell { display: flex; flex-direction: column; gap: 1px; }
 .seg-sector { font-size: 13px; font-weight: 600; }
-.seg-value { font-size: 10.5px; color: var(--text-color-muted-2); }
+.seg-value { font-size: 12px; color: var(--text-color-secondary); }
 .seg-r2 { font-weight: 600; }
 .seg-rmse { color: var(--text-color-secondary); }
 

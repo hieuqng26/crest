@@ -1,5 +1,7 @@
-
-- [ ] SegmentModelsPanel: Move log inside the same collapsible box with Run Details (Run Details on the left 40% of the box, Log on right with 60% width). When the job is running, make the run details & log visible, don't load or show the segment models table. When job is finished, collapse the run details & log box, show the segment models table. Add a column Sector in Segment Models table.
+- Workflow details:
+    - [x] SegmentModelsPanel: Move log inside the same collapsible box (Use PrimeVue's Panel component as it has collapsible function) with Run Details (Run Details on the left 40% of the box, Log on right with 60% width). When the job is running, make the run details & log visible, don't load or show the segment models table. When job is finished, collapse the run details & log box, show the segment models table. Add a column Sector in Segment Models table.
+    - [x] Forecast tab: remove SCENARIO filter. Add the log in a collapsible panel below the forecast data table. Show the log only when the job is running.
+    - [x] Credit Results tab: remove SCENARIO filter and the information display like EXPOSURE etc. Similar to Forecast tab, add the log.
 - Financial Forecast:
     - [ ] The plots in Financial Forecast have jumps
     - [ ] Add multi-select dropdown for the target variables. If only one is chosen, show the plot in full width

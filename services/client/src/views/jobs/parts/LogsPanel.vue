@@ -7,6 +7,9 @@ const props = defineProps({
   runId:       { type: String,  required: true },
   status:      { type: String,  required: true },
   collapsible: { type: Boolean, default: false },
+  // Embedded mode: the panel lives inside the combined run/log box, which owns
+  // the frame and collapse. Never self-collapse; fill the column height.
+  embedded:    { type: Boolean, default: false },
 })
 
 const logs = ref([])
@@ -65,7 +68,7 @@ watch(() => props.status, (s) => {
 </script>
 
 <template>
-  <div class="logs-panel" :class="{ 'logs-panel--collapsed': collapsed }">
+  <div class="logs-panel" :class="{ 'logs-panel--collapsed': collapsed, 'logs-panel--embedded': embedded }">
     <div class="logs-header" :class="{ 'logs-header--clickable': collapsible }" @click="collapsible && toggleCollapsed()">
       <span class="eyebrow logs-title">LOGS</span>
       <span class="font-mono logs-count">{{ logs.length }} lines</span>
@@ -98,6 +101,13 @@ watch(() => props.status, (s) => {
   min-height: 480px;
 }
 .logs-panel--collapsed { min-height: unset; }
+
+/* Embedded: fills the right column of the combined box; frame is the parent's. */
+.logs-panel--embedded {
+  min-height: 0;
+  height: 100%;
+  border-radius: 0;
+}
 
 .logs-header {
   display: flex;

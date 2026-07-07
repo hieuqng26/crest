@@ -12,7 +12,7 @@ import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
-import ScenarioChips from './parts/ScenarioChips.vue'
+import LogsPanel from './parts/LogsPanel.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
 const route = useRoute()
@@ -88,23 +88,13 @@ const goToTraining = (cal) => router.push({ name: 'jobs_detail', params: { kind:
 const goToForecast = (fr) => router.push({ name: 'jobs_detail', params: { kind: 'forecast', run_id: fr.run_id } })
 
 // ── Credit Results tab ────────────────────────────────────────────────────────
-const analysisParamRows = computed(() => {
-  const a = wf.value?.analysis
-  if (!a) return []
-  return [
-    { k: 'Exposure (EAD)', v: a.exposure != null ? a.exposure.toLocaleString() : '—' },
-    { k: 'Discount rate', v: a.discount_rate != null ? (a.discount_rate * 100).toFixed(2) + '%' : '—' },
-    { k: 'Lifetime horizon', v: a.lifetime_horizon != null ? `${a.lifetime_horizon} years` : '—' },
-    { k: 'Curve', v: a.curve ?? '—' }
-  ]
-})
 const analysisResultsFetchPage = (params) => creditRiskAPI.getRunResults(wf.value.analysis.run_id, params)
 const analysisResultsFetchDistinct = (col) => creditRiskAPI.getRunResultsDistinct(wf.value.analysis.run_id, col)
 
-const creditScenario = ref('All')
-const creditExternalFilters = computed(() => {
-  if (creditScenario.value === 'All') return {}
-  return { scenario: { mode: 'in', value: [creditScenario.value] } }
+// Show live logs only while the analysis run is still in progress.
+const isAnalysisLive = computed(() => {
+  const s = wf.value?.analysis?.status
+  return s === 'running' || s === 'queued'
 })
 
 const TARGET_COLS = [
@@ -267,23 +257,12 @@ const confirmDelete = () => {
           <p>Credit analysis will start automatically once all forecasts finish.</p>
         </div>
         <template v-else>
-          <div class="inset-strip">
-            <div v-for="row in analysisParamRows" :key="row.k" class="inset-field">
-              <span class="inset-label">{{ row.k }}</span>
-              <span class="font-mono inset-value">{{ row.v }}</span>
-            </div>
-          </div>
-          <div class="credit-toolbar">
-            <span class="credit-toolbar-label">SCENARIO</span>
-            <ScenarioChips v-model="creditScenario" />
-          </div>
           <div class="panel results-panel">
             <CommonDataTable
               :key="wf.analysis.run_id"
               :columns="analysisResultColumns"
               :fetch-page="analysisResultsFetchPage"
               :fetch-distinct="analysisResultsFetchDistinct"
-              :external-filters="creditExternalFilters"
               empty-message="No results yet."
             >
               <template #cell-stage="{ data }">
@@ -292,6 +271,15 @@ const confirmDelete = () => {
               </template>
             </CommonDataTable>
           </div>
+
+          <LogsPanel
+            v-if="isAnalysisLive"
+            :key="`log-${wf.analysis.run_id}`"
+            :kind="'analysis'"
+            :run-id="wf.analysis.run_id"
+            :status="wf.analysis.status"
+            collapsible
+          />
         </template>
       </div>
     </template>
@@ -344,13 +332,7 @@ const confirmDelete = () => {
 .cell-mono { font-size: 11.5px; color: var(--text-color-secondary); }
 
 .credit-tab { display: flex; flex-direction: column; gap: 16px; }
-.inset-strip { display: flex; flex-wrap: wrap; gap: 22px; background: var(--surface-inset); border-radius: 2px; padding: 12px 16px; }
-.inset-field { display: flex; flex-direction: column; gap: 2px; }
-.inset-label { font-size: 10.5px; color: var(--text-color-muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.inset-value { font-size: 13px; font-weight: 600; }
 .results-panel { overflow: hidden; }
-.credit-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.credit-toolbar-label { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-color-muted); }
 
 .empty-note { text-align: center; color: var(--text-color-muted); padding: 32px 20px; }
 .empty-note i { font-size: 22px; display: block; margin-bottom: 8px; opacity: 0.6; }

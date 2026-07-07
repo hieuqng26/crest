@@ -123,6 +123,19 @@ const activeTab = computed({
 })
 const resultsDisabled = computed(() => job.value?.status !== 'success')
 
+// ── training: combined Run details + Logs box ───────────────────────────────
+// While the job is live the box is expanded and the segment table is hidden
+// (nothing to show yet). Once finished — for a segmented run — the box collapses
+// to a slim summary and the segment models table takes over. Non-segmented runs
+// have no follow-on table, so their box stays expanded.
+const trainingLive = computed(() => job.value?.status === 'running' || job.value?.status === 'queued')
+const runLogCollapsed = ref(false)
+watch(() => job.value?.status, (s) => {
+  if (s === 'running' || s === 'queued') runLogCollapsed.value = false
+  else if (s) runLogCollapsed.value = !!job.value?.raw?.is_segmented
+}, { immediate: true })
+const toggleRunLog = () => { runLogCollapsed.value = !runLogCollapsed.value }
+
 // ── actions ───────────────────────────────────────────────────────────────────
 const cancelJob = async () => {
   actionBusy.value = true
@@ -225,11 +238,33 @@ const confirmDelete = () => {
         </div>
       </div>
 
-      <!-- Training: RUN DETAILS (collapsible) + Segment models + collapsible logs -->
+      <!-- Training: combined Run details + Logs box, then segment models -->
       <div v-if="kind === KIND.TRAINING" class="job-body">
-        <RunDetailsCard :rows="runDetailRows" :progress="job.progress" :status="job.status" :error-message="job.raw.error_message" collapsible />
-        <SegmentModelsPanel v-if="job.raw.is_segmented" :run-id="runId" />
-        <LogsPanel :kind="kind" :run-id="runId" :status="job.status" :collapsible="job.raw.is_segmented" />
+        <SegmentModelsPanel v-if="job.raw.is_segmented && !trainingLive" :run-id="runId" />
+
+        <div class="runlog-box" :class="{ 'is-collapsed': runLogCollapsed }">
+          <div class="runlog-bar" @click="toggleRunLog">
+            <span class="eyebrow">RUN DETAILS &amp; LOGS</span>
+            <span v-if="runLogCollapsed" class="runlog-summary">
+              <span class="status-dot" :style="{ backgroundColor: statusMeta.dot }" />
+              <span class="runlog-summary-label" :style="{ color: statusMeta.text }">{{ statusMeta.label }}</span>
+              <span class="font-mono runlog-summary-pct">· {{ job.progress }}%</span>
+            </span>
+            <div class="spacer" />
+            <i class="pi toggle-icon" :class="runLogCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
+          </div>
+          <div v-if="!runLogCollapsed" class="runlog-grid">
+            <RunDetailsCard
+              class="runlog-details"
+              bare
+              :rows="runDetailRows"
+              :progress="job.progress"
+              :status="job.status"
+              :error-message="job.raw.error_message"
+            />
+            <LogsPanel class="runlog-logs" embedded :kind="kind" :run-id="runId" :status="job.status" />
+          </div>
+        </div>
       </div>
 
       <!-- Forecast / Analysis: Overview / Results tabs -->
@@ -313,6 +348,42 @@ const confirmDelete = () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* Combined Run details + Logs box (segmented training) */
+.runlog-box {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.runlog-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.runlog-bar:hover { background: var(--surface-hover); }
+.runlog-box:not(.is-collapsed) .runlog-bar { border-bottom: 1px solid var(--surface-border); }
+.runlog-summary { display: inline-flex; align-items: center; gap: 7px; }
+.runlog-summary-label { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; }
+.runlog-summary-pct { font-size: 11.5px; color: var(--text-color-muted-2); }
+.spacer { flex: 1; }
+.toggle-icon { font-size: 11px; color: var(--text-color-muted); }
+
+.runlog-grid {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  align-items: stretch;
+  min-height: 340px;
+}
+.runlog-details { border-right: 1px solid var(--surface-border); min-width: 0; }
+.runlog-logs { min-width: 0; }
+@media (max-width: 900px) {
+  .runlog-grid { grid-template-columns: 1fr; }
+  .runlog-details { border-right: none; border-bottom: 1px solid var(--surface-border); }
 }
 
 .diagnostics-link {
