@@ -184,8 +184,11 @@ const confirmDelete = () => {
     </div>
 
     <template v-else-if="job">
-      <a class="back-link" @click="router.push({ name: 'jobs_history' })">
-        <i class="pi pi-arrow-left" /> Job history
+      <a class="back-link" @click="job.raw.workflow_run_uuid
+          ? router.push({ name: 'jobs_workflow', params: { run_id: job.raw.workflow_run_uuid } })
+          : router.push({ name: 'jobs_history' })">
+        <i class="pi pi-arrow-left" />
+        {{ job.raw.workflow_run_uuid ? 'Back to workflow' : 'Job history' }}
       </a>
 
       <div class="job-header">
@@ -197,9 +200,6 @@ const confirmDelete = () => {
             <span class="type-tag">{{ typeLabel }}</span>
           </div>
           <h1>{{ job.name }}</h1>
-          <a v-if="job.raw.workflow_run_uuid" class="workflow-breadcrumb" @click="router.push({ name: 'jobs_workflow', params: { run_id: job.raw.workflow_run_uuid } })">
-            Part of a workflow &rarr;
-          </a>
         </div>
         <div class="job-header-actions">
           <Button
@@ -210,8 +210,13 @@ const confirmDelete = () => {
             :loading="actionBusy"
             @click="cancelJob"
           />
-          <template v-else-if="job.raw.workflow_run_id">
-            <span class="grid-caption">Re-run/Delete this run from its workflow</span>
+          <template v-else-if="job.raw.workflow_run_uuid">
+            <Button
+              label="View diagnostics & backtesting"
+              outlined
+              class="btn-header"
+              @click="router.push({ name: 'jobs_workflow', params: { run_id: job.raw.workflow_run_uuid }, query: { tab: 'diagnosis' } })"
+            />
           </template>
           <template v-else>
             <Button label="Delete" outlined class="btn-header" :disabled="actionBusy" @click="confirmDelete" />
@@ -288,9 +293,6 @@ const confirmDelete = () => {
   margin-bottom: 22px;
 }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
-.workflow-breadcrumb { font-size: 12px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; width: fit-content; }
-.workflow-breadcrumb:hover { color: var(--ink); }
-.grid-caption { font-size: 12px; color: var(--text-color-muted-2); }
 .job-status-line { display: flex; align-items: center; gap: 8px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .status-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; }
