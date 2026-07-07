@@ -218,19 +218,25 @@ const confirmDelete = () => {
             </div>
             <div class="target-panel-hint">Click a target to open its run</div>
           </div>
-          <div class="target-grid target-grid--head">
-            <div>TARGET</div><div>ALGORITHM</div><div>SEGMENTATION</div><div>TRAINING</div><div>FORECAST</div><div>FINISHED</div>
-          </div>
-          <div v-for="t in wf.targets" :key="t.target_col" class="target-grid target-grid--row">
-            <div class="font-mono target-name" @click="goToTraining(t.calibration)">{{ t.target_col }}</div>
-            <div class="font-mono">{{ t.calibration.algorithm ?? '—' }}</div>
-            <div>{{ targetSegmentSummary(t.calibration) }}</div>
-            <div><StatusDot :status="t.calibration.status" /></div>
-            <div>
-              <span v-if="t.forecast" class="target-forecast-link" @click="goToForecast(t.forecast)"><StatusDot :status="t.forecast.status" /></span>
-              <span v-else class="grid-caption">Pending</span>
-            </div>
-            <div class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</div>
+          <div class="target-table-scroll">
+            <table class="target-table">
+              <thead>
+                <tr><th>TARGET</th><th>ALGORITHM</th><th>SEGMENTATION</th><th>TRAINING</th><th>FORECAST</th><th>FINISHED</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="t in wf.targets" :key="t.target_col" class="target-row">
+                  <td class="font-mono target-name" @click="goToTraining(t.calibration)">{{ t.target_col }}</td>
+                  <td class="font-mono">{{ t.calibration.algorithm ?? '—' }}</td>
+                  <td>{{ targetSegmentSummary(t.calibration) }}</td>
+                  <td><StatusDot :status="t.calibration.status" /></td>
+                  <td>
+                    <span v-if="t.forecast" class="target-forecast-link" @click="goToForecast(t.forecast)"><StatusDot :status="t.forecast.status" /></span>
+                    <span v-else class="grid-caption">Pending</span>
+                  </td>
+                  <td class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -290,7 +296,7 @@ const confirmDelete = () => {
 .back-link:hover { color: var(--ink); }
 .back-link i { font-size: 11px; }
 
-.job-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; }
+.job-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; min-width: 0; }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .job-status-line { display: flex; align-items: center; gap: 8px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -302,12 +308,12 @@ const confirmDelete = () => {
 
 .error-banner { font-size: 12.5px; color: var(--error-text-color); background: rgba(196, 51, 29, 0.08); border: 1px solid rgba(196, 51, 29, 0.2); border-radius: 2px; padding: 10px 14px; margin-bottom: 16px; }
 
-.tab-bar { display: flex; border-bottom: 2px solid var(--ink); margin-bottom: 24px; flex-wrap: wrap; }
+.tab-bar { display: flex; width: 100%; border-bottom: 2px solid var(--ink); margin-bottom: 24px; flex-wrap: wrap; }
 .tab-btn { padding: 10px 18px; font-size: 13.5px; font-weight: 400; color: var(--text-color-muted); background: transparent; border: none; cursor: pointer; }
 .tab-btn:hover { color: var(--ink); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
-.overview-tab { display: grid; grid-template-columns: 400px 1fr; gap: 20px; align-items: start; }
+.overview-tab { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
 .run-details { padding: 18px 20px 8px; }
 .detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
@@ -315,16 +321,22 @@ const confirmDelete = () => {
 .detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
-.target-panel { padding: 18px 20px; }
+.target-panel { padding: 18px 20px; min-width: 0; }
+.target-table-scroll { overflow-x: auto; }
 .chart-title { font-size: 13.5px; font-weight: 700; }
 .target-panel-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
 .target-panel-caption { font-size: 12px; color: var(--text-color-muted-2); margin-top: 3px; }
 .target-panel-hint { font-size: 11.5px; color: var(--text-color-muted-2); font-style: italic; flex-shrink: 0; margin-left: 16px; }
 
-.target-grid { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(120px, 1fr) minmax(140px, 1fr) 90px 90px 140px; column-gap: 12px; align-items: center; padding: 8px 2px; }
-.target-grid--head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-color-muted); border-bottom: 2px solid var(--ink); padding-bottom: 8px; }
-.target-grid--row { border-bottom: 1px solid var(--surface-border-row); font-size: 13px; }
-.target-grid--row:last-child { border-bottom: none; }
+.target-table-scroll { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+.target-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.target-table thead tr { border-bottom: 2px solid var(--ink); }
+.target-table th { padding: 6px 12px 8px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-color-muted); text-align: left; white-space: nowrap; }
+.target-table th:first-child { padding-left: 2px; }
+.target-row { border-bottom: 1px solid var(--surface-border-row); }
+.target-row:last-child { border-bottom: none; }
+.target-table td { padding: 9px 12px 9px 0; font-size: 12.5px; vertical-align: middle; }
+.target-table td:first-child { padding-left: 2px; }
 .target-name { cursor: pointer; font-weight: 600; }
 .target-name:hover { color: var(--text-color-secondary); text-decoration: underline; }
 .target-forecast-link { cursor: pointer; }

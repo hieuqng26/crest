@@ -26,11 +26,6 @@ const router = createRouter({
         { path: '/model/configurations', name: 'model_configurations',    component: () => import('@/views/model/ModelConfigurations.vue'),      meta: { requiresAuth: true, requiresPerm: 'model_config:read' } },
         { path: '/model/results',        name: 'model_results',          component: () => import('@/views/model/ModelResults.vue'),             meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
 
-        // Calibrate (v1 — New/Jobs superseded by New Model / Job History; calibrate_run
-        // stays alive as the diagnostics/backtesting deep-dive linked from Job Detail
-        // until Model Results absorbs it)
-        { path: '/calibrate/:run_id', name: 'calibrate_run', component: () => import('@/views/calibrate/CalibrateRun.vue'),  meta: { requiresAuth: true, requiresPerm: 'calibration:read' } },
-
         // Analysis (v2)
         { path: '/analysis/heatmap',  name: 'analysis_heatmap',  component: () => import('@/views/credit_risk/CreditRiskHeatmap.vue'),  meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },
         { path: '/analysis/forecast', name: 'analysis_forecast', component: () => import('@/views/credit_risk/CreditRiskForecast.vue'), meta: { requiresAuth: true, requiresPerm: 'credit_risk:read' } },

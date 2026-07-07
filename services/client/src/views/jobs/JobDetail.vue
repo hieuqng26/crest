@@ -231,9 +231,6 @@ const confirmDelete = () => {
         <SegmentModelsPanel v-if="job.raw.is_segmented && job.status === 'success'" :run-id="runId" />
         <LogsPanel v-else :kind="kind" :run-id="runId" :status="job.status" />
       </div>
-      <a v-if="kind === KIND.TRAINING" class="diagnostics-link" @click="router.push({ name: 'calibrate_run', params: { run_id: runId }, query: { tab: 'diagnostics' } })">
-        View diagnostics &amp; backtesting &rarr;
-      </a>
 
       <!-- Forecast / Analysis: Overview / Results tabs -->
       <template v-else>
@@ -291,6 +288,7 @@ const confirmDelete = () => {
   align-items: flex-end;
   gap: 16px;
   margin-bottom: 22px;
+  min-width: 0;
 }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .job-status-line { display: flex; align-items: center; gap: 8px; }
@@ -313,7 +311,7 @@ const confirmDelete = () => {
 
 .job-body {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 380px minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
@@ -332,6 +330,7 @@ const confirmDelete = () => {
 
 .tab-bar {
   display: flex;
+  width: 100%;
   border-bottom: 2px solid var(--ink);
   margin-bottom: 24px;
 }
