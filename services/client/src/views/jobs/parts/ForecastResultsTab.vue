@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import forecastRunsAPI from '@/api/forecastRunsAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { probeColumns } from './resultColumns.js'
+import ScenarioChips from './ScenarioChips.vue'
 
 const props = defineProps({
   targets: { type: Array, required: true } // [{ target_col, calibration, forecast }]
@@ -16,7 +17,17 @@ const columns = ref([])
 const fetchPage = (params) => forecastRunsAPI.results(selectedForecast.value.run_id, params)
 const fetchDistinct = (column) => forecastRunsAPI.resultsDistinct(selectedForecast.value.run_id, column)
 
+const forecastScenario = ref('All')
+
+const hasForecastScenario = computed(() => columns.value.some((c) => c.field === 'scenario'))
+
+const forecastExternalFilters = computed(() => {
+  if (!hasForecastScenario.value || forecastScenario.value === 'All') return {}
+  return { scenario: { mode: 'in', value: [forecastScenario.value] } }
+})
+
 watch(selectedForecast, async (fr) => {
+  forecastScenario.value = 'All'
   columns.value = []
   if (!fr) return
   columns.value = await probeColumns(fetchPage)
@@ -36,7 +47,11 @@ watch(selectedForecast, async (fr) => {
           <label class="field-label">Target</label>
           <Dropdown v-model="selectedTargetCol" :options="targetsWithForecast.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="w-full font-mono" />
         </div>
-        <div class="grid-caption filter-hint">Use the column filters below to narrow by sector, subsector or segment</div>
+      </div>
+
+      <div v-if="hasForecastScenario" class="scenario-bar">
+        <span class="field-label">SCENARIO</span>
+        <ScenarioChips v-model="forecastScenario" />
       </div>
 
       <div class="panel results-panel">
@@ -46,6 +61,7 @@ watch(selectedForecast, async (fr) => {
           :columns="columns"
           :fetch-page="fetchPage"
           :fetch-distinct="fetchDistinct"
+          :external-filters="forecastExternalFilters"
           empty-message="No results yet."
         />
       </div>
@@ -59,8 +75,9 @@ watch(selectedForecast, async (fr) => {
 .filter-bar { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; background: var(--surface-inset); border-radius: 2px; padding: 14px 16px; }
 .filter-col { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
 .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
-.filter-hint { padding-bottom: 8px; }
 .grid-caption { font-size: 12px; color: var(--text-color-muted-2); }
+
+.scenario-bar { display: flex; align-items: center; gap: 12px; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
 .results-panel { overflow: hidden; }
