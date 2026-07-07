@@ -1,54 +1,87 @@
 <script setup>
-defineProps({
-  // [{ k: 'Job ID', v: '...', mono: true }]
-  rows: { type: Array, required: true },
-  progress: { type: Number, default: 0 },
-  status: { type: String, default: 'queued' },
-  errorMessage: { type: String, default: null },
-  labelWidth: { type: Number, default: 95 }
+import { ref, watch } from 'vue'
+
+const props = defineProps({
+  rows:         { type: Array,   required: true },
+  progress:     { type: Number,  default: 0 },
+  status:       { type: String,  default: 'queued' },
+  errorMessage: { type: String,  default: null },
+  labelWidth:   { type: Number,  default: 95 },
+  collapsible:  { type: Boolean, default: false },
+})
+
+const isLive = (s) => s === 'running' || s === 'queued'
+
+// Start collapsed when the job is already done on mount; expand while live.
+const collapsed = ref(props.collapsible && !isLive(props.status))
+
+watch(() => props.status, (s) => {
+  if (!props.collapsible) return
+  if (isLive(s)) collapsed.value = false
+  else collapsed.value = true
 })
 </script>
 
 <template>
   <div class="run-details card--emphasis">
-    <div class="eyebrow">RUN DETAILS</div>
-    <div v-for="row in rows" :key="row.k" class="detail-row">
-      <div class="detail-key" :style="{ width: labelWidth + 'px' }">{{ row.k }}</div>
-      <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
+    <div
+      class="run-details-header"
+      :class="{ 'is-clickable': collapsible }"
+      @click="collapsible && (collapsed = !collapsed)"
+    >
+      <span class="eyebrow">RUN DETAILS</span>
+      <i v-if="collapsible" class="pi toggle-icon" :class="collapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
     </div>
 
-    <div class="progress-block">
-      <div class="progress-head">
-        <span class="progress-label">Progress</span>
-        <span class="font-mono progress-pct">{{ progress }}%</span>
+    <template v-if="!collapsed">
+      <div v-for="row in rows" :key="row.k" class="detail-row">
+        <div class="detail-key" :style="{ width: labelWidth + 'px' }">{{ row.k }}</div>
+        <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
       </div>
-      <div class="progress-track">
-        <div
-          class="progress-fill"
-          :class="{ 'is-failed': status === 'failed' }"
-          :style="{ width: progress + '%' }"
-        />
+
+      <div class="progress-block">
+        <div class="progress-head">
+          <span class="progress-label">Progress</span>
+          <span class="font-mono progress-pct">{{ progress }}%</span>
+        </div>
+        <div class="progress-track">
+          <div
+            class="progress-fill"
+            :class="{ 'is-failed': status === 'failed' }"
+            :style="{ width: progress + '%' }"
+          />
+        </div>
+        <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
       </div>
-      <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
-    </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.run-details {
-  padding: 14px 16px 6px;
+.run-details { padding: 0; }
+
+.run-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
 }
+.run-details-header.is-clickable { cursor: pointer; user-select: none; }
+.run-details-header.is-clickable:hover { background: var(--surface-hover); }
+
+.toggle-icon { font-size: 11px; color: var(--text-color-muted); }
+
 .detail-row {
   display: flex;
   gap: 10px;
-  padding: 6px 0;
+  padding: 6px 16px;
   border-bottom: 1px solid #F0F0F3;
   font-size: 12.5px;
 }
 .detail-key { flex: none; color: var(--text-color-muted); }
 .detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
-.progress-block { padding: 10px 0 8px; }
+.progress-block { padding: 10px 16px 14px; }
 .progress-head {
   display: flex;
   justify-content: space-between;

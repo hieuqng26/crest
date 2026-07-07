@@ -1534,7 +1534,12 @@ SLOT_BY_TARGET = {
     "total_assets": "total_assets",
     "total_shortterm_debts": "short_term_debts",
     "total_longterm_debts": "long_term_debts",
+    "total_revenue": "total_revenue",
+    "total_cogs": "total_cogs",
 }
+# These slots must be present for credit analysis to run; revenue/cogs are optional
+# (they enable heatmap metrics but the KMV/ECL computation doesn't require them).
+REQUIRED_SLOTS = {"total_assets", "short_term_debts", "long_term_debts"}
 
 
 def advance_workflow_impl(workflow_run_id: int):
@@ -1632,7 +1637,7 @@ def advance_workflow_impl(workflow_run_id: int):
                 slot = SLOT_BY_TARGET.get(target_by_cal_id.get(fr.calibration_run_id))
                 if slot:
                     slots[slot] = fr
-            required_slots = set(SLOT_BY_TARGET.values())
+            required_slots = REQUIRED_SLOTS
             missing_slots = required_slots - set(slots.keys())
 
             if missing_slots or not wf.credit_dataset_id:

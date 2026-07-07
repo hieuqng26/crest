@@ -7,6 +7,7 @@ const workflowsAPI = {
   get:             (runId)  => httpClient.get(`/workflows/${runId}`),
   cancel:          (runId)  => httpClient.post(`/workflows/${runId}/cancel`),
   rerun:           (runId)  => httpClient.post(`/workflows/${runId}/rerun`),
+  activate:        (runId)  => httpClient.put(`/workflows/${runId}/activate`),
   delete:          (runId)  => httpClient.delete(`/workflows/${runId}`, { validateStatus: (s) => s < 500 }),
 }
 

@@ -3,14 +3,19 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import jobsAPI from '@/api/jobs'
 
 const props = defineProps({
-  kind: { type: String, required: true },
-  runId: { type: String, required: true },
-  status: { type: String, required: true }
+  kind:        { type: String,  required: true },
+  runId:       { type: String,  required: true },
+  status:      { type: String,  required: true },
+  collapsible: { type: Boolean, default: false },
 })
 
 const logs = ref([])
 const search = ref('')
 const logEl = ref(null)
+
+// When collapsible: start expanded while live, collapse on completion.
+const collapsed = ref(false)
+const toggleCollapsed = () => { collapsed.value = !collapsed.value }
 
 const filteredLogs = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -34,7 +39,7 @@ const fetchLogs = async () => {
 
 watch(filteredLogs, async () => {
   await nextTick()
-  if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
+  if (!collapsed.value && logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
 }, { flush: 'post' })
 
 let pollTimer = null
@@ -42,26 +47,36 @@ const isLive = () => props.status === 'running' || props.status === 'queued'
 const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchLogs, 2000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
-onMounted(() => { fetchLogs(); if (isLive()) startPolling() })
+onMounted(() => {
+  fetchLogs()
+  if (isLive()) startPolling()
+})
 onUnmounted(stopPolling)
 watch(() => props.status, (s) => {
-  if (s === 'running' || s === 'queued') startPolling()
-  else { stopPolling(); fetchLogs() }
+  if (s === 'running' || s === 'queued') {
+    startPolling()
+    if (props.collapsible) collapsed.value = false
+  } else {
+    stopPolling()
+    fetchLogs()
+    if (props.collapsible) collapsed.value = true
+  }
 })
 </script>
 
 <template>
-  <div class="logs-panel">
-    <div class="logs-header">
+  <div class="logs-panel" :class="{ 'logs-panel--collapsed': collapsed }">
+    <div class="logs-header" :class="{ 'logs-header--clickable': collapsible }" @click="collapsible && toggleCollapsed()">
       <span class="eyebrow logs-title">LOGS</span>
       <span class="font-mono logs-count">{{ logs.length }} lines</span>
       <span class="font-mono chip chip-info">info {{ counts.info }}</span>
       <span class="font-mono chip">warn {{ counts.warn }}</span>
       <span class="font-mono chip" :class="{ 'chip-error': counts.error > 0 }">error {{ counts.error }}</span>
       <div class="spacer" />
-      <input v-model="search" class="logs-filter font-mono" placeholder="Filter logs…" />
+      <input v-if="!collapsed" v-model="search" class="logs-filter font-mono" placeholder="Filter logs…" @click.stop />
+      <i v-if="collapsible" class="pi logs-chevron" :class="collapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
     </div>
-    <div ref="logEl" class="logs-body font-mono">
+    <div v-if="!collapsed" ref="logEl" class="logs-body font-mono">
       <div v-if="filteredLogs.length === 0" class="logs-empty">
         {{ logs.length === 0 ? 'No logs yet.' : 'No log lines match your filter.' }}
       </div>
@@ -82,6 +97,8 @@ watch(() => props.status, (s) => {
   flex-direction: column;
   min-height: 480px;
 }
+.logs-panel--collapsed { min-height: unset; }
+
 .logs-header {
   display: flex;
   align-items: center;
@@ -90,6 +107,10 @@ watch(() => props.status, (s) => {
   border-bottom: 1px solid var(--chrome-hover);
   flex-wrap: wrap;
 }
+.logs-panel--collapsed .logs-header { border-bottom: none; }
+.logs-header--clickable { cursor: pointer; user-select: none; }
+.logs-header--clickable:hover { background: rgba(255,255,255,0.04); }
+
 .logs-title { color: var(--chrome-text-muted) !important; }
 .logs-count { font-size: 11px; color: #5A5A66; }
 .chip {
@@ -114,6 +135,8 @@ watch(() => props.status, (s) => {
 }
 .logs-filter:focus { outline: none; border-color: var(--yellow); }
 .logs-filter::placeholder { color: #5A5A66; }
+
+.logs-chevron { font-size: 11px; color: var(--chrome-text-muted); flex-shrink: 0; }
 
 .logs-body {
   padding: 14px 16px;

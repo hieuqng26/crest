@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
 import jobsAPI, { KIND } from '@/api/jobs'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import workflowsAPI from '@/api/workflowsAPI'
@@ -8,25 +9,25 @@ import { fmtDate } from '@/utils/datetime'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import BaseTable from '@/views/composables/BaseTable.vue'
 
 const router = useRouter()
+const toast  = useToast()
 
-const jobs = ref([])
+const jobs      = ref([])
 const workflows = ref([])
-const loading = ref(true)
+const loading   = ref(true)
+const busy      = ref(null)
 
 const fetchJobs = async () => {
   const [jobsList, wfRes] = await Promise.all([
     jobsAPI.listJobs(),
-    workflowsAPI.list({ per_page: 200 })
+    workflowsAPI.list({ per_page: 200 }),
   ])
-  jobs.value = jobsList
+  jobs.value      = jobsList
   workflows.value = wfRes.data.items ?? []
 }
 
-// Mirrors the old CreditRiskJobs.vue behaviour: if no analysis run is marked
-// active, promote the most recently finished successful one so PD/LGD and ECL
-// have data to show by default.
 const autoSetActiveAnalysisRun = async () => {
   const analysisJobs = jobs.value.filter((j) => j.kind === KIND.ANALYSIS)
   if (analysisJobs.some((j) => j.raw.is_active)) return
@@ -34,11 +35,7 @@ const autoSetActiveAnalysisRun = async () => {
     .filter((j) => j.status === 'success')
     .sort((a, b) => new Date(b.finished_at ?? b.started_at ?? 0) - new Date(a.finished_at ?? a.started_at ?? 0))[0]
   if (!latest) return
-  try {
-    await creditRiskAPI.setActiveRun(latest.run_id)
-  } catch {
-    // best-effort — not critical to page function
-  }
+  try { await creditRiskAPI.setActiveRun(latest.run_id) } catch { /* best-effort */ }
 }
 
 let pollTimer = null
@@ -64,37 +61,32 @@ onMounted(async () => {
 })
 onUnmounted(stopPolling)
 
-// ── standalone jobs (not part of any workflow) ───────────────────────────────
+// ── Standalone jobs ───────────────────────────────────────────────────────────
 const standaloneJobs = computed(() => jobs.value.filter((j) => !j.raw.workflow_run_id))
 
-const TYPE_CHIPS = ['All', 'Workflows', 'Training', 'Forecast', 'Analysis']
-const activeType = ref('All')
+// ── Filter chips ──────────────────────────────────────────────────────────────
+const TYPE_CHIPS  = ['All', 'Auto', 'Manual']
+const activeType  = ref('All')
+const search      = ref('')
 
-const typeCounts = computed(() => {
-  const c = { All: workflows.value.length + standaloneJobs.value.length, Workflows: workflows.value.length, Training: 0, Forecast: 0, Analysis: 0 }
-  for (const j of standaloneJobs.value) {
-    const label = j.kind === KIND.TRAINING ? 'Training' : j.kind === KIND.FORECAST ? 'Forecast' : 'Analysis'
-    c[label]++
-  }
-  return c
-})
+const typeCounts = computed(() => ({
+  All:    workflows.value.length + standaloneJobs.value.length,
+  Auto:   workflows.value.length,
+  Manual: standaloneJobs.value.length,
+}))
 
-const search = ref('')
-
-// ── unified top-level rows: workflows + standalone jobs, newest first ───────
+// ── Top-level rows ────────────────────────────────────────────────────────────
 const topLevelRows = computed(() => {
-  const kindOf = { Training: KIND.TRAINING, Forecast: KIND.FORECAST, Analysis: KIND.ANALYSIS }
   const q = search.value.trim().toLowerCase()
 
-  const wfRows = (activeType.value === 'All' || activeType.value === 'Workflows')
+  const wfRows = (activeType.value === 'All' || activeType.value === 'Auto')
     ? workflows.value
         .filter((w) => !q || (w.name + w.run_id).toLowerCase().includes(q))
         .map((w) => ({ type: 'workflow', key: `wf-${w.run_id}`, sortAt: w.started_at ?? w.created_at, wf: w }))
     : []
 
-  const jobRows = (activeType.value === 'All' || (activeType.value !== 'Workflows' && kindOf[activeType.value]))
+  const jobRows = (activeType.value === 'All' || activeType.value === 'Manual')
     ? standaloneJobs.value
-        .filter((j) => activeType.value === 'All' || j.kind === kindOf[activeType.value])
         .filter((j) => !q || (j.name + j.ref + j.run_id).toLowerCase().includes(q))
         .map((j) => ({ type: 'job', key: `job-${j.run_id}`, sortAt: j.started_at, job: j }))
     : []
@@ -102,19 +94,218 @@ const topLevelRows = computed(() => {
   return [...wfRows, ...jobRows].sort((a, b) => new Date(b.sortAt ?? 0) - new Date(a.sortAt ?? 0))
 })
 
+// ── Table columns (checkbox injected when select mode is on) ──────────────────
+const tableColumns = computed(() => [
+  ...(selectMode.value ? [{ label: '', width: '36px' }] : []),
+  { label: 'RUN' },
+  { label: 'TYPE',     width: '90px' },
+  { label: 'INPUT' },
+  { label: 'STATUS',   width: '125px' },
+  { label: 'PROGRESS', width: '150px' },
+  { label: 'STARTED',  width: '140px' },
+  { label: 'FINISHED', width: '140px' },
+  { label: 'BY',       width: '70px' },
+  { label: '',         width: '40px', align: 'right' },
+])
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const openJob      = (j)  => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
+const openWorkflow = (wf) => router.push({ name: 'jobs_workflow', params: { run_id: wf.run_id } })
+
+const clickRow = (row) => {
+  if (selectMode.value) { toggleSelect(row.key); return }
+  row.type === 'workflow' ? openWorkflow(row.wf) : openJob(row.job)
+}
+
+// ── Progress labels ───────────────────────────────────────────────────────────
 const progressLabel = (j) =>
   j.status === 'success' ? 'Completed' : j.status === 'failed' ? `Failed at ${j.progress}%` : '—'
 
-const openJob = (j) => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
-const openWorkflow = (wf) => router.push({ name: 'jobs_workflow', params: { run_id: wf.run_id } })
-
-// Workflow is treated as one process — a single status, not a per-stage breakdown.
-const workflowRef = (wf) => (wf.targets ?? []).map((t) => t.target_col).join(', ') || '—'
 const STAGE_LABEL = { training: 'Training', forecast: 'Forecasting', analysis: 'Analyzing', done: 'Completed' }
 const workflowProgressLabel = (wf) => {
   if (wf.status === 'success') return 'Completed'
   if (wf.status === 'failed') return 'Failed'
   return STAGE_LABEL[wf.current_stage] ?? '—'
+}
+const workflowRef = (wf) => (wf.targets ?? []).map((t) => t.target_col).join(', ') || '—'
+
+// ── Multi-select ──────────────────────────────────────────────────────────────
+const selectMode   = ref(false)
+const selection    = ref(new Set())
+const confirmingBulkDelete = ref(false)
+
+const toggleSelect    = (key) => { selection.value.has(key) ? selection.value.delete(key) : selection.value.add(key) }
+const isSelected      = (key) => selection.value.has(key)
+const toggleSelectAll = () => {
+  selection.value = selection.value.size === topLevelRows.value.length
+    ? new Set()
+    : new Set(topLevelRows.value.map((r) => r.key))
+}
+const allSelected  = computed(() => selection.value.size > 0 && selection.value.size === topLevelRows.value.length)
+const exitSelectMode = () => { selectMode.value = false; selection.value = new Set(); confirmingBulkDelete.value = false }
+
+const bulkDelete = async () => {
+  const rows = topLevelRows.value.filter((r) => selection.value.has(r.key))
+  try {
+    await Promise.all(rows.map((r) =>
+      r.type === 'workflow'
+        ? workflowsAPI.delete(r.wf.run_id)
+        : jobsAPI.deleteJob(r.job.kind, r.job.run_id)
+    ))
+    toast.add({ severity: 'success', summary: 'Deleted', detail: `${rows.length} run${rows.length !== 1 ? 's' : ''} deleted`, life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  }
+  exitSelectMode()
+}
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+const menuRef   = ref(null)
+const menuItems = ref([])
+
+function openMenu(e, items) {
+  e.stopPropagation()
+  menuItems.value = items
+  menuRef.value.toggle(e)
+}
+
+function buildWorkflowMenu(wf) {
+  const active = wf.status === 'running' || wf.status === 'queued'
+  const items  = []
+
+  if (wf.analysis_summary?.status === 'success') {
+    items.push({
+      label:    wf.analysis_summary?.is_active ? 'Analysis active ✓' : 'Set analysis active',
+      icon:     'pi pi-check-circle',
+      disabled: !!wf.analysis_summary?.is_active,
+      command:  () => activateWorkflow(wf),
+    })
+  }
+  items.push({ label: 'View', icon: 'pi pi-eye', command: () => openWorkflow(wf) })
+  if (!active) items.push({ label: 'Re-run', icon: 'pi pi-refresh', command: () => rerunWorkflow(wf) })
+  if (active)  items.push({ label: 'Cancel',  icon: 'pi pi-times-circle', command: () => cancelWorkflow(wf) })
+  items.push({ separator: true })
+  items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'menu-item-danger', command: () => deleteWorkflow(wf) })
+  return items
+}
+
+function buildJobMenu(j) {
+  const active = j.status === 'running' || j.status === 'queued'
+  const items  = []
+
+  if (j.kind === KIND.ANALYSIS && j.status === 'success') {
+    items.push({
+      label:    j.raw.is_active ? 'Analysis active ✓' : 'Set analysis active',
+      icon:     'pi pi-check-circle',
+      disabled: !!j.raw.is_active,
+      command:  () => activateJob(j),
+    })
+  }
+  items.push({ label: 'View', icon: 'pi pi-eye', command: () => openJob(j) })
+  if (!active) items.push({ label: 'Re-run', icon: 'pi pi-refresh', command: () => rerunJob(j) })
+  if (active)  items.push({ label: 'Cancel',  icon: 'pi pi-times-circle', command: () => cancelJob(j) })
+  items.push({ separator: true })
+  items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'menu-item-danger', command: () => deleteJob(j) })
+  return items
+}
+
+// ── Action helpers ────────────────────────────────────────────────────────────
+async function activateWorkflow(wf) {
+  busy.value = wf.run_id
+  try {
+    await workflowsAPI.activate(wf.run_id)
+    toast.add({ severity: 'success', summary: 'Activated', detail: 'Analysis run set as active', life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function rerunWorkflow(wf) {
+  busy.value = wf.run_id
+  try {
+    const { data } = await workflowsAPI.rerun(wf.run_id)
+    toast.add({ severity: 'success', summary: 'Re-running', detail: data.name, life: 3000 })
+    await fetchJobs()
+    router.push({ name: 'jobs_workflow', params: { run_id: data.run_id } })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function cancelWorkflow(wf) {
+  busy.value = wf.run_id
+  try {
+    await workflowsAPI.cancel(wf.run_id)
+    toast.add({ severity: 'info', summary: 'Cancelled', detail: wf.name, life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function deleteWorkflow(wf) {
+  busy.value = wf.run_id
+  try {
+    const res = await workflowsAPI.delete(wf.run_id)
+    if (res.status === 409) {
+      toast.add({ severity: 'warn', summary: 'Cannot delete', detail: res.data?.error, life: 5000 })
+    } else {
+      toast.add({ severity: 'success', summary: 'Deleted', detail: wf.name, life: 3000 })
+      await fetchJobs()
+    }
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function activateJob(j) {
+  busy.value = j.run_id
+  try {
+    await creditRiskAPI.setActiveRun(j.run_id)
+    toast.add({ severity: 'success', summary: 'Activated', detail: 'Analysis run set as active', life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function rerunJob(j) {
+  busy.value = j.run_id
+  try {
+    await jobsAPI.rerunJob(j.kind, j.run_id)
+    toast.add({ severity: 'success', summary: 'Re-running', detail: j.name, life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function cancelJob(j) {
+  busy.value = j.run_id
+  try {
+    await jobsAPI.cancelJob(j.kind, j.run_id)
+    toast.add({ severity: 'info', summary: 'Cancelled', detail: j.name, life: 3000 })
+    await fetchJobs()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
+}
+
+async function deleteJob(j) {
+  busy.value = j.run_id
+  try {
+    const res = await jobsAPI.deleteJob(j.kind, j.run_id)
+    if (res?.status === 409) {
+      toast.add({ severity: 'warn', summary: 'Cannot delete', detail: res.data?.error, life: 5000 })
+    } else {
+      toast.add({ severity: 'success', summary: 'Deleted', detail: j.name, life: 3000 })
+      await fetchJobs()
+    }
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally { busy.value = null }
 }
 </script>
 
@@ -129,6 +320,7 @@ const workflowProgressLabel = (wf) => {
       </template>
     </PageHeader>
 
+    <!-- Toolbar -->
     <div class="toolbar">
       <button
         v-for="t in TYPE_CHIPS"
@@ -141,84 +333,152 @@ const workflowProgressLabel = (wf) => {
         <span>{{ t }}</span>
         <span class="font-mono chip-count">{{ typeCounts[t] }}</span>
       </button>
+
       <div class="toolbar-spacer" />
+
       <InputText v-model="search" placeholder="Search by run, model or dataset…" class="search-input" />
+
+      <template v-if="!selectMode">
+        <Button label="Select" icon="pi pi-check-square" size="small" severity="secondary" text @click="selectMode = true" />
+      </template>
+      <template v-else>
+        <span class="text-sm text-color-secondary">{{ selection.size }} selected</span>
+        <template v-if="!confirmingBulkDelete">
+          <Button label="Delete selected" icon="pi pi-trash" size="small" severity="danger"
+            :disabled="selection.size === 0" @click="confirmingBulkDelete = true" />
+        </template>
+        <template v-else>
+          <span class="text-sm font-medium" style="color: var(--red-500, #ef4444)">Delete {{ selection.size }} run{{ selection.size !== 1 ? 's' : '' }}?</span>
+          <Button label="Confirm" icon="pi pi-check" size="small" severity="danger" @click="bulkDelete" />
+          <Button label="Cancel" size="small" severity="secondary" text @click="confirmingBulkDelete = false" />
+        </template>
+        <Button icon="pi pi-times" size="small" severity="secondary" text rounded @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
+      </template>
     </div>
 
     <div class="showing-line">Showing {{ topLevelRows.length }} of {{ workflows.length + standaloneJobs.length }} runs</div>
 
     <div class="panel">
-      <div class="table-scroll">
-        <div class="jobs-grid jobs-grid--head">
-          <div>RUN</div><div>TYPE</div><div>INPUT</div><div>STATUS</div><div>PROGRESS</div><div>STARTED</div><div>FINISHED</div><div>BY</div>
-        </div>
+      <BaseTable :columns="tableColumns">
 
-        <div v-if="!loading && topLevelRows.length === 0" class="empty-state">
-          <i class="pi pi-inbox" />
-          <p>No runs match your filters.</p>
-        </div>
+        <!-- Checkbox header cell (injected when select mode) is part of columns → rendered by BaseTable -->
 
-        <template v-for="row in topLevelRows" :key="row.key">
-          <!-- Workflow row — treated as a single process, same shape as any other job row -->
-          <div v-if="row.type === 'workflow'" class="jobs-grid jobs-grid--row jobs-grid--workflow" @click="openWorkflow(row.wf)">
-            <div class="run-name-cell">
-              <div class="run-name">{{ row.wf.name }}</div>
-              <div class="font-mono run-id">{{ row.wf.run_id }}</div>
+        <tr
+          v-for="row in topLevelRows"
+          :key="row.key"
+          class="jh-row"
+          :class="{
+            'jh-row--workflow': row.type === 'workflow',
+            'jh-row--selected': isSelected(row.key),
+          }"
+          @click="clickRow(row)"
+        >
+          <!-- Select checkbox -->
+          <td v-if="selectMode" class="td-check" @click.stop="toggleSelect(row.key)">
+            <span class="ey-cb" :class="{ 'is-checked': isSelected(row.key) }">
+              <i v-if="isSelected(row.key)" class="pi pi-check ey-cb-icon" />
+            </span>
+          </td>
+
+          <!-- RUN: name + uuid -->
+          <td>
+            <div class="run-name">
+              <span class="run-name-text">{{ row.type === 'workflow' ? row.wf.name : row.job.name }}</span>
+              <span
+                v-if="(row.type === 'workflow' && row.wf.analysis_summary?.is_active) ||
+                      (row.type === 'job' && row.job.kind === KIND.ANALYSIS && row.job.raw.is_active)"
+                class="active-badge"
+              >ACTIVE</span>
             </div>
-            <div><span class="type-tag type-tag--workflow">WORKFLOW</span></div>
-            <div class="font-mono cell-ref">{{ workflowRef(row.wf) }}</div>
-            <div><StatusDot :status="row.wf.status" /></div>
-            <div class="progress-cell"><span class="progress-label">{{ workflowProgressLabel(row.wf) }}</span></div>
-            <div class="font-mono cell-mono">{{ row.wf.started_at ? fmtDate(row.wf.started_at) : '—' }}</div>
-            <div class="font-mono cell-mono">{{ row.wf.finished_at ? fmtDate(row.wf.finished_at) : '—' }}</div>
-            <div class="cell-by">{{ row.wf.triggered_by ? row.wf.triggered_by.split('@')[0] : '—' }}</div>
-          </div>
+            <div class="run-id font-mono">{{ row.type === 'workflow' ? row.wf.run_id : row.job.run_id }}</div>
+          </td>
 
-          <!-- Standalone job row -->
-          <div v-else class="jobs-grid jobs-grid--row" @click="openJob(row.job)">
-            <div class="run-name-cell">
-              <div class="run-name">{{ row.job.name }}</div>
-              <div class="font-mono run-id">{{ row.job.run_id }}</div>
-            </div>
-            <div><span class="type-tag">{{ row.job.kind === KIND.TRAINING ? 'TRAINING' : row.job.kind === KIND.FORECAST ? 'FORECAST' : 'ANALYSIS' }}</span></div>
-            <div class="font-mono cell-ref">{{ row.job.ref }}</div>
-            <div><StatusDot :status="row.job.status" /></div>
-            <div class="progress-cell">
+          <!-- TYPE -->
+          <td>
+            <span class="type-tag" :class="row.type === 'workflow' ? 'type-tag--auto' : ''">
+              {{ row.type === 'workflow' ? 'AUTO' : 'MANUAL' }}
+            </span>
+          </td>
+
+          <!-- INPUT -->
+          <td class="font-mono cell-secondary">
+            {{ row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref }}
+          </td>
+
+          <!-- STATUS -->
+          <td><StatusDot :status="row.type === 'workflow' ? row.wf.status : row.job.status" /></td>
+
+          <!-- PROGRESS -->
+          <td>
+            <template v-if="row.type === 'workflow'">
+              <div v-if="row.wf.status === 'running'" class="progress-row">
+                <div class="progress-track"><div class="progress-fill" style="width:50%" /></div>
+              </div>
+              <span v-else class="progress-label">{{ workflowProgressLabel(row.wf) }}</span>
+            </template>
+            <template v-else>
               <div v-if="row.job.status === 'running'" class="progress-row">
                 <div class="progress-track"><div class="progress-fill" :style="{ width: row.job.progress + '%' }" /></div>
                 <span class="font-mono progress-pct">{{ row.job.progress }}%</span>
               </div>
               <span v-else class="progress-label">{{ progressLabel(row.job) }}</span>
-            </div>
-            <div class="font-mono cell-mono">{{ row.job.started_at ? fmtDate(row.job.started_at) : '—' }}</div>
-            <div class="font-mono cell-mono">{{ row.job.finished_at ? fmtDate(row.job.finished_at) : '—' }}</div>
-            <div class="cell-by">{{ row.job.triggered_by ? row.job.triggered_by.split('@')[0] : '—' }}</div>
-          </div>
-        </template>
-      </div>
+            </template>
+          </td>
+
+          <!-- STARTED -->
+          <td class="font-mono cell-secondary">
+            {{ (row.type === 'workflow' ? row.wf.started_at : row.job.started_at) ? fmtDate(row.type === 'workflow' ? row.wf.started_at : row.job.started_at) : '—' }}
+          </td>
+
+          <!-- FINISHED -->
+          <td class="font-mono cell-secondary">
+            {{ (row.type === 'workflow' ? row.wf.finished_at : row.job.finished_at) ? fmtDate(row.type === 'workflow' ? row.wf.finished_at : row.job.finished_at) : '—' }}
+          </td>
+
+          <!-- BY -->
+          <td class="cell-secondary">
+            {{ (row.type === 'workflow' ? row.wf.triggered_by : row.job.triggered_by)?.split('@')[0] ?? '—' }}
+          </td>
+
+          <!-- ACTIONS -->
+          <td class="ta-right" @click.stop>
+            <button
+              class="action-btn"
+              :class="{ 'is-busy': busy === (row.type === 'workflow' ? row.wf.run_id : row.job.run_id) }"
+              @click="openMenu($event, row.type === 'workflow' ? buildWorkflowMenu(row.wf) : buildJobMenu(row.job))"
+            >
+              <i class="pi pi-ellipsis-v" />
+            </button>
+          </td>
+        </tr>
+
+        <!-- Empty state -->
+        <tr v-if="!loading && topLevelRows.length === 0" class="no-hover">
+          <td :colspan="tableColumns.length" class="empty-state">
+            <i class="pi pi-inbox" />
+            <p>No runs match your filters.</p>
+          </td>
+        </tr>
+      </BaseTable>
     </div>
+
+    <!-- Shared context menu -->
+    <Menu ref="menuRef" :model="menuItems" popup>
+      <template #item="{ item, props: p }">
+        <a v-bind="p.action" :class="['menu-item', item.class]">
+          <i :class="item.icon" />
+          <span>{{ item.label }}</span>
+        </a>
+      </template>
+    </Menu>
   </div>
 </template>
 
 <style scoped>
-.btn-new-model {
-  height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 18px;
-}
-.btn-plus {
-  color: var(--yellow);
-  font-weight: 700;
-}
+.btn-new-model { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 18px; }
+.btn-plus { color: var(--yellow); font-weight: 700; }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .toolbar-spacer { flex: 1; }
 
 .type-chip {
@@ -236,70 +496,58 @@ const workflowProgressLabel = (wf) => {
   transition: border-color 0.15s ease;
 }
 .type-chip:hover { border-color: var(--ink); }
-.type-chip.is-active {
-  background: var(--ink);
-  color: #fff;
-  border-color: var(--ink);
-}
+.type-chip.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .chip-count { color: var(--text-color-muted-2); }
 .type-chip.is-active .chip-count { color: var(--yellow); }
 
-.search-input {
-  width: 280px;
-  height: 36px;
-}
-
-.showing-line {
-  font-size: 12px;
-  color: var(--text-color-muted);
-  margin-bottom: 8px;
-}
+.search-input { width: 280px; height: 36px; }
+.showing-line { font-size: 12px; color: var(--text-color-muted); margin-bottom: 8px; }
 
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
   border-radius: 2px;
+  padding: 0 16px 4px;
 }
 
-.table-scroll {
-  overflow-x: auto;
-}
+/* Row variants */
+.jh-row { cursor: pointer; }
+.jh-row--workflow { background: var(--surface-inset); }
+.jh-row--selected { background: color-mix(in srgb, var(--yellow) 8%, transparent) !important; }
 
-.jobs-grid {
-  display: grid;
-  grid-template-columns: minmax(200px, 1.3fr) 110px minmax(190px, 1fr) 125px 150px 140px 140px 70px;
-  column-gap: 12px;
+/* Checkbox cell */
+.td-check { width: 36px; }
+.ey-cb {
+  display: inline-flex;
   align-items: center;
-  padding: 6px 16px;
-  /* Fixed floor (not width:max-content) so every row resolves its fr tracks
-     against the same total width — max-content would size each row to its own
-     content, misaligning columns row-to-row when cell text lengths differ. */
-  min-width: 1241px;
-}
-.jobs-grid--head {
-  height: 40px;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-bottom: 2px solid var(--ink);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: var(--text-color-muted);
-}
-.jobs-grid--row {
-  min-height: 52px;
-  border-bottom: 1px solid var(--surface-border-row);
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--surface-border-input);
+  border-radius: 2px;
+  background: #fff;
   cursor: pointer;
-  transition: background-color 0.1s ease;
+  transition: background 0.12s, border-color 0.12s;
 }
-.jobs-grid--row:hover { background: var(--surface-hover); }
-.jobs-grid--row:last-child { border-bottom: none; }
+.ey-cb.is-checked { background: var(--yellow, #FFE600); border-color: var(--yellow, #FFE600); }
+.ey-cb-icon { font-size: 9px; color: var(--ink, #1A1A24); font-weight: 900; }
 
-.jobs-grid--workflow { background: var(--surface-inset); }
+/* Run name cell */
+.run-name { display: flex; align-items: center; gap: 6px; }
+.run-name-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+.run-id { font-size: 10.5px; color: var(--text-color-muted-2); margin-top: 2px; }
 
-.run-name-cell { display: flex; flex-direction: column; gap: 2px; padding-right: 12px; overflow: hidden; }
-.run-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.run-id { font-size: 10.5px; color: var(--text-color-muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.active-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 2px;
+  background: var(--yellow);
+  color: var(--ink);
+  flex-shrink: 0;
+}
 
 .type-tag {
   display: inline-block;
@@ -311,20 +559,41 @@ const workflowProgressLabel = (wf) => {
   border: 1px solid var(--surface-border-input);
   border-radius: 2px;
 }
-.type-tag--workflow { background: var(--ink); color: var(--yellow); border-color: var(--ink); }
+.type-tag--auto { background: var(--ink); color: var(--yellow); border-color: var(--ink); }
 
-.cell-ref, .cell-mono { font-size: 11.5px; color: var(--text-color-secondary); }
-.cell-by { font-size: 12.5px; color: var(--text-color-secondary); }
-.grid-caption { font-size: 11.5px; color: var(--text-color-muted-2); }
+.cell-secondary { font-size: 11.5px; color: var(--text-color-secondary); }
 
-.progress-cell { padding-right: 20px; }
 .progress-row { display: flex; align-items: center; gap: 8px; }
-.progress-track { flex: 1; height: 5px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
+.progress-track { flex: 1; min-width: 60px; height: 5px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--yellow); }
 .progress-pct { font-size: 11px; color: var(--text-color-muted); }
 .progress-label { font-size: 12px; color: var(--text-color-muted-2); }
 
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-color-muted);
+  transition: background 0.12s, color 0.12s;
+  font-size: 14px;
+}
+.action-btn:hover { background: var(--surface-hover); color: var(--ink); }
+.action-btn.is-busy { opacity: 0.5; pointer-events: none; }
+
 .empty-state { text-align: center; padding: 40px 0; color: var(--text-color-muted); }
 .empty-state i { font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.6; }
 .empty-state p { margin: 0; }
+</style>
+
+<!-- Menu item styles — not scoped so they reach the teleported Menu overlay -->
+<style>
+.menu-item { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--text-color); text-decoration: none; }
+.menu-item:hover { background: var(--surface-hover); }
+.menu-item.menu-item-danger { color: var(--red-500, #ef4444); }
 </style>

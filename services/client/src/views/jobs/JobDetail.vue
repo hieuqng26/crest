@@ -225,11 +225,11 @@ const confirmDelete = () => {
         </div>
       </div>
 
-      <!-- Training: RUN DETAILS + Segment models (or logs if not segmented) -->
+      <!-- Training: RUN DETAILS (collapsible) + Segment models + collapsible logs -->
       <div v-if="kind === KIND.TRAINING" class="job-body">
-        <RunDetailsCard :rows="runDetailRows" :progress="job.progress" :status="job.status" :error-message="job.raw.error_message" />
-        <SegmentModelsPanel v-if="job.raw.is_segmented && job.status === 'success'" :run-id="runId" />
-        <LogsPanel v-else :kind="kind" :run-id="runId" :status="job.status" />
+        <RunDetailsCard :rows="runDetailRows" :progress="job.progress" :status="job.status" :error-message="job.raw.error_message" collapsible />
+        <SegmentModelsPanel v-if="job.raw.is_segmented" :run-id="runId" />
+        <LogsPanel :kind="kind" :run-id="runId" :status="job.status" :collapsible="job.raw.is_segmented" />
       </div>
 
       <!-- Forecast / Analysis: Overview / Results tabs -->
@@ -244,8 +244,8 @@ const confirmDelete = () => {
         </nav>
 
         <div v-if="activeTab === 'overview'" class="job-body">
-          <RunDetailsCard :rows="runDetailRows" :progress="job.progress" :status="job.status" :error-message="job.raw.error_message" :label-width="130" />
-          <LogsPanel :kind="kind" :run-id="runId" :status="job.status" />
+          <RunDetailsCard :rows="runDetailRows" :progress="job.progress" :status="job.status" :error-message="job.raw.error_message" :label-width="130" collapsible />
+          <LogsPanel :kind="kind" :run-id="runId" :status="job.status" collapsible />
         </div>
 
         <div v-else class="panel results-panel">
@@ -310,10 +310,9 @@ const confirmDelete = () => {
 .btn-header { height: 38px; }
 
 .job-body {
-  display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .diagnostics-link {

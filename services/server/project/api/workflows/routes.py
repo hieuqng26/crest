@@ -157,7 +157,24 @@ def list_workflows():
     paged = WorkflowRun.query.order_by(WorkflowRun.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
     )
-    result = [wf.to_dict() for wf in paged.items]
+    wf_ids = [wf.id for wf in paged.items]
+    cr_by_wf = {}
+    if wf_ids:
+        for cr in CreditRiskRun.query.filter(
+            CreditRiskRun.workflow_run_id.in_(wf_ids)
+        ).all():
+            cr_by_wf[cr.workflow_run_id] = cr
+
+    result = []
+    for wf in paged.items:
+        d = wf.to_dict()
+        cr = cr_by_wf.get(wf.id)
+        d["analysis_summary"] = (
+            {"run_id": cr.run_id, "is_active": bool(cr.is_active), "status": cr.status}
+            if cr
+            else None
+        )
+        result.append(d)
     return jsonify(
         {"items": result, "total": paged.total, "page": page, "pages": paged.pages}
     ), 200
@@ -482,6 +499,31 @@ def rerun_workflow(run_id):
     )
     wf_dict["targets"] = created_list
     return jsonify(wf_dict), 202
+
+
+@workflows.put("/<run_id>/activate")
+@require_perm("credit_risk:write")
+def activate_workflow(run_id):
+    """Set the workflow's credit risk run as the active analysis run,
+    deactivating all others. Returns 404 if the workflow has no credit run."""
+    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
+    if not wf:
+        return jsonify({"error": "Not found"}), 404
+
+    cr = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).first()
+    if not cr:
+        return jsonify({"error": "This workflow has no credit risk run"}), 404
+    if cr.status != "success":
+        return jsonify({"error": "Credit risk run has not completed successfully"}), 422
+
+    cr_run_id = cr.run_id
+    with app_session() as s:
+        CreditRiskRun.query.update({CreditRiskRun.is_active: False})
+        cr_obj = s.get(CreditRiskRun, cr.id)
+        cr_obj.is_active = True
+        s.add(cr_obj)
+
+    return jsonify({"activated": cr_run_id}), 200
 
 
 @workflows.delete("/<run_id>")
