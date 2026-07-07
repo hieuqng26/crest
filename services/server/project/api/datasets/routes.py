@@ -323,6 +323,64 @@ def get_dataset_column_stats(dataset_id):
     return jsonify({"columns": columns, "row_count": n}), 200
 
 
+# Bound the matrix so a pathological request can't force an O(k²) correlation
+# over hundreds of columns (payload + compute). The feature-selection screen
+# never selects anywhere near this many.
+MAX_CORR_COLUMNS = 60
+
+
+@datasets.post("/<int:dataset_id>/correlations")
+@require_perm("dataset:read")
+def get_dataset_correlations(dataset_id):
+    """Pearson correlation matrix over an arbitrary set of numeric columns, for
+    the Advanced Feature Selection heatmaps (feature↔feature and feature↔target
+    are both sub-blocks of this single matrix, sliced client-side).
+
+    Body: {"columns": ["col_a", "col_b", ...]}  — union of selected features and
+    targets. Only columns that exist and are numeric are used; the response
+    echoes the surviving columns in request order so the caller can map names to
+    matrix indices."""
+    ds = Dataset.query.filter_by(id=dataset_id).first()
+    if not ds or ds.status == "deleted":
+        return jsonify({"error": "Not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    requested = body.get("columns") or []
+    if not isinstance(requested, list) or not requested:
+        return jsonify({"error": "columns must be a non-empty list"}), 400
+    if len(requested) > MAX_CORR_COLUMNS:
+        return jsonify({"error": f"Too many columns (max {MAX_CORR_COLUMNS})"}), 400
+    if not ds.file_path:
+        return jsonify({"columns": [], "matrix": []}), 200
+
+    try:
+        df = _load_dataset_dataframe(ds)
+    except Exception as e:
+        logger.error(f"Failed to load dataset {dataset_id} for correlations: {e}")
+        return jsonify({"error": f"Could not load file: {e}"}), 500
+
+    numeric_df = df.select_dtypes(include=["number"])
+    # Preserve request order, drop non-numeric/missing and any duplicates.
+    seen = set()
+    cols = []
+    for c in requested:
+        if c in numeric_df.columns and c not in seen:
+            cols.append(c)
+            seen.add(c)
+
+    if len(cols) < 2:
+        # A correlation needs at least two usable columns.
+        return jsonify({"columns": cols, "matrix": []}), 200
+
+    corr = numeric_df[cols].corr()  # pandas Pearson, cols × cols
+    matrix = [
+        [round(float(v), 4) if pd.notna(v) else None for v in corr.iloc[i].tolist()]
+        for i in range(len(cols))
+    ]
+
+    return jsonify({"columns": cols, "matrix": matrix}), 200
+
+
 @datasets.delete("/<int:dataset_id>")
 @require_perm("dataset:write")
 def delete_dataset(dataset_id):

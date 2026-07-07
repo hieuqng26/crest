@@ -1,33 +1,28 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
 import { calibrationDataset, targetCols, featureCols, featureOptions } from './newModelStore'
-import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
 const toast = useToast()
 
 const loading = ref(true)
-const columns = ref([]) // [{name, type, missing_pct, distinct, mean, std, corr}]
+const columns = ref([]) // [{name, type, missing_pct, distinct, mean, std}]
 const checked = ref({}) // { [name]: bool }
 const search = ref('')
 
-// Column stats are computed against the first selected target — with several
-// targets, feature columns are shared across all of them via Step 03's
-// default set, so this screen picks one representative target for the
-// correlation column.
-const statsTarget = computed(() => targetCols.value[0] ?? null)
-
 onMounted(async () => {
-  if (!calibrationDataset.value || !statsTarget.value) {
+  if (!calibrationDataset.value || !targetCols.value.length) {
     router.replace({ name: 'model_new' })
     return
   }
   loading.value = true
   try {
-    const { data } = await datasetsAPI.columnStats(calibrationDataset.value.id, statsTarget.value)
+    // target arg is only used server-side for the (now-removed) single-corr
+    // column; pass the first target for backwards-compatible stats.
+    const { data } = await datasetsAPI.columnStats(calibrationDataset.value.id, targetCols.value[0] ?? null)
     const allowed = new Set(featureOptions.value)
     columns.value = (data.columns ?? []).filter((c) => allowed.has(c.name))
     const preselected = new Set(featureCols.value.length ? featureCols.value : columns.value.map((c) => c.name))
@@ -54,7 +49,82 @@ const toggleAll = () => {
 const toggleOne = (name) => { checked.value[name] = !checked.value[name] }
 
 const fmtNum = (v) => (v == null ? '—' : Number(v).toFixed(4))
-const corrPct = (v) => (v == null ? 0 : Math.round(Math.abs(v) * 100))
+
+// ── Selected sets ─────────────────────────────────────────────────────────────
+const selectedFeatures = computed(() =>
+  columns.value.filter((c) => checked.value[c.name]).map((c) => c.name)
+)
+// Targets are numeric calibration columns; they aren't in `columns` (which is
+// features only), so take them straight from the wizard selection.
+const selectedTargets = computed(() => [...targetCols.value])
+
+// ── Correlation matrix (feature↔feature and feature↔target are sub-blocks) ─────
+const corrLoading = ref(false)
+const corrColumns = ref([])         // names, in matrix order
+const corrMatrix = ref([])          // number|null[][]
+const corrIndex = computed(() => {
+  const m = {}
+  corrColumns.value.forEach((name, i) => { m[name] = i })
+  return m
+})
+
+const corrCell = (rowName, colName) => {
+  // Look up by name so slicing is robust to matrix ordering.
+  const ri = corrIndex.value[rowName]
+  const ci = corrIndex.value[colName]
+  if (ri == null || ci == null) return null
+  return corrMatrix.value[ri]?.[ci] ?? null
+}
+
+// Diverging scale: positive → yellow ramp, negative → ink ramp (same language
+// as the Sector Heatmap). |v| drives opacity so strong (±) correlations pop.
+const cellStyle = (v) => {
+  if (v == null) return { background: 'var(--surface-ground)', color: 'var(--text-color-muted)' }
+  const a = Math.min(0.1 + Math.abs(v) * 0.85, 0.95)
+  if (v >= 0) return { background: `rgba(255,214,0,${a.toFixed(2)})`, color: '#1A1A24' }
+  return { background: `rgba(46,46,56,${a.toFixed(2)})`, color: a > 0.45 ? '#FFFFFF' : '#1A1A24' }
+}
+const cellText = (v) => (v == null ? '—' : (v >= 0 ? v.toFixed(2) : '−' + Math.abs(v).toFixed(2)))
+
+const canFeatureMatrix = computed(() => selectedFeatures.value.length >= 2)
+const canTargetMatrix = computed(() => selectedFeatures.value.length >= 1 && selectedTargets.value.length >= 1)
+
+// Re-fetch only when the *set* of columns changes, debounced so rapid checkbox
+// toggles don't spam the API.
+const corrKey = computed(() => {
+  const feats = [...selectedFeatures.value].sort()
+  const targs = [...selectedTargets.value].sort()
+  return JSON.stringify([feats, targs])
+})
+
+let debounceTimer = null
+async function fetchCorrelations() {
+  const feats = selectedFeatures.value
+  const targs = selectedTargets.value
+  const union = [...new Set([...feats, ...targs])]
+  if (union.length < 2 || (!canFeatureMatrix.value && !canTargetMatrix.value)) {
+    corrColumns.value = []
+    corrMatrix.value = []
+    return
+  }
+  corrLoading.value = true
+  try {
+    const { data } = await datasetsAPI.correlations(calibrationDataset.value.id, union)
+    corrColumns.value = data.columns ?? []
+    corrMatrix.value = data.matrix ?? []
+  } catch (e) {
+    corrColumns.value = []
+    corrMatrix.value = []
+    toast.add({ severity: 'error', summary: 'Failed to load correlations', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    corrLoading.value = false
+  }
+}
+
+watch(corrKey, () => {
+  clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(fetchCorrelations, 300)
+})
 
 const apply = () => {
   featureCols.value = columns.value.filter((c) => checked.value[c.name]).map((c) => c.name)
@@ -72,7 +142,8 @@ const cancel = () => router.push({ name: 'model_new' })
         <div class="eyebrow">MODEL</div>
         <h1>Advanced Feature Selection</h1>
         <div class="subtitle">
-          Column statistics for <span class="font-mono">{{ calibrationDataset?.name }}</span> · target <span class="font-mono">{{ statsTarget }}</span>
+          Column statistics for <span class="font-mono">{{ calibrationDataset?.name }}</span>
+          · <span class="font-mono">{{ featCount }}</span> features × <span class="font-mono">{{ selectedTargets.length }}</span> targets selected
         </div>
       </div>
       <div class="method-col">
@@ -83,7 +154,70 @@ const cancel = () => router.push({ name: 'model_new' })
 
     <div class="info-panel">
       <span class="info-bar" />
-      <div class="info-text">Select features manually using the column statistics below. Automated selection methods (correlation filter, recursive feature elimination) are planned here.</div>
+      <div class="info-text">Select features manually using the column statistics below. The heatmaps update live as you toggle features — use them to drop redundant (highly inter-correlated) features and keep those that correlate with your targets.</div>
+    </div>
+
+    <!-- ── Correlation heatmaps ─────────────────────────────────────────────── -->
+    <div class="heatmaps">
+      <!-- Feature ↔ Feature -->
+      <div class="panel heatmap-panel">
+        <div class="heatmap-head">
+          <div>
+            <div class="table-title">Feature ↔ Feature correlation</div>
+            <div class="heatmap-sub">Pearson r among selected features — spot redundant, collinear pairs</div>
+          </div>
+          <div class="legend-row">
+            <span class="legend-item"><span class="legend-swatch" style="background: rgba(46,46,56,0.75)" />Negative</span>
+            <span class="legend-item"><span class="legend-swatch" style="background: rgba(255,214,0,0.85)" />Positive</span>
+          </div>
+        </div>
+
+        <div v-if="corrLoading" class="loading-line"><i class="pi pi-spin pi-spinner" /> Computing…</div>
+        <div v-else-if="!canFeatureMatrix" class="hm-empty">Select at least two features to compare.</div>
+        <div v-else class="hm-scroll">
+          <div class="hm-grid" :style="{ gridTemplateColumns: `var(--hm-label) repeat(${selectedFeatures.length}, minmax(48px, 1fr))` }">
+            <!-- header row -->
+            <div class="hm-corner" />
+            <div v-for="f in selectedFeatures" :key="`fh-${f}`" class="hm-colhead font-mono" :title="f">{{ f }}</div>
+            <!-- body rows -->
+            <template v-for="rf in selectedFeatures" :key="`fr-${rf}`">
+              <div class="hm-rowhead font-mono" :title="rf">{{ rf }}</div>
+              <div
+                v-for="cf in selectedFeatures" :key="`fc-${rf}-${cf}`"
+                class="hm-cell font-mono"
+                :style="cellStyle(corrCell(rf, cf))"
+              >{{ cellText(corrCell(rf, cf)) }}</div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature ↔ Target -->
+      <div class="panel heatmap-panel">
+        <div class="heatmap-head">
+          <div>
+            <div class="table-title">Feature ↔ Target correlation</div>
+            <div class="heatmap-sub">Pearson r of each feature against each selected target</div>
+          </div>
+        </div>
+
+        <div v-if="corrLoading" class="loading-line"><i class="pi pi-spin pi-spinner" /> Computing…</div>
+        <div v-else-if="!canTargetMatrix" class="hm-empty">Select at least one feature and one target.</div>
+        <div v-else class="hm-scroll">
+          <div class="hm-grid" :style="{ gridTemplateColumns: `var(--hm-label) repeat(${selectedTargets.length}, minmax(70px, 1fr))` }">
+            <div class="hm-corner" />
+            <div v-for="t in selectedTargets" :key="`th-${t}`" class="hm-colhead font-mono" :title="t">{{ t }}</div>
+            <template v-for="rf in selectedFeatures" :key="`tr-${rf}`">
+              <div class="hm-rowhead font-mono" :title="rf">{{ rf }}</div>
+              <div
+                v-for="t in selectedTargets" :key="`tc-${rf}-${t}`"
+                class="hm-cell font-mono"
+                :style="cellStyle(corrCell(rf, t))"
+              >{{ cellText(corrCell(rf, t)) }}</div>
+            </template>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -99,7 +233,7 @@ const cancel = () => router.push({ name: 'model_new' })
           <span class="checkbox" :class="{ 'is-checked': allChecked }"><i v-if="allChecked" class="pi pi-check" /></span>
         </div>
         <div>FEATURE</div><div>TYPE</div><div class="ta-right">MISSING</div><div class="ta-right">DISTINCT</div>
-        <div class="ta-right">MEAN</div><div class="ta-right">STD</div><div>|CORR| W/ TARGET</div>
+        <div class="ta-right">MEAN</div><div class="ta-right">STD</div>
       </div>
 
       <div v-if="loading" class="loading-line"><i class="pi pi-spin pi-spinner" /> Loading column statistics…</div>
@@ -114,10 +248,6 @@ const cancel = () => router.push({ name: 'model_new' })
         <div class="font-mono ta-right fs-muted">{{ c.distinct.toLocaleString() }}</div>
         <div class="font-mono ta-right">{{ fmtNum(c.mean) }}</div>
         <div class="font-mono ta-right fs-muted">{{ fmtNum(c.std) }}</div>
-        <div class="corr-cell">
-          <div class="corr-track"><div class="corr-fill" :style="{ width: corrPct(c.corr) + '%' }" /></div>
-          <span class="font-mono corr-value">{{ c.corr != null ? c.corr.toFixed(2) : '—' }}</span>
-        </div>
       </div>
     </div>
 
@@ -147,13 +277,45 @@ const cancel = () => router.push({ name: 'model_new' })
 .info-text { font-size: 12.5px; color: var(--text-color-secondary); line-height: 1.6; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
+
+/* ── Heatmaps ─────────────────────────────────────────────────────────────── */
+.heatmaps { display: flex; flex-direction: column; gap: 16px; margin-bottom: 16px; }
+.heatmap-panel { padding: 14px 16px; }
+.heatmap-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.heatmap-sub { font-size: 12px; color: var(--text-color-muted); margin-top: 3px; }
+
+.legend-row { display: flex; align-items: center; gap: 14px; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-color-secondary); }
+.legend-swatch { width: 14px; height: 14px; display: inline-block; border-radius: 2px; }
+
+.hm-scroll { overflow-x: auto; }
+.hm-grid { --hm-label: minmax(150px, 220px); display: grid; column-gap: 3px; row-gap: 3px; align-items: stretch; min-width: min-content; }
+.hm-corner { position: sticky; left: 0; background: var(--surface-card); z-index: 2; }
+.hm-colhead {
+  font-size: 10.5px; color: var(--text-color-muted); font-weight: 600;
+  padding: 0 4px 8px; text-align: center; align-self: end;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hm-rowhead {
+  position: sticky; left: 0; z-index: 1; background: var(--surface-card);
+  font-size: 12px; font-weight: 600; color: var(--text-color-secondary);
+  display: flex; align-items: center; padding-right: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hm-cell {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 34px; padding: 6px 4px; border-radius: 2px;
+  font-size: 11.5px; font-weight: 600;
+}
+.hm-empty { padding: 24px 4px; font-size: 12.5px; color: var(--text-color-muted); }
+
 .table-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
 .table-title { font-size: 13.5px; font-weight: 700; }
 .table-count { font-size: 12px; color: var(--text-color-muted); }
 .spacer { flex: 1; }
 .search-input { width: 220px; height: 34px; }
 
-.fs-grid { display: grid; column-gap: 12px; grid-template-columns: 36px minmax(170px,1.3fr) 70px 90px 90px 90px 90px minmax(150px,1fr); align-items: center; padding: 0 16px; }
+.fs-grid { display: grid; column-gap: 12px; grid-template-columns: 36px minmax(170px,1.4fr) 80px 100px 100px 110px 110px; align-items: center; padding: 0 16px; }
 .fs-grid--head { height: 38px; border-bottom: 2px solid var(--ink); font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-color-muted); }
 .fs-grid--row { min-height: 46px; border-bottom: 1px solid var(--surface-border-row); }
 .fs-grid--row:hover { background: var(--surface-hover); }
@@ -169,11 +331,6 @@ const cancel = () => router.push({ name: 'model_new' })
 .fs-name.is-unchecked { color: var(--text-color-muted-2); font-weight: 400; }
 .fs-muted { color: var(--text-color-secondary); font-size: 12px; }
 .type-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; border: 1px solid var(--surface-border-input); color: var(--text-color-secondary); padding: 2px 7px; border-radius: 2px; }
-
-.corr-cell { display: flex; align-items: center; gap: 10px; }
-.corr-track { flex: 1; height: 6px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
-.corr-fill { height: 100%; background: var(--yellow-chart); }
-.corr-value { font-size: 12px; font-weight: 600; width: 36px; text-align: right; }
 
 .loading-line { padding: 24px; text-align: center; color: var(--text-color-muted); font-size: 13px; }
 

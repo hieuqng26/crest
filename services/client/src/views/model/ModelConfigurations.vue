@@ -6,6 +6,7 @@ import { useConfirm } from 'primevue/useconfirm'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
 import { configs, registry, fetchConfigs } from './newModelStore'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import BaseTable from '@/views/composables/BaseTable.vue'
 import { fmtDate } from '@/utils/datetime'
 
 const route = useRoute()
@@ -57,6 +58,15 @@ const settingsSummary = (c) => {
   const searchLabel = search && search.mode !== 'none' ? ` · ${search.mode} search` : ''
   return `${split}/${100 - split} · ${scaler} · ${c.split_by} ≤${c.max_segments}${searchLabel}`
 }
+
+const CONFIG_COLS = [
+  { field: 'name', label: 'NAME', width: '18%' },
+  { field: 'algorithm', label: 'ALGORITHM', width: '140px' },
+  { field: 'settings', label: 'SETTINGS', width: '28%' },
+  { field: 'used_by', label: 'USED BY', width: '110px' },
+  { field: 'updated', label: 'UPDATED', width: '150px' },
+  { field: 'actions', label: 'ACTIONS', width: '200px', align: 'right' },
+]
 
 // ── Editor ────────────────────────────────────────────────────────────────────
 const editing = ref(null) // null | 'new' | configId
@@ -236,9 +246,7 @@ const onDelete = (cfg) => {
   <div>
     <PageHeader eyebrow="MODEL" title="Model Configurations" subtitle="Save reusable configurations — apply them in New Model or per-sector overrides">
       <template #actions>
-        <Button class="btn-new-cfg" @click="openCreate()">
-          <span class="btn-plus">+</span><span>New Configuration</span>
-        </Button>
+        <Button class="btn-new-cfg" icon="pi pi-plus" label="New Configuration" @click="openCreate()" />
       </template>
     </PageHeader>
 
@@ -389,7 +397,7 @@ const onDelete = (cfg) => {
         </div>
 
         <!-- Configs table -->
-        <div class="panel">
+        <div class="panel configs-panel">
           <div class="configs-header">
             <h3>{{ algoFilter === 'All' ? 'All configurations' : algoFilter }}</h3>
             <span class="configs-count">{{ filteredConfigs.length }} configuration{{ filteredConfigs.length !== 1 ? 's' : '' }}</span>
@@ -397,27 +405,37 @@ const onDelete = (cfg) => {
             <InputText v-model="search" placeholder="Search configurations…" class="configs-search" />
           </div>
 
-          <div class="configs-table-grid configs-table-grid--head">
-            <div>NAME</div><div>ALGORITHM</div><div>SETTINGS</div><div>USED BY</div><div>UPDATED</div><div class="ta-right">ACTIONS</div>
-          </div>
+          <BaseTable :columns="CONFIG_COLS" :value="filteredConfigs" dataKey="id" :bleed="16">
+            <template #empty>
+              <div v-if="!loading" class="empty-state">
+                <div class="empty-title">No configurations for this algorithm</div>
+                <div class="empty-sub">Create one with <strong>+ New Configuration</strong></div>
+              </div>
+            </template>
 
-          <div v-if="!loading && filteredConfigs.length === 0" class="empty-state">
-            <div class="empty-title">No configurations for this algorithm</div>
-            <div class="empty-sub">Create one with <strong>+ New Configuration</strong></div>
-          </div>
-
-          <div v-for="c in filteredConfigs" :key="c.id" class="configs-table-grid configs-table-grid--row">
-            <div class="cfg-name">{{ c.name }}</div>
-            <div class="font-mono cfg-algo">{{ c.algorithm }}</div>
-            <div class="font-mono cfg-settings">{{ settingsSummary(c) }}</div>
-            <div class="font-mono cfg-usedby">{{ c.used_by }}</div>
-            <div class="font-mono cfg-updated">{{ fmtDate(c.created_at) }}</div>
-            <div class="cfg-actions">
-              <span class="action-link" @click="openEdit(c)">Edit</span>
-              <span class="action-link" @click="onDuplicate(c)">Duplicate</span>
-              <span class="action-link action-link--danger" @click="onDelete(c)">Delete</span>
-            </div>
-          </div>
+            <template #cell-name="{ row }">
+              <span class="cfg-name">{{ row.name }}</span>
+            </template>
+            <template #cell-algorithm="{ row }">
+              <span class="font-mono cfg-algo">{{ row.algorithm }}</span>
+            </template>
+            <template #cell-settings="{ row }">
+              <span class="font-mono cfg-settings">{{ settingsSummary(row) }}</span>
+            </template>
+            <template #cell-used_by="{ row }">
+              <span class="font-mono cfg-usedby">{{ row.used_by }}</span>
+            </template>
+            <template #cell-updated="{ row }">
+              <span class="font-mono cfg-updated">{{ fmtDate(row.created_at) }}</span>
+            </template>
+            <template #cell-actions="{ row }">
+              <div class="cfg-actions">
+                <span class="action-link" @click="openEdit(row)">Edit</span>
+                <span class="action-link" @click="onDuplicate(row)">Duplicate</span>
+                <span class="action-link action-link--danger" @click="onDelete(row)">Delete</span>
+              </div>
+            </template>
+          </BaseTable>
         </div>
       </div>
     </div>
@@ -425,8 +443,7 @@ const onDelete = (cfg) => {
 </template>
 
 <style scoped>
-.btn-new-cfg { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 18px; }
-.btn-plus { color: var(--yellow); font-weight: 700; }
+.btn-new-cfg { height: 38px; padding: 0 18px; }
 
 .configs-grid { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
@@ -481,20 +498,16 @@ const onDelete = (cfg) => {
 .seg-pill { padding: 9px 16px; border: 0; background: #FFFFFF; color: var(--text-color-secondary); font-size: 13px; font-weight: 600; cursor: pointer; }
 .seg-pill.is-active { background: var(--ink); color: var(--yellow); }
 
-.configs-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.configs-panel { padding: 0 16px 4px; }
+.configs-header { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
 .configs-header h3 { flex: none; }
 .configs-count { font-size: 12px; color: var(--text-color-muted); }
 .spacer { flex: 1; }
 .configs-search { width: 220px; height: 34px; }
 
-.configs-table-grid { display: grid; grid-template-columns: minmax(150px,1fr) 140px minmax(220px,1.4fr) 110px 150px 190px; column-gap: 12px; align-items: center; padding: 6px 16px; }
-.configs-table-grid--head { height: 40px; border-bottom: 2px solid var(--ink); font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-color-muted); }
-.configs-table-grid--row { min-height: 50px; border-bottom: 1px solid var(--surface-border-row); }
-.configs-table-grid--row:hover { background: var(--surface-hover); }
-.configs-table-grid--row:last-child { border-bottom: none; }
 .cfg-name { font-size: 13.5px; font-weight: 600; }
 .cfg-algo { font-size: 12px; color: var(--text-color-secondary); }
-.cfg-settings { font-size: 11px; color: var(--text-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-settings { display: block; max-width: 340px; font-size: 11px; color: var(--text-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cfg-usedby { font-size: 12px; color: var(--text-color-secondary); }
 .cfg-updated { font-size: 11.5px; color: var(--text-color-secondary); }
 .cfg-actions { display: flex; gap: 12px; justify-content: flex-end; }

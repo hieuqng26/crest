@@ -60,6 +60,14 @@ export const numericColumnOptions = computed(() =>
 )
 const forecastColumnSet = computed(() => new Set(forecastDataset.value?.columns ?? []))
 
+// Columns usable as a target: numeric in the calibration dataset and NOT also
+// present in the forecast dataset. A column that appears in both is an
+// exogenous macro driver (e.g. inflation_rate, oil_price) supplied by the
+// forecast — it's a feature, not something we train a model to predict.
+export const targetColumnOptions = computed(() =>
+  numericColumnOptions.value.filter((c) => !forecastColumnSet.value.has(c))
+)
+
 // Columns usable as a feature: numeric in the calibration dataset, present in
 // the forecast dataset (so the auto-chained forecast stage can score it), and
 // not itself one of the selected targets (leakage guard).

@@ -108,12 +108,12 @@ const creditExternalFilters = computed(() => {
 })
 
 const TARGET_COLS = [
-  { label: 'TARGET' },
-  { label: 'ALGORITHM' },
-  { label: 'SEGMENTATION' },
-  { label: 'TRAINING' },
-  { label: 'FORECAST' },
-  { label: 'FINISHED' },
+  { field: 'target', label: 'TARGET' },
+  { field: 'algorithm', label: 'ALGORITHM' },
+  { field: 'segmentation', label: 'SEGMENTATION' },
+  { field: 'training', label: 'TRAINING' },
+  { field: 'forecast', label: 'FORECAST' },
+  { field: 'finished', label: 'FINISHED' },
 ]
 
 // ── actions ───────────────────────────────────────────────────────────────────
@@ -228,18 +228,24 @@ const confirmDelete = () => {
             </div>
             <div class="target-panel-hint">Click a target to open its run</div>
           </div>
-          <BaseTable :columns="TARGET_COLS" :bleed="20">
-            <tr v-for="t in wf.targets" :key="t.target_col" class="target-row">
-              <td class="font-mono target-name" @click="goToTraining(t.calibration)">{{ t.target_col }}</td>
-              <td class="font-mono">{{ t.calibration.algorithm ?? '—' }}</td>
-              <td>{{ targetSegmentSummary(t.calibration) }}</td>
-              <td><StatusDot :status="t.calibration.status" /></td>
-              <td>
-                <span v-if="t.forecast" class="target-forecast-link" @click="goToForecast(t.forecast)"><StatusDot :status="t.forecast.status" /></span>
-                <span v-else class="grid-caption">Pending</span>
-              </td>
-              <td class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</td>
-            </tr>
+          <BaseTable :columns="TARGET_COLS" :value="wf.targets" dataKey="target_col" :bleed="20">
+            <template #cell-target="{ row }">
+              <span class="font-mono target-name" @click="goToTraining(row.calibration)">{{ row.target_col }}</span>
+            </template>
+            <template #cell-algorithm="{ row }">
+              <span class="font-mono">{{ row.calibration.algorithm ?? '—' }}</span>
+            </template>
+            <template #cell-segmentation="{ row }">{{ targetSegmentSummary(row.calibration) }}</template>
+            <template #cell-training="{ row }">
+              <StatusDot :status="row.calibration.status" />
+            </template>
+            <template #cell-forecast="{ row }">
+              <span v-if="row.forecast" class="target-forecast-link" @click="goToForecast(row.forecast)"><StatusDot :status="row.forecast.status" /></span>
+              <span v-else class="grid-caption">Pending</span>
+            </template>
+            <template #cell-finished="{ row }">
+              <span class="font-mono cell-mono">{{ (row.forecast?.finished_at ?? row.calibration.finished_at) ? fmtDate(row.forecast?.finished_at ?? row.calibration.finished_at) : '—' }}</span>
+            </template>
           </BaseTable>
         </div>
       </div>

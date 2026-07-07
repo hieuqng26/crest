@@ -1,50 +1,104 @@
 <script setup>
-defineProps({
-  /** Array of column definitions: { label: string, align?: 'left'|'right', width?: string } */
+// Shared "EY table" shell, now backed by PrimeVue DataTable/Column instead of a
+// hand-rolled <table>. Consumers pass a column config + row array and render
+// cells through `#cell-<field>` slots (falling back to the raw row value).
+// Optional inline row expansion is driven externally via `expandedRows`
+// (v-model) + the `#expansion` slot. The visual language — flush-left cells,
+// 2px ink header rule, warm row hover, 1px row dividers — is unchanged and
+// driven entirely through the theme tokens.
+import { computed } from 'vue'
+
+const props = defineProps({
+  /** Column defs: { field?: string, label: string, align?: 'left'|'right', width?: string, hideHeader?: boolean } */
   columns: { type: Array, required: true },
-  /** Horizontal bleed in px to cancel out the parent panel's padding (default 16px) */
+  /** Row objects. */
+  value: { type: Array, default: () => [] },
+  /** Unique row identifier key (required for selection/expansion). */
+  dataKey: { type: String, default: null },
+  /** Per-row class — string | object | (row) => string|object. */
+  rowClass: { type: [Function, String, Object], default: null },
+  /** Expanded rows (v-model) for the inline `#expansion` panel. */
+  expandedRows: { type: Array, default: null },
+  /** Whether rows respond to clicks (adds pointer cursor + emits row-click). */
+  rowHover: { type: Boolean, default: true },
+  /** Horizontal bleed in px to cancel out the parent panel's padding (default 16px). */
   bleed: { type: Number, default: 16 },
 })
+
+const emit = defineEmits(['row-click', 'update:expandedRows'])
+
+// A stable field for every column so slot/keys resolve even when a caller
+// omits `field` (e.g. an actions column).
+const cols = computed(() =>
+  props.columns.map((c, i) => ({ ...c, field: c.field ?? `__col_${i}` }))
+)
+
+const rowClassFn = (row) =>
+  typeof props.rowClass === 'function' ? props.rowClass(row) : props.rowClass
+
+const onRowClick = (e) => emit('row-click', e.data, e.originalEvent)
+const onExpandUpdate = (val) => emit('update:expandedRows', val)
 </script>
 
 <template>
   <div class="ey-table-scroll" :style="{ margin: `0 -${bleed}px`, padding: `0 ${bleed}px` }">
-    <table class="ey-table">
-      <thead>
-        <tr>
-          <th
-            v-for="col in columns"
-            :key="col.label"
-            :class="col.align === 'right' ? 'ta-right' : ''"
-            :style="col.width ? { width: col.width } : {}"
-          >{{ col.label }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <slot />
-      </tbody>
-    </table>
+    <DataTable
+      :value="value"
+      :dataKey="dataKey"
+      :rowClass="rowClassFn"
+      :expandedRows="expandedRows ?? undefined"
+      class="ey-table"
+      :class="{ 'ey-table--no-hover': !rowHover }"
+      @row-click="onRowClick"
+      @update:expandedRows="onExpandUpdate"
+    >
+      <template #empty>
+        <slot name="empty" />
+      </template>
+
+      <Column
+        v-for="col in cols"
+        :key="col.field"
+        :field="col.field"
+        :header="col.hideHeader ? '' : col.label"
+        :headerClass="col.align === 'right' ? 'ey-th-right' : null"
+        :bodyClass="col.align === 'right' ? 'ey-td-right' : null"
+        :style="col.width ? { width: col.width } : {}"
+      >
+        <template v-if="$slots[`header-${col.field}`]" #header>
+          <slot :name="`header-${col.field}`" :col="col" />
+        </template>
+        <template #body="{ data }">
+          <slot :name="`cell-${col.field}`" :row="data" :data="data">
+            {{ data[col.field] ?? '' }}
+          </slot>
+        </template>
+      </Column>
+
+      <template v-if="$slots.expansion" #expansion="{ data }">
+        <slot name="expansion" :row="data" :data="data" />
+      </template>
+    </DataTable>
   </div>
 </template>
 
 <!--
-  Not scoped — styles must reach <tr>/<td> rendered by the parent's slot content.
-  All rules are namespaced under .ey-table to avoid collisions.
+  Not scoped — DataTable renders its own DOM (some of it teleported for the
+  scroller); rules are namespaced under .ey-table to avoid collisions. Colors
+  come exclusively from theme tokens so the shell tracks the active theme.
 -->
 <style>
 .ey-table-scroll { overflow-x: auto; }
 
-.ey-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
+/* Strip PrimeVue's default card chrome — the parent panel owns the border. */
+.ey-table.p-datatable .p-datatable-wrapper { background: transparent; }
+.ey-table.p-datatable table { border-collapse: collapse; width: 100%; font-size: 13px; }
 
-/* Header divider — always full table width */
-.ey-table thead tr {
+/* Header — 2px ink rule under the whole row, flush-left first cell. */
+.ey-table.p-datatable .p-datatable-thead > tr > th {
+  background: transparent;
+  border: none;
   border-bottom: 2px solid var(--ink);
-}
-.ey-table th {
   padding: 6px 12px 9px 0;
   font-size: 11px;
   font-weight: 700;
@@ -53,23 +107,40 @@ defineProps({
   text-align: left;
   white-space: nowrap;
 }
-.ey-table th:first-child { padding-left: 0; }
-.ey-table th.ta-right { text-align: right; }
+.ey-table.p-datatable .p-datatable-thead > tr > th:first-child { padding-left: 0; }
+.ey-table.p-datatable .p-datatable-thead > tr > th.ey-th-right { text-align: right; }
+.ey-table.p-datatable .p-datatable-thead > tr > th.ey-th-right .p-column-header-content { justify-content: flex-end; }
 
-/* Row defaults */
-.ey-table tbody tr { border-bottom: 1px solid var(--surface-border-row); }
-.ey-table tbody tr:last-child { border-bottom: none; }
-.ey-table tbody tr:hover { background: var(--surface-hover); }
+/* Rows — 1px divider, warm hover. */
+.ey-table.p-datatable .p-datatable-tbody > tr {
+  background: transparent;
+  border-bottom: 1px solid var(--surface-border-row);
+  transition: background 0.12s;
+}
+.ey-table.p-datatable .p-datatable-tbody > tr:last-child { border-bottom: none; }
+.ey-table:not(.ey-table--no-hover).p-datatable .p-datatable-tbody > tr:not(.p-datatable-row-expansion):hover {
+  background: var(--surface-hover);
+}
 
-/* Cell defaults */
-.ey-table td {
+/* Cells — flush-left first cell, right-align opt-in. */
+.ey-table.p-datatable .p-datatable-tbody > tr > td {
+  background: inherit;
+  border: none;
   padding: 10px 12px 10px 0;
   font-size: 12.5px;
   vertical-align: middle;
+  color: var(--text-color);
 }
-.ey-table td:first-child { padding-left: 0; }
-.ey-table td.ta-right { text-align: right; }
+.ey-table.p-datatable .p-datatable-tbody > tr > td:first-child { padding-left: 0; }
+.ey-table.p-datatable .p-datatable-tbody > tr > td.ey-td-right { text-align: right; }
 
-/* Opt-out of row hover (e.g. customize expand rows) */
-.ey-table tbody tr.no-hover:hover { background: transparent; }
+/* Expansion row — let the slot content own its own padding/background. */
+.ey-table.p-datatable .p-datatable-tbody > tr.p-datatable-row-expansion > td {
+  padding: 0;
+  border-bottom: 1px solid var(--surface-border-row);
+}
+.ey-table.p-datatable .p-datatable-tbody > tr.p-datatable-row-expansion:hover { background: transparent; }
+
+/* Empty message cell — no flush-left inset. */
+.ey-table.p-datatable .p-datatable-tbody > tr.p-datatable-emptymessage > td { padding: 0; }
 </style>

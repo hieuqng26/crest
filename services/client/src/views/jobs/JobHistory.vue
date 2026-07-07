@@ -96,17 +96,30 @@ const topLevelRows = computed(() => {
 
 // ── Table columns (checkbox injected when select mode is on) ──────────────────
 const tableColumns = computed(() => [
-  ...(selectMode.value ? [{ label: '', width: '36px' }] : []),
-  { label: 'RUN' },
-  { label: 'TYPE',     width: '90px' },
-  { label: 'INPUT' },
-  { label: 'STATUS',   width: '125px' },
-  { label: 'PROGRESS', width: '150px' },
-  { label: 'STARTED',  width: '140px' },
-  { label: 'FINISHED', width: '140px' },
-  { label: 'BY',       width: '70px' },
-  { label: '',         width: '40px', align: 'right' },
+  ...(selectMode.value ? [{ field: 'check', label: '', width: '36px', hideHeader: true }] : []),
+  { field: 'run', label: 'RUN' },
+  { field: 'type', label: 'TYPE',     width: '90px' },
+  { field: 'input', label: 'INPUT' },
+  { field: 'status', label: 'STATUS',   width: '125px' },
+  { field: 'progress', label: 'PROGRESS', width: '150px' },
+  { field: 'started', label: 'STARTED',  width: '140px' },
+  { field: 'finished', label: 'FINISHED', width: '140px' },
+  { field: 'by', label: 'BY',       width: '70px' },
+  { field: 'actions', label: '',         width: '40px', align: 'right' },
 ])
+
+// Fields shared by workflow/job rows, resolved once per row so cell slots stay
+// terse instead of repeating the workflow?wf:job ternary everywhere.
+const rowName      = (row) => (row.type === 'workflow' ? row.wf.name : row.job.name)
+const rowRunId     = (row) => (row.type === 'workflow' ? row.wf.run_id : row.job.run_id)
+const rowStatus    = (row) => (row.type === 'workflow' ? row.wf.status : row.job.status)
+const rowStarted   = (row) => (row.type === 'workflow' ? row.wf.started_at : row.job.started_at)
+const rowFinished  = (row) => (row.type === 'workflow' ? row.wf.finished_at : row.job.finished_at)
+const rowBy        = (row) => (row.type === 'workflow' ? row.wf.triggered_by : row.job.triggered_by)
+const rowIsActive  = (row) =>
+  (row.type === 'workflow' && row.wf.analysis_summary?.is_active) ||
+  (row.type === 'job' && row.job.kind === KIND.ANALYSIS && row.job.raw.is_active)
+const rowMenu      = (row) => (row.type === 'workflow' ? buildWorkflowMenu(row.wf) : buildJobMenu(row.job))
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 const openJob      = (j)  => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
@@ -359,106 +372,110 @@ async function deleteJob(j) {
     <div class="showing-line">Showing {{ topLevelRows.length }} of {{ workflows.length + standaloneJobs.length }} runs</div>
 
     <div class="panel">
-      <BaseTable :columns="tableColumns">
+      <BaseTable
+        :columns="tableColumns"
+        :value="topLevelRows"
+        dataKey="key"
+        :rowClass="(row) => ({
+          'jh-row': true,
+          'jh-row--workflow': row.type === 'workflow',
+          'jh-row--selected': isSelected(row.key),
+        })"
+        @row-click="clickRow"
+      >
+        <!-- Select-all checkbox header -->
+        <template v-if="selectMode" #header-check>
+          <span class="ey-cb" :class="{ 'is-checked': allSelected }" @click.stop="toggleSelectAll">
+            <i v-if="allSelected" class="pi pi-check ey-cb-icon" />
+          </span>
+        </template>
 
-        <!-- Checkbox header cell (injected when select mode) is part of columns → rendered by BaseTable -->
+        <template #empty>
+          <div v-if="!loading" class="empty-state">
+            <i class="pi pi-inbox" />
+            <p>No runs match your filters.</p>
+          </div>
+        </template>
 
-        <tr
-          v-for="row in topLevelRows"
-          :key="row.key"
-          class="jh-row"
-          :class="{
-            'jh-row--workflow': row.type === 'workflow',
-            'jh-row--selected': isSelected(row.key),
-          }"
-          @click="clickRow(row)"
-        >
-          <!-- Select checkbox -->
-          <td v-if="selectMode" class="td-check" @click.stop="toggleSelect(row.key)">
+        <!-- Select checkbox -->
+        <template #cell-check="{ row }">
+          <span class="td-check" @click.stop="toggleSelect(row.key)">
             <span class="ey-cb" :class="{ 'is-checked': isSelected(row.key) }">
               <i v-if="isSelected(row.key)" class="pi pi-check ey-cb-icon" />
             </span>
-          </td>
+          </span>
+        </template>
 
-          <!-- RUN: name + uuid -->
-          <td>
-            <div class="run-name">
-              <span class="run-name-text">{{ row.type === 'workflow' ? row.wf.name : row.job.name }}</span>
-              <span
-                v-if="(row.type === 'workflow' && row.wf.analysis_summary?.is_active) ||
-                      (row.type === 'job' && row.job.kind === KIND.ANALYSIS && row.job.raw.is_active)"
-                class="active-badge"
-              >ACTIVE</span>
+        <!-- RUN: name + uuid -->
+        <template #cell-run="{ row }">
+          <div class="run-name">
+            <span class="run-name-text">{{ rowName(row) }}</span>
+            <span v-if="rowIsActive(row)" class="active-badge">ACTIVE</span>
+          </div>
+          <div class="run-id font-mono">{{ rowRunId(row) }}</div>
+        </template>
+
+        <!-- TYPE -->
+        <template #cell-type="{ row }">
+          <span class="type-tag" :class="row.type === 'workflow' ? 'type-tag--auto' : ''">
+            {{ row.type === 'workflow' ? 'AUTO' : 'MANUAL' }}
+          </span>
+        </template>
+
+        <!-- INPUT -->
+        <template #cell-input="{ row }">
+          <span class="font-mono cell-secondary">{{ row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref }}</span>
+        </template>
+
+        <!-- STATUS -->
+        <template #cell-status="{ row }">
+          <StatusDot :status="rowStatus(row)" />
+        </template>
+
+        <!-- PROGRESS -->
+        <template #cell-progress="{ row }">
+          <template v-if="row.type === 'workflow'">
+            <div v-if="row.wf.status === 'running'" class="progress-row">
+              <div class="progress-track"><div class="progress-fill" style="width:50%" /></div>
             </div>
-            <div class="run-id font-mono">{{ row.type === 'workflow' ? row.wf.run_id : row.job.run_id }}</div>
-          </td>
+            <span v-else class="progress-label">{{ workflowProgressLabel(row.wf) }}</span>
+          </template>
+          <template v-else>
+            <div v-if="row.job.status === 'running'" class="progress-row">
+              <div class="progress-track"><div class="progress-fill" :style="{ width: row.job.progress + '%' }" /></div>
+              <span class="font-mono progress-pct">{{ row.job.progress }}%</span>
+            </div>
+            <span v-else class="progress-label">{{ progressLabel(row.job) }}</span>
+          </template>
+        </template>
 
-          <!-- TYPE -->
-          <td>
-            <span class="type-tag" :class="row.type === 'workflow' ? 'type-tag--auto' : ''">
-              {{ row.type === 'workflow' ? 'AUTO' : 'MANUAL' }}
-            </span>
-          </td>
+        <!-- STARTED -->
+        <template #cell-started="{ row }">
+          <span class="font-mono cell-secondary">{{ rowStarted(row) ? fmtDate(rowStarted(row)) : '—' }}</span>
+        </template>
 
-          <!-- INPUT -->
-          <td class="font-mono cell-secondary">
-            {{ row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref }}
-          </td>
+        <!-- FINISHED -->
+        <template #cell-finished="{ row }">
+          <span class="font-mono cell-secondary">{{ rowFinished(row) ? fmtDate(rowFinished(row)) : '—' }}</span>
+        </template>
 
-          <!-- STATUS -->
-          <td><StatusDot :status="row.type === 'workflow' ? row.wf.status : row.job.status" /></td>
+        <!-- BY -->
+        <template #cell-by="{ row }">
+          <span class="cell-secondary">{{ rowBy(row)?.split('@')[0] ?? '—' }}</span>
+        </template>
 
-          <!-- PROGRESS -->
-          <td>
-            <template v-if="row.type === 'workflow'">
-              <div v-if="row.wf.status === 'running'" class="progress-row">
-                <div class="progress-track"><div class="progress-fill" style="width:50%" /></div>
-              </div>
-              <span v-else class="progress-label">{{ workflowProgressLabel(row.wf) }}</span>
-            </template>
-            <template v-else>
-              <div v-if="row.job.status === 'running'" class="progress-row">
-                <div class="progress-track"><div class="progress-fill" :style="{ width: row.job.progress + '%' }" /></div>
-                <span class="font-mono progress-pct">{{ row.job.progress }}%</span>
-              </div>
-              <span v-else class="progress-label">{{ progressLabel(row.job) }}</span>
-            </template>
-          </td>
-
-          <!-- STARTED -->
-          <td class="font-mono cell-secondary">
-            {{ (row.type === 'workflow' ? row.wf.started_at : row.job.started_at) ? fmtDate(row.type === 'workflow' ? row.wf.started_at : row.job.started_at) : '—' }}
-          </td>
-
-          <!-- FINISHED -->
-          <td class="font-mono cell-secondary">
-            {{ (row.type === 'workflow' ? row.wf.finished_at : row.job.finished_at) ? fmtDate(row.type === 'workflow' ? row.wf.finished_at : row.job.finished_at) : '—' }}
-          </td>
-
-          <!-- BY -->
-          <td class="cell-secondary">
-            {{ (row.type === 'workflow' ? row.wf.triggered_by : row.job.triggered_by)?.split('@')[0] ?? '—' }}
-          </td>
-
-          <!-- ACTIONS -->
-          <td class="ta-right" @click.stop>
+        <!-- ACTIONS -->
+        <template #cell-actions="{ row }">
+          <span @click.stop>
             <button
               class="action-btn"
-              :class="{ 'is-busy': busy === (row.type === 'workflow' ? row.wf.run_id : row.job.run_id) }"
-              @click="openMenu($event, row.type === 'workflow' ? buildWorkflowMenu(row.wf) : buildJobMenu(row.job))"
+              :class="{ 'is-busy': busy === rowRunId(row) }"
+              @click="openMenu($event, rowMenu(row))"
             >
               <i class="pi pi-ellipsis-v" />
             </button>
-          </td>
-        </tr>
-
-        <!-- Empty state -->
-        <tr v-if="!loading && topLevelRows.length === 0" class="no-hover">
-          <td :colspan="tableColumns.length" class="empty-state">
-            <i class="pi pi-inbox" />
-            <p>No runs match your filters.</p>
-          </td>
-        </tr>
+          </span>
+        </template>
       </BaseTable>
     </div>
 
@@ -510,10 +527,8 @@ async function deleteJob(j) {
   padding: 0 16px 4px;
 }
 
-/* Row variants */
-.jh-row { cursor: pointer; }
-.jh-row--workflow { background: var(--surface-inset); }
-.jh-row--selected { background: color-mix(in srgb, var(--yellow) 8%, transparent) !important; }
+/* Row variants — these target the <tr> rendered by BaseTable, so they live in
+   the unscoped block below, not here. */
 
 /* Checkbox cell */
 .td-check { width: 36px; }
@@ -596,4 +611,13 @@ async function deleteJob(j) {
 .menu-item { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--text-color); text-decoration: none; }
 .menu-item:hover { background: var(--surface-hover); }
 .menu-item.menu-item-danger { color: var(--red-500, #ef4444); }
+
+/* Row variants — target the <tr> BaseTable renders (out of this component's
+   scoped reach). Override BaseTable's base row background/hover. */
+.ey-table.p-datatable .p-datatable-tbody > tr.jh-row { cursor: pointer; }
+.ey-table.p-datatable .p-datatable-tbody > tr.jh-row--workflow { background: var(--surface-inset); }
+.ey-table.p-datatable .p-datatable-tbody > tr.jh-row--selected,
+.ey-table.p-datatable .p-datatable-tbody > tr.jh-row--selected:hover {
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+}
 </style>

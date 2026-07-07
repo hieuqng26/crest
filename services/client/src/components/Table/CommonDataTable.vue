@@ -6,14 +6,17 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 // page/sort/filter change round-trips through `fetchPage` — the caller owns
 // the actual API call, this component only owns table state + rendering.
 //
-// Search/filters/sort live in a toolbar above the table (not per-column, per
-// design.md) and are staged: editing them doesn't fetch anything until
-// "Apply" is clicked, so typing a search term or picking several filter
-// values doesn't fire a request per keystroke/click. Column filters are a
-// text "contains" input by default, or a searchable multi-select when the
-// column has <= categoricalThreshold distinct values — see resolveFilterKinds().
+// Search/filters/sort live in a PrimeVue Toolbar above the table (not
+// per-column, per design.md) and are staged: editing them doesn't fetch
+// anything until "Apply" is clicked, so typing a search term or picking
+// several filter values doesn't fire a request per keystroke/click. The
+// "Filters" button toggles an inline filter strip (inset background, labeled
+// dropdowns). A column's filter is a text "contains" input by default, or a
+// searchable multi-select when it has <= categoricalThreshold distinct values
+// — see resolveFilterKinds().
 const props = defineProps({
-  // [{ field, header, sortable=true, filterable=true, width, hidden=false, formatter?(value, row) }]
+  // [{ field, header, sortable=true, filterable=true, width, hidden=false,
+  //    align?: 'left'|'right'|'center', mono?: boolean, formatter?(value, row) }]
   columns: { type: Array, required: true },
   // ({ page, pageSize, sortColumn, sortOrder, filters }) => Promise<AxiosResponse<{ rows, total }>>
   // matches the toPageParams()-shaped `@/api/*` wrappers — pass one directly,
@@ -22,6 +25,9 @@ const props = defineProps({
   // (field) => Promise<AxiosResponse<{ values, truncated }>>
   fetchDistinct: { type: Function, default: null },
   rowKey: { type: String, default: null },
+  // Optional card header shown above the toolbar (design.png style).
+  title: { type: String, default: null },
+  caption: { type: String, default: null }, // falls back to "<total> rows" when title is set
   pageSizeOptions: { type: Array, default: () => [20, 50, 100, 250] },
   initialPageSize: { type: Number, default: 50 },
   categoricalThreshold: { type: Number, default: 30 },
@@ -60,6 +66,12 @@ const visibleColumns = computed(() => props.columns.filter((c) => !c.hidden))
 const filterableColumns = computed(() => visibleColumns.value.filter((c) => c.filterable !== false))
 const sortableColumns = computed(() => visibleColumns.value.filter((c) => c.sortable !== false))
 const sortOptions = computed(() => sortableColumns.value.map((c) => ({ label: c.header || c.field, value: c.field })))
+
+const resolvedCaption = computed(() => {
+  if (props.caption) return props.caption
+  if (props.title) return `${totalRecords.value.toLocaleString()} rows`
+  return null
+})
 
 function syncFilterDrafts() {
   for (const col of filterableColumns.value) {
@@ -163,8 +175,12 @@ function onPage(e) {
   loadPage()
 }
 
-const filtersPanel = ref(null)
-const toggleFiltersPanel = (e) => filtersPanel.value.toggle(e)
+// Inline filter strip (design.png): toggled by the "Filters" toolbar button.
+const showFilters = ref(false)
+const hasFilterStrip = computed(() => filterableColumns.value.length > 0)
+function toggleFilters() {
+  showFilters.value = !showFilters.value
+}
 
 function applyToolbar() {
   sortField.value = sortFieldDraft.value
@@ -190,13 +206,28 @@ function cellValue(col, data) {
   return raw === null || raw === undefined || raw === '' ? '—' : raw
 }
 
-// ── Download: fetch up to `downloadRowCount` rows (reflecting the currently
+function bodyClass(col) {
+  return [
+    'cdt-cell',
+    col.align === 'right' && 'cdt-cell--right',
+    col.align === 'center' && 'cdt-cell--center',
+    col.mono && 'cdt-cell--mono'
+  ].filter(Boolean)
+}
+
+function headerClass(col) {
+  return [
+    col.align === 'right' && 'cdt-th--right',
+    col.align === 'center' && 'cdt-th--center'
+  ].filter(Boolean)
+}
+
+// ── Download: fetch up to `maxDownloadRows` rows (reflecting the currently
 // APPLIED search/filters/sort, not unapplied toolbar drafts) and save as CSV.
-const downloadRowCount = ref(100)
 const downloading = ref(false)
 
 async function downloadCsv() {
-  const target = Math.max(1, Math.min(props.maxDownloadRows, Math.floor(downloadRowCount.value) || 1))
+  const target = Math.max(1, Math.floor(props.maxDownloadRows) || 1)
   downloading.value = true
   try {
     const collected = []
@@ -249,81 +280,89 @@ onMounted(loadPage)
 
 <template>
   <div class="cdt-wrap">
-    <div class="cdt-toolbar">
-      <IconField class="cdt-search" iconPosition="left">
-        <InputIcon class="pi pi-search" />
-        <InputText v-model="searchDraft" placeholder="Search…" class="w-full" @keyup.enter="applyToolbar" />
-      </IconField>
-
-      <Button
-        :label="activeFilterCount > 0 ? `Filters (${activeFilterCount})` : 'Filters'"
-        icon="pi pi-sliders-h"
-        severity="secondary"
-        outlined
-        size="small"
-        @click="toggleFiltersPanel"
-      />
-
-      <EySelect
-        v-model="sortFieldDraft"
-        :options="sortOptions"
-        optionLabel="label"
-        optionValue="value"
-        placeholder="Sort by…"
-        showClear
-        class="cdt-sort-drop"
-      />
-      <ToggleButton
-        v-model="sortDescDraft"
-        onLabel=""
-        offLabel=""
-        onIcon="pi pi-sort-amount-down"
-        offIcon="pi pi-sort-amount-up"
-        :disabled="!sortFieldDraft"
-        v-tooltip.top="sortDescDraft ? 'Descending' : 'Ascending'"
-        class="cdt-sort-toggle"
-      />
-
-      <Button label="Apply" size="small" @click="applyToolbar" />
-      <Button label="Reset" text size="small" severity="secondary" @click="resetToolbar" />
-
-      <div class="cdt-toolbar-spacer" />
-
-      <div class="cdt-download">
-        <InputNumber v-model="downloadRowCount" :min="1" :max="maxDownloadRows" showButtons class="cdt-download-input" inputClass="cdt-download-input-field" />
-        <Button label="Download" icon="pi pi-download" size="small" severity="secondary" outlined :loading="downloading" @click="downloadCsv" />
-      </div>
+    <div v-if="title" class="cdt-header">
+      <span class="cdt-title">{{ title }}</span>
+      <span v-if="resolvedCaption" class="cdt-caption">{{ resolvedCaption }}</span>
     </div>
 
-    <OverlayPanel ref="filtersPanel" class="cdt-filters-panel">
-      <div class="cdt-filters-panel-inner">
-        <div v-for="col in filterableColumns" :key="col.field" class="cdt-filter-row">
-          <div class="cdt-filter-row-label">{{ col.header || col.field }}</div>
-          <EySelect
-            v-if="columnFilterKind[col.field] === 'categorical'"
-            v-model="filterDrafts[col.field]"
-            :options="distinctOptions[col.field]"
-            :filter="true"
-            placeholder="Any value"
-            :multiple="true"
-            class="cdt-filter-multiselect"
-          />
-          <InputText
-            v-else
-            v-model="filterDrafts[col.field]"
-            type="text"
-            class="cdt-filter-text"
-            placeholder="Contains…"
-            @keyup.enter="applyToolbar"
-          />
-        </div>
-        <div v-if="!filterableColumns.length" class="text-xs text-color-secondary">No filterable columns.</div>
-        <div class="cdt-filters-panel-actions">
-          <Button label="Reset" text size="small" severity="secondary" @click="resetToolbar" />
-          <Button label="Apply" size="small" @click="applyToolbar(); filtersPanel.hide()" />
-        </div>
+    <Toolbar class="cdt-toolbar">
+      <template #start>
+        <IconField class="cdt-search" iconPosition="left">
+          <InputIcon class="pi pi-search" />
+          <InputText v-model="searchDraft" placeholder="Search…" class="w-full" @keyup.enter="applyToolbar" />
+        </IconField>
+
+        <Button
+          v-if="hasFilterStrip"
+          :label="activeFilterCount > 0 ? `Filters (${activeFilterCount})` : 'Filters'"
+          icon="pi pi-sliders-h"
+          class="cdt-btn-dark"
+          :class="{ 'cdt-btn-active': showFilters }"
+          @click="toggleFilters"
+        />
+
+        <EySelect
+          v-model="sortFieldDraft"
+          :options="sortOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Sort by…"
+          showClear
+          class="cdt-sort-drop"
+        />
+        <ToggleButton
+          v-model="sortDescDraft"
+          onLabel=""
+          offLabel=""
+          onIcon="pi pi-sort-amount-down"
+          offIcon="pi pi-sort-amount-up"
+          :disabled="!sortFieldDraft"
+          v-tooltip.top="sortDescDraft ? 'Descending' : 'Ascending'"
+          class="cdt-sort-toggle"
+        />
+
+        <Button label="Apply" class="cdt-btn-dark" @click="applyToolbar" />
+        <Button label="Reset" text class="cdt-btn-reset" @click="resetToolbar" />
+      </template>
+
+      <template #end>
+        <Button
+          label="Download"
+          icon="pi pi-download"
+          class="cdt-btn-outline"
+          :loading="downloading"
+          @click="downloadCsv"
+        />
+      </template>
+    </Toolbar>
+
+    <div v-if="hasFilterStrip && showFilters" class="cdt-filter-strip">
+      <div v-for="col in filterableColumns" :key="col.field" class="cdt-filter-field">
+        <span class="cdt-filter-label">{{ col.header || col.field }}</span>
+        <EySelect
+          v-if="columnFilterKind[col.field] === 'categorical'"
+          v-model="filterDrafts[col.field]"
+          :options="distinctOptions[col.field]"
+          :filter="true"
+          :multiple="true"
+          showToggleAll
+          placeholder="All"
+          class="cdt-filter-control"
+        />
+        <InputText
+          v-else
+          v-model="filterDrafts[col.field]"
+          type="text"
+          class="cdt-filter-control cdt-filter-text"
+          placeholder="Contains…"
+          @keyup.enter="applyToolbar"
+        />
       </div>
-    </OverlayPanel>
+      <div class="cdt-filter-actions">
+        <Button label="Reset" text class="cdt-btn-reset" @click="resetToolbar" />
+        <Button label="Apply" class="cdt-btn-dark" @click="applyToolbar" />
+      </div>
+    </div>
 
     <div v-if="error" class="cdt-error">
       <i class="pi pi-exclamation-triangle" />
@@ -350,7 +389,7 @@ onMounted(loadPage)
       @page="onPage"
     >
       <template #empty>
-        <div class="text-center py-5 text-color-secondary text-sm">{{ emptyMessage }}</div>
+        <div class="cdt-empty">{{ emptyMessage }}</div>
       </template>
 
       <Column
@@ -359,11 +398,12 @@ onMounted(loadPage)
         :field="col.field"
         :header="col.header"
         :sortable="false"
+        :headerClass="headerClass(col)"
         :style="{ minWidth: col.width || '10rem' }"
       >
         <template #body="slotProps">
           <slot :name="`cell-${col.field}`" v-bind="slotProps">
-            <span class="cdt-cell">{{ cellValue(col, slotProps.data) }}</span>
+            <span :class="bodyClass(col)">{{ cellValue(col, slotProps.data) }}</span>
           </slot>
         </template>
       </Column>
@@ -372,175 +412,234 @@ onMounted(loadPage)
 </template>
 
 <style scoped>
-.cdt-toolbar {
+.cdt-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Card header (title + caption) ─────────────────────────────────────────── */
+.cdt-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.cdt-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-color);
+}
+.cdt-caption {
+  font-size: 12px;
+  color: var(--text-color-muted-2);
+}
+
+/* ── Toolbar ───────────────────────────────────────────────────────────────── */
+:deep(.cdt-toolbar.p-toolbar) {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin-bottom: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+:deep(.cdt-toolbar .p-toolbar-group-start),
+:deep(.cdt-toolbar .p-toolbar-group-end) {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.85rem;
 }
 
 .cdt-search {
-  width: 16rem;
+  width: 260px;
+}
+:deep(.cdt-search .p-inputtext) {
+  height: 40px;
+  font-size: 13px;
 }
 
 .cdt-sort-drop {
-  width: 11rem;
-}
-:deep(.cdt-sort-drop .p-dropdown-label) {
-  font-size: 0.82rem;
+  width: 150px;
 }
 
-.cdt-sort-toggle {
-  height: 2.35rem;
-  width: 2.35rem;
+/* Dark ink buttons (Filters, Apply) — matches the primary-button treatment. */
+:deep(.cdt-btn-dark.p-button) {
+  height: 40px;
+  font-size: 13px;
+  font-weight: 600;
+}
+:deep(.cdt-btn-active.p-button) {
+  box-shadow: 0 0 0 2px var(--yellow);
+}
+
+:deep(.cdt-btn-reset.p-button) {
+  height: 40px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color-muted);
+}
+:deep(.cdt-btn-reset.p-button:hover) {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+:deep(.cdt-btn-outline.p-button) {
+  height: 40px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border-input);
+  color: var(--text-color);
+}
+:deep(.cdt-btn-outline.p-button:hover) {
+  background: var(--surface-hover);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+:deep(.cdt-btn-outline .p-button-icon) {
+  color: var(--text-color-muted);
+}
+
+/* Sort direction toggle — dark square icon button. */
+:deep(.cdt-sort-toggle.p-togglebutton) {
+  height: 40px;
+  width: 44px;
   padding: 0;
+  background: var(--button-primary-bg);
+  border: 1px solid var(--button-primary-bg);
+  color: #fff;
+  border-radius: 2px;
+}
+:deep(.cdt-sort-toggle.p-togglebutton.p-highlight),
+:deep(.cdt-sort-toggle.p-togglebutton:not(.p-disabled):hover) {
+  background: var(--button-primary-hover);
+  border-color: var(--button-primary-hover);
+  color: #fff;
+}
+:deep(.cdt-sort-toggle .p-button-icon) {
+  color: var(--yellow);
+  font-size: 14px;
+}
+:deep(.cdt-sort-toggle.p-disabled) {
+  opacity: 0.4;
 }
 
-.cdt-toolbar-spacer {
-  flex: 1 1 auto;
+/* ── Inline filter strip ───────────────────────────────────────────────────── */
+.cdt-filter-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--surface-inset);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
 }
-
-.cdt-download {
+.cdt-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 170px;
+}
+.cdt-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-color-muted);
+}
+.cdt-filter-control {
+  width: 100%;
+}
+:deep(.cdt-filter-text.p-inputtext) {
+  height: 40px;
+  font-size: 13px;
+}
+.cdt-filter-actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding-left: 0.75rem;
-  border-left: 1px solid var(--surface-border);
+  gap: 8px;
+  margin-left: auto;
 }
 
-.cdt-download-input {
-  width: 6.5rem;
-}
-:deep(.cdt-download-input-field) {
-  width: 100%;
-  font-size: 0.82rem;
-  padding: 0.4rem 0.5rem;
-}
-
+/* ── Error banner ──────────────────────────────────────────────────────────── */
 .cdt-error {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.9rem;
-  margin-bottom: 0.75rem;
-  border: 1px solid #f87171;
-  border-radius: var(--radius-md, 8px);
-  color: #f87171;
-  font-size: 0.82rem;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--error-color, #c4331d);
+  border-radius: 2px;
+  color: var(--error-text-color, #a32b18);
+  font-size: 13px;
 }
 
+/* ── Table body cells ──────────────────────────────────────────────────────── */
 .cdt-cell {
   white-space: pre-wrap;
-  font-size: 0.82rem;
+  font-size: 13px;
+  color: var(--text-color);
+}
+.cdt-cell--right {
+  display: block;
+  text-align: right;
+}
+.cdt-cell--center {
+  display: block;
+  text-align: center;
+}
+.cdt-cell--mono {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
 }
 
+.cdt-empty {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text-color-muted-2);
+  font-size: 13px;
+}
+
+/* ── Table chrome (header rule, dividers, hover) ───────────────────────────── */
 :deep(.cdt-table .p-datatable-thead > tr > th) {
-  background: var(--surface-ground);
-  color: var(--text-color-secondary);
-  font-weight: 500;
-  font-size: 0.7rem;
+  background: var(--surface-card);
+  color: var(--text-color-muted);
+  font-weight: 700;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.07em;
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 0.85rem;
+  border-bottom: 2px solid var(--ink);
+  padding: 12px 16px;
+}
+:deep(.cdt-table .p-datatable-thead > tr > th.cdt-th--right .p-column-header-content) {
+  justify-content: flex-end;
+}
+:deep(.cdt-table .p-datatable-thead > tr > th.cdt-th--center .p-column-header-content) {
+  justify-content: center;
 }
 
 :deep(.cdt-table .p-datatable-tbody > tr > td) {
   border: 0;
-  border-bottom: 1px solid var(--surface-border);
-  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--surface-border-row);
+  padding: 11px 16px;
 }
-
 :deep(.cdt-table .p-datatable-tbody > tr:last-child > td) {
   border-bottom: 0;
 }
-
 :deep(.cdt-table .p-datatable-tbody > tr:hover > td) {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.03));
+  background: var(--surface-hover);
 }
 
 :deep(.cdt-table .p-paginator) {
   border: 0;
-  border-top: 1px solid var(--surface-border);
+  border-top: 1px solid var(--surface-border-row);
   background: transparent;
-}
-</style>
-
-<!--
-  Unscoped: the OverlayPanel's content is teleported out of this component's
-  DOM subtree via <Portal>, so scoped/:deep() selectors can't reach it —
-  there's no scoped ancestor left in the actual DOM tree once teleported.
-  `.cdt-filters-panel`/`.cdt-filter-*` are component-specific classes, so this
-  stays safely scoped in practice despite not being Vue-scoped.
--->
-<style>
-.cdt-filters-panel {
-  max-width: 22rem;
-}
-.cdt-filters-panel .p-overlaypanel-content {
-  padding: 0.9rem;
-}
-.cdt-filters-panel-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-.cdt-filter-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-.cdt-filter-row-label {
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-color-secondary);
-}
-.cdt-filter-text,
-.cdt-filter-multiselect {
-  width: 100%;
-  height: 2.15rem;
-  font-size: 0.82rem;
-  border: 1px solid var(--surface-border);
-  background: var(--surface-ground);
-  border-radius: var(--radius-sm, 6px);
-  box-shadow: none;
-}
-.cdt-filter-text:focus,
-.cdt-filter-multiselect.p-focus {
-  background: var(--surface-card);
-  border-color: var(--primary-color);
-  box-shadow: none;
-}
-.cdt-filter-multiselect .p-multiselect-label {
-  padding: 0.35rem 0.6rem;
-  font-size: 0.82rem;
-  color: var(--text-color);
-}
-.cdt-filter-multiselect .p-multiselect-label.p-placeholder {
-  color: var(--text-color-secondary);
-}
-.cdt-filter-multiselect .p-multiselect-trigger {
-  width: 1.75rem;
-  color: var(--text-color-secondary);
-}
-.cdt-filter-multiselect .p-multiselect-token {
-  padding: 0.05rem 0.45rem;
-  font-size: 0.72rem;
-  background: var(--surface-200, var(--surface-border));
-  border-radius: 999px;
-}
-.cdt-filters-panel-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  margin-top: 0.2rem;
-  padding-top: 0.6rem;
-  border-top: 1px solid var(--surface-border);
+  padding-top: 12px;
 }
 </style>

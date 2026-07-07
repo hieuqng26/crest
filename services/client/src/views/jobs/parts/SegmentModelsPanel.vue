@@ -45,12 +45,12 @@ const filtered = computed(() => {
 const fmtMetric = (v) => (v == null ? '—' : Number(v).toFixed(4))
 
 const SEG_COLS = [
-  { label: 'SEGMENT' },
-  { label: 'N', align: 'right', width: '70px' },
-  { label: 'R²', align: 'right', width: '90px' },
-  { label: 'RMSE', align: 'right', width: '90px' },
-  { label: 'STATUS', width: '130px' },
-  { label: 'ACTION', align: 'right', width: '110px' },
+  { field: 'segment', label: 'SEGMENT' },
+  { field: 'n', label: 'N', align: 'right', width: '70px' },
+  { field: 'r2', label: 'R²', align: 'right', width: '90px' },
+  { field: 'rmse', label: 'RMSE', align: 'right', width: '90px' },
+  { field: 'status', label: 'STATUS', width: '130px' },
+  { field: 'action', label: 'ACTION', align: 'right', width: '110px' },
 ]
 
 // ── customize panel ─────────────────────────────────────────────────────────
@@ -83,6 +83,13 @@ const toggleCustomize = (seg) => {
 
 const cancelCustomize = () => { customizingKey.value = null }
 
+// PrimeVue DataTable expects the expanded *row objects*; derive them from the
+// single open segment key (only one customize panel is open at a time).
+const expandedRows = computed(() => {
+  const seg = filtered.value.find((s) => s.segment_key === customizingKey.value)
+  return seg ? [seg] : []
+})
+
 const rerunSegment = async (seg) => {
   submitting.value = true
   try {
@@ -111,69 +118,81 @@ const rerunSegment = async (seg) => {
       <InputText v-model="search" placeholder="Search segments…" class="segments-search" />
     </div>
 
-    <BaseTable :columns="SEG_COLS">
-      <tr v-if="!loading && filtered.length === 0" class="no-hover">
-        <td colspan="6" class="empty-state">
+    <BaseTable
+      :columns="SEG_COLS"
+      :value="filtered"
+      dataKey="segment_key"
+      :expandedRows="expandedRows"
+      :rowClass="(seg) => customizingKey === seg.segment_key ? 'seg-row--open' : ''"
+    >
+      <template #empty>
+        <div v-if="!loading" class="empty-state">
           <i class="pi pi-th-large" />
           <p>No segment results yet.</p>
-        </td>
-      </tr>
-      <template v-for="seg in filtered" :key="seg.segment_key">
-        <tr class="seg-row" :class="{ 'seg-row--open': customizingKey === seg.segment_key }">
-          <td class="seg-name-cell">
-            <div class="seg-sector">{{ seg.sector }}</div>
-            <div class="font-mono seg-value">{{ seg.split_value }}</div>
-          </td>
-          <td class="font-mono ta-right">{{ seg.row_count ?? '—' }}</td>
-          <td class="font-mono ta-right seg-r2">{{ fmtMetric(seg.train_metrics?.r2) }}</td>
-          <td class="font-mono ta-right seg-rmse">{{ fmtMetric(seg.train_metrics?.rmse) }}</td>
-          <td><StatusDot :status="seg.status === 'queued' || seg.status === 'running' ? 'running' : seg.status" :label="seg.status === 'queued' || seg.status === 'running' ? 'Re-training' : undefined" /></td>
-          <td class="ta-right">
-            <span
-              class="customize-link"
-              :class="{ 'is-disabled': seg.status === 'queued' || seg.status === 'running' }"
-              @click="!(seg.status === 'queued' || seg.status === 'running') && toggleCustomize(seg)"
-            >{{ customizingKey === seg.segment_key ? 'Close' : 'Customize' }}</span>
-          </td>
-        </tr>
-        <tr v-if="customizingKey === seg.segment_key" class="customize-row no-hover">
-          <td colspan="6" class="customize-cell">
-            <div class="customize-panel">
-              <div class="eyebrow customize-title">
-                CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
-              </div>
-              <div class="customize-fields">
-                <div class="field">
-                  <div class="font-mono field-label">algorithm</div>
-                  <div class="field-static">{{ seg.algorithm ?? '—' }}</div>
-                </div>
-                <div v-for="p in algoMeta(seg.algorithm)?.params ?? []" :key="p.name" class="field">
-                  <div class="font-mono field-label">{{ p.name }}</div>
-                  <InputText v-if="p.type === 'string'" v-model="hyperparamForm[p.name]" class="w-full field-input" />
-                  <InputNumber
-                    v-else-if="p.type === 'float' || p.type === 'int'"
-                    v-model="hyperparamForm[p.name]"
-                    :useGrouping="false"
-                    :minFractionDigits="p.type === 'float' ? 1 : 0"
-                    :maxFractionDigits="p.type === 'float' ? 6 : 0"
-                    class="w-full field-input"
-                    fluid
-                  />
-                  <InputSwitch v-else-if="p.type === 'bool'" v-model="hyperparamForm[p.name]" />
-                </div>
-              </div>
-              <div class="customize-footer">
-                <span class="customize-note">Only this segment is retrained — all other segment models are kept</span>
-                <div class="spacer" />
-                <Button label="Cancel" outlined class="btn-cancel-seg" @click="cancelCustomize" />
-                <Button class="btn-rerun-seg btn-cta" :loading="submitting" @click="rerunSegment(seg)">
-                  <span class="btn-play">▶</span>
-                  <span>Re-run segment</span>
-                </Button>
-              </div>
+        </div>
+      </template>
+
+      <template #cell-segment="{ row: seg }">
+        <div class="seg-name-cell">
+          <div class="seg-sector">{{ seg.sector }}</div>
+          <div class="font-mono seg-value">{{ seg.split_value }}</div>
+        </div>
+      </template>
+      <template #cell-n="{ row: seg }">
+        <span class="font-mono">{{ seg.row_count ?? '—' }}</span>
+      </template>
+      <template #cell-r2="{ row: seg }">
+        <span class="font-mono seg-r2">{{ fmtMetric(seg.train_metrics?.r2) }}</span>
+      </template>
+      <template #cell-rmse="{ row: seg }">
+        <span class="font-mono seg-rmse">{{ fmtMetric(seg.train_metrics?.rmse) }}</span>
+      </template>
+      <template #cell-status="{ row: seg }">
+        <StatusDot :status="seg.status === 'queued' || seg.status === 'running' ? 'running' : seg.status" :label="seg.status === 'queued' || seg.status === 'running' ? 'Re-training' : undefined" />
+      </template>
+      <template #cell-action="{ row: seg }">
+        <span
+          class="customize-link"
+          :class="{ 'is-disabled': seg.status === 'queued' || seg.status === 'running' }"
+          @click="!(seg.status === 'queued' || seg.status === 'running') && toggleCustomize(seg)"
+        >{{ customizingKey === seg.segment_key ? 'Close' : 'Customize' }}</span>
+      </template>
+
+      <template #expansion="{ row: seg }">
+        <div class="customize-panel">
+          <div class="eyebrow customize-title">
+            CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
+          </div>
+          <div class="customize-fields">
+            <div class="field">
+              <div class="font-mono field-label">algorithm</div>
+              <div class="field-static">{{ seg.algorithm ?? '—' }}</div>
             </div>
-          </td>
-        </tr>
+            <div v-for="p in algoMeta(seg.algorithm)?.params ?? []" :key="p.name" class="field">
+              <div class="font-mono field-label">{{ p.name }}</div>
+              <InputText v-if="p.type === 'string'" v-model="hyperparamForm[p.name]" class="w-full field-input" />
+              <InputNumber
+                v-else-if="p.type === 'float' || p.type === 'int'"
+                v-model="hyperparamForm[p.name]"
+                :useGrouping="false"
+                :minFractionDigits="p.type === 'float' ? 1 : 0"
+                :maxFractionDigits="p.type === 'float' ? 6 : 0"
+                class="w-full field-input"
+                fluid
+              />
+              <InputSwitch v-else-if="p.type === 'bool'" v-model="hyperparamForm[p.name]" />
+            </div>
+          </div>
+          <div class="customize-footer">
+            <span class="customize-note">Only this segment is retrained — all other segment models are kept</span>
+            <div class="spacer" />
+            <Button label="Cancel" outlined class="btn-cancel-seg" @click="cancelCustomize" />
+            <Button class="btn-rerun-seg btn-cta" :loading="submitting" @click="rerunSegment(seg)">
+              <span class="btn-play">▶</span>
+              <span>Re-run segment</span>
+            </Button>
+          </div>
+        </div>
       </template>
     </BaseTable>
   </div>
@@ -198,8 +217,6 @@ const rerunSegment = async (seg) => {
 .segments-search { width: 200px; height: 32px; font-size: 12.5px !important; }
 
 .seg-row--open { background: var(--surface-hover); }
-.ta-right { text-align: right; }
-.customize-cell { padding: 0 !important; }
 
 .seg-name-cell { display: flex; flex-direction: column; gap: 1px; }
 .seg-sector { font-size: 13px; font-weight: 600; }
@@ -267,4 +284,12 @@ const rerunSegment = async (seg) => {
 .empty-state { text-align: center; padding: 40px 0; color: var(--text-color-muted); vertical-align: middle; }
 .empty-state i { font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.6; }
 .empty-state p { margin: 0; }
+</style>
+
+<!-- Open-row highlight targets the <tr> BaseTable renders (out of scoped reach). -->
+<style>
+.ey-table.p-datatable .p-datatable-tbody > tr.seg-row--open,
+.ey-table.p-datatable .p-datatable-tbody > tr.seg-row--open:hover {
+  background: var(--surface-hover);
+}
 </style>

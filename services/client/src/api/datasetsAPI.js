@@ -36,6 +36,11 @@ const datasetsAPI = {
 
   columnStats: (id, target) => httpClient.get(`/datasets/${id}/column-stats`, { params: { target } }),
 
+  // Pearson correlation matrix over an arbitrary set of numeric columns.
+  // POST /api/datasets/:id/correlations  body: { columns: [...] }
+  // -> { columns: [...surviving numeric cols in order...], matrix: [[...]] }
+  correlations: (id, columns) => httpClient.post(`/datasets/${id}/correlations`, { columns }),
+
   // Rows endpoint — used by DatasetView via CommonDataTable's fetchPage
   // GET /api/datasets/:id/rows?page=&page_size=&sort_column=&sort_order=&filters=
   rows: (id, pageState) => httpClient.get(`/datasets/${id}/rows`, { params: toPageParams(pageState) }),

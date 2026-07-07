@@ -9,7 +9,7 @@ import {
   mode, resolvedDatasets, loadingDatasets, targetCols, selectedSectors, availableSectors, loadingSectors,
   configs, selectedConfigId, featureCols, targetOverrides, sectorOverrides, modelName, analysisParams,
   calibrationDataset, forecastDataset, creditDataset, financialDataset,
-  numericColumnOptions, featureOptions, selectedConfig, objectiveFor,
+  targetColumnOptions, featureOptions, selectedConfig, objectiveFor,
   analysisReady, missingAnalysisTargets, analysisDatasetsReady,
   fetchResolvedDatasets, fetchConfigs, fetchSectors, resetNewModelForm
 } from './newModelStore'
@@ -331,8 +331,8 @@ onUnmounted(() => { loaded = false })
       </div>
       <div class="field-label">Target columns</div>
       <EySelect
-        v-model="targetCols" :options="numericColumnOptions" placeholder="Select target columns"
-        :disabled="numericColumnOptions.length === 0" :multiple="true"
+        v-model="targetCols" :options="targetColumnOptions" placeholder="Select target columns"
+        :disabled="targetColumnOptions.length === 0" :multiple="true"
         class="w-full font-mono mb-3" :filter="true" :showToggleAll="true"
         :triggerLabel="targetCols.length ? targetsTriggerLabel : null"
       />
