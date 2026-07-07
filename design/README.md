@@ -1,23 +1,29 @@
-# Handoff: CREST UI Redesign v2 (EY-style)
+# Handoff: CREST UI Redesign v3 (EY-style)
 
 ## Overview
 Full visual redesign + IA restructure of CREST (Credit Risk & Economic Stress Testing), an ML platform for banks. The visual system is EY-style: black (#1A1A24), yellow (#FFE600), white/gray, squared corners, and a strict Archivo + IBM Plex Mono type pairing.
 
-**v2 restructures the modules around two user types** — insight-seekers and technical model owners:
+**v2 restructured the modules around two user types** — insight-seekers and technical model owners:
 - OVERVIEW: Dashboard
 - DATA: Datasets (+ Dataset View)
 - MODEL: New Model (Auto / Manual modes), Configurations, Model Results, Advanced Feature Selection
 - ANALYSIS: Heatmap, Financial Forecast, PD / LGD, IFRS 9 ECL, Transitions
-- JOBS: Job History (+ Job Detail with per-segment re-run)
+- JOBS: Job History (+ Workflow Job Detail with 4 result tabs, + single-target Job Detail with per-segment re-run)
 - SYSTEM: User Access Management, Role Management, Audit Logs
 Plus Login. The old Calibration/Forecast/Analysis-launch modules are consolidated: training launches from New Model; forecasts/analyses surface under Analysis; every run lands in Job History.
 
+**v3 redesigns the individual job views** to match the workflow-based backend (one workflow job trains + forecasts several target models, then runs credit analysis):
+- Job History gains a **WORKFLOW** job type (with its own filter chip). Workflow rows open the new **Workflow Job Detail**.
+- **Workflow Job Detail** has four tabs: Overview / Diagnosis & Backtesting / Forecast / Credit Results. Overview is a two-column layout (run details left, target-models table right) — the old "Credit analysis" block is removed (its content lives in the Credit Results tab).
+- **Single-target Job Detail** (per-segment re-run) is reached from the Overview target table; it links back with "← Back to workflow" and exposes "View diagnostics & backtesting" as a header action button. The "Re-run/Delete this run from its workflow" affordance is removed — runs inside a workflow are managed at workflow level.
+- The result tabs get a consistent filter/table treatment: labeled filter cards, instant scenario filter chips, in-card table toolbars (search, row count, download), and consistent tables with pagination footers.
+
 ## About the Design Files
-The bundled `CREST Redesign v2.dc.html` is a **design reference created in HTML** — an interactive prototype showing intended look and behavior, NOT production code to copy directly. Your task is to **recreate this design in the existing CREST codebase** (Vue 3 + PrimeVue, `services/client`) using its established patterns, routing, and data layer. Do NOT rebuild or migrate frameworks. Approach:
+The bundled `CREST Redesign v3.dc.html` is a **design reference created in HTML** — an interactive prototype showing intended look and behavior, NOT production code to copy directly. Your task is to **recreate this design in the existing CREST codebase** (Vue 3 + PrimeVue, `services/client`) using its established patterns, routing, and data layer. Do NOT rebuild or migrate frameworks. Approach:
 - Map the design tokens below into a **custom PrimeVue theme preset** (PrimeVue 4 `definePreset` / CSS-variable overrides; or a custom theme in PrimeVue 3) so colors, radius (2px), and typography apply globally.
 - Where the theme doesn't reach, use PrimeVue **pass-through (`pt`) options** and scoped styles to restyle components (DataTable, TabView, Chips, Dropdown, Paginator, etc.).
 - The IA change (nav sections, consolidated jobs) is intentional and should be implemented as described.
-- The prototype file also contains legacy v1 screens (Model Catalog, the old per-model "Model Configurations" list, New Calibration, New Forecast, separate job lists) that are unreachable from the v2 nav — **ignore them**; they are superseded by the v2 Configurations page described below.
+- The prototype file also contains legacy v1 screens (Model Catalog, the old per-model "Model Configurations" list, New Calibration, New Forecast, separate job lists) that are unreachable from the v2/v3 nav — **ignore them**; they are superseded.
 
 Note: the file uses a proprietary runtime (`support.js`) and won't render standalone outside its original environment. Treat it as a **source-of-truth spec**: all styles are inline in the markup, so every exact value (hex, px, weight) can be read directly from the file. Sample data in it is illustrative only.
 
@@ -84,12 +90,33 @@ ANALYSIS eyebrow + title; SECTOR + COMPANY dropdowns right. Shared legend: Histo
 Unchanged from v1 spec: scenario line charts (Baseline #E8C400 2.6px, Adverse #2E2E38 1.6px, Severely Adverse #9B9BA6 dashed) + detail tables; 8×8 transition heat matrix (ink diagonal with yellow figures, gray-intensity migrations).
 
 ### Job History
-Title "Job History" + subtitle "Every training, forecast and analysis run"; primary "+ New Model". TYPE filter chips (All / Training / Forecast / Analysis with mono counts; active = ink bg, yellow count) + search. Table: RUN (name + mono uuid), TYPE outlined tag, INPUT (mono — dataset or "target · model"), STATUS dot+text, PROGRESS (running: 5px yellow bar + mono %; else Completed / "Failed at N%" / —), STARTED / FINISHED mono, BY. Rows → Job Detail.
+Title "Job History" + subtitle "Every training, forecast and analysis run"; primary "+ New Model". TYPE filter chips (All / **Workflow** / Training / Forecast / Analysis with mono counts; active = ink bg, yellow count) + search. Table: RUN (name + mono uuid), TYPE outlined tag (WORKFLOW / TRAINING / FORECAST / ANALYSIS), INPUT (mono — dataset or "target · model"), STATUS dot+text, PROGRESS (running: 5px yellow bar + mono %; else Completed / "Failed at N%" / —), STARTED / FINISHED mono, BY. Workflow and Analysis rows → Workflow Job Detail; Training/Forecast rows → single-target Job Detail.
 
-### Job Detail (with per-segment re-run)
-"← Job history" back link; status line (dot + SUCCESS + duration mono + TRAINING outlined tag); name h1; "Delete" (outlined) + "Re-run all" (primary). 380px/1fr grid:
-- **Left**: RUN DETAILS card (Job ID, Type, Mode, Algorithm, Dataset, Target, Split by, Segments, Triggered by, Started, Finished; mono values) + 100% yellow progress bar.
-- **Right**: "Segment models" card — caption "60 segments · showing 6 largest by observations" + segment search. Table: SEGMENT (sector 600 + mono country sub-line), N / R² / RMSE (mono right), STATUS dot+text, ACTION — "Customize" text link (permanent yellow underline; becomes "Close" when open). Clicking Customize expands an **inline panel** below the row (#F7F7F9, full width): "CUSTOMIZE SEGMENT — sector · country" label; 4-col grid (algorithm select + alpha / l1_ratio / max_iter mono inputs); note "Only this segment is retrained — all other segment models are kept"; "Cancel" (outlined) + "▶ Re-run segment" (primary). Re-run closes the panel and flips that row's status to "Re-training" (running amber dot).
+### Workflow Job Detail (NEW in v3)
+Opened from a WORKFLOW row. "← Job history" back link; status line (dot + SUCCESS + duration mono + WORKFLOW outlined tag); job name h1; "Delete" (outlined) + "Re-run workflow" (primary). Below, a 4-tab bar (2px ink bottom rule; active tab = yellow bg, 700):
+
+**Tab 1 — Overview.** 400px/1fr grid (mirrors the single-target page):
+- Left: RUN DETAILS card (3px ink top) — Run ID, Training dataset, Macro forecast, Credit portfolio, Financial portfolio, Exposure (EAD), Discount rate, Lifetime horizon, Triggered by, Started, Finished (mono values) + 100% yellow progress bar. The v2 "Credit analysis" block is REMOVED — credit output lives in the Credit Results tab.
+- Right: "Target models" card — caption "5 targets trained and forecast in this workflow" + right hint "Click a target to open its run". Table: TARGET (mono 600), ALGORITHM, SEGMENTATION, TRAINING (dot + Success), FORECAST (dot + Success), FINISHED (mono), "›" affordance. Row click → single-target Job Detail.
+
+**Tab 2 — Diagnosis & Backtesting.**
+- Filter card (white, 1px border): three labeled dropdowns — TARGET / SECTOR / SEGMENT (mono values, 38px, 220px wide); right-aligned caption "Validation slice · 370 observations".
+- 4 metric cards (R² / MAE / RMSE / MAX |ERR| — mono 24px value, 3px ink top, muted sublabel).
+- Charts side by side (1fr / 1.6fr): "Residual distribution" (histogram, #2E2E38 bars, modal bar yellow, −3.0/0/+3.0 mono axis) and "Backtesting — Actual vs Predicted" (Actual #2E2E38 1.4px, Predicted #E8C400 2.6px, #F0F0F3 gridlines, legend right).
+- "Backtest predictions" table card with an **in-card toolbar**: title + row-count caption left; search input (icon, 220px), "100 rows" select, "Download" outlined button right. Columns: DATE / CLIENT / COUNTRY (mono) + ACTUAL / PREDICTED / RESIDUAL right-aligned mono (residual signed and colored success/error). Footer: "Rows 1–8 of 370" + ‹ 1 › paginator (current page ink bg / yellow text).
+
+**Tab 3 — Forecast.**
+- Filter card: TARGET dropdown + SCENARIO **chips** (All / Baseline / Adverse / Severely Adverse; active = ink bg white text; chips filter the table instantly — no Apply button); right caption "5 horizon years · 3 scenarios per segment".
+- "Forecast values" table card with the same in-card toolbar. Columns: DATE (mono), SECTOR, SEGMENT, SCENARIO tag (Baseline = outlined; Adverse = #4A4A55 bg white; Severely Adverse = ink bg yellow), PREDICTED (mono 600, right), Δ VS BASELINE (signed %, error-red, right; "—" on baseline rows). Footer paginator as above.
+
+**Tab 4 — Credit Results.**
+- Parameters strip card (3px ink top, cells divided by 1px #ECECF0): EXPOSURE (EAD) / DISCOUNT RATE / LIFETIME HORIZON / RATING CURVE (mono 16/600 values) + caption cell "1,500 clients · 3 scenarios · 5 horizon years".
+- "ECL per client" table card. Toolbar: title + shown-count caption, divider, SCENARIO chips (same instant-filter pattern), then search + Download right. Columns: CLIENT ID (mono 600), SCENARIO, YEAR (mono), STAGE tag (STAGE 1 = outlined; STAGE 2 = ink bg yellow text; STAGE 3 = error-red bg white text), PD / LGD / ECL right-aligned mono. Footer paginator.
+
+### Job Detail — single target (per-segment re-run; updated in v3)
+Reached by clicking a target row on the workflow Overview. **"← Back to workflow"** back link (→ Workflow Job Detail); status line (dot + SUCCESS + duration mono + TRAINING outlined tag); name h1 "workflow · target" (e.g. `test · total_revenue`); header action: **"View diagnostics & backtesting"** (outlined button → Workflow Job Detail, Diagnosis & Backtesting tab). The v2 "Delete" / "Re-run all" header buttons and any "Re-run/Delete this run from its workflow" affordance are removed — runs inside a workflow are managed at the workflow level. 380px/1fr grid:
+- **Left**: RUN DETAILS card (Job ID, Type, Algorithm, Dataset, Target, Split by, Max segments, Triggered by, Started, Finished; mono values) + 100% yellow progress bar.
+- **Right**: "Segment models" card — caption "50 segments · showing 6 largest by observations" + segment search. Table: SEGMENT (sector 600 + mono subsector sub-line), N / R² / RMSE (mono right), STATUS dot+text, ACTION — "Customize" text link (permanent yellow underline; becomes "Close" when open). Clicking Customize expands an **inline panel** below the row (#F7F7F9, full width): "CUSTOMIZE SEGMENT — sector · subsector" label; 4-col grid (algorithm select + alpha / l1_ratio / max_iter mono inputs); note "Only this segment is retrained — all other segment models are kept"; "Cancel" (outlined) + "▶ Re-run segment" (primary). Re-run closes the panel and flips that row's status to "Re-training" (running amber dot).
 
 ### Datasets / Dataset View / UAM / Role Management / Audit Logs
 Unchanged from v1 spec (tables with 2px ink header rule, outlined/solid ink tags, text-link actions with yellow/red hover underlines, SEARCH CRITERIA card on Audit Logs).
@@ -100,12 +127,15 @@ Unchanged from v1 spec (tables with 2px ink header rule, outlined/solid ink tags
 - Configurations page: algorithm sidebar filters the table; "+ New Configuration" / Edit open the same editor card; Duplicate clones a row; Delete removes it; hyperparameter-search checkboxes gray out disabled rows and update the combo count live.
 - Model Results: list selection swaps properties/metrics.
 - Heatmap: metric chips switch data; sector click drills to companies; back link returns.
-- Job History: type chips filter; rows → Job Detail. Job Detail: Customize toggles inline panel (one at a time); Re-run segment updates only that row's status.
+- Job History: type chips filter (incl. Workflow); Workflow/Analysis rows → Workflow Job Detail, Training/Forecast rows → single-target Job Detail.
+- Workflow Job Detail: 4-tab switcher; Overview target rows → single-target Job Detail; scenario chips on Forecast and Credit Results filter their tables instantly (no Apply/Reset — this replaces the old Filters-panel + Apply pattern); search/row-count/Download in the table toolbars are non-functional in the prototype but should work in production.
+- Single-target Job Detail: "← Back to workflow" and "View diagnostics & backtesting" navigate to the Workflow Job Detail (latter lands on the Diagnosis & Backtesting tab); Customize toggles inline panel (one at a time); Re-run segment updates only that row's status.
 - Hovers: rows #FAFAF2; outlined buttons border → ink; primary buttons bg → #3A3A46; inputs on focus: border ink + `box-shadow: 0 0 0 2px #FFE600`; text-link hovers use 2px yellow bottom border.
 - No transitions/animations required beyond default hover; keep it instant and precise.
 
 ## State Management
 - Route/screen + active nav; model mode (auto/manual); selected trained model; heatmap metric + drilled sector; job type filter; customizing segment index + re-run segment set; saved-configurations list (name, algorithm, hyperparameters, split, scaler, segmentation, search settings) with an editor-open/editing-index state; per-sector state: selected configuration index + selected feature set, keyed by sector name; global feature-column selection; Advanced Feature Selection's own per-column checkbox state (synced back to New Model on Apply).
+- Workflow Job Detail: active tab (`overview` / `backtest` / `forecast` / `credit`) + scenario chip selection per tab (Forecast: `anFcScen`, Credit Results: `anCrScen`; both default "All").
 - Two theme flags exist in the prototype (sidebar dark/light, semantic vs monochrome status colors) — **ship dark sidebar + semantic status**.
 - Data comes from existing CREST APIs; all figures in the prototype are illustrative.
 
@@ -114,5 +144,6 @@ Unchanged from v1 spec (tables with 2px ink header rule, outlined/solid ink tags
 - Fonts via Google Fonts: Archivo (400–800), IBM Plex Mono (400–600). Charts are inline SVG polylines — reuse the app's existing chart lib, styled to match (colors/weights above).
 
 ## Files
-- `CREST Redesign v2.dc.html` — the v2 prototype (source of truth). Markup between `<x-dc>` tags is the template (all styles inline; `sc-if`/`sc-for` are conditionals/loops, `{{ }}` are data holes); the `Component` class at the bottom holds sample data, chart-path generation, the heatmap color formula, and the transition-matrix intensity formula. Ignore template blocks for screens not reachable from the v2 sidebar (legacy v1 screens).
+- `CREST Redesign v3.dc.html` — the v3 prototype (source of truth). Markup between `<x-dc>` tags is the template (all styles inline; `sc-if`/`sc-for` are conditionals/loops, `{{ }}` are data holes); the `Component` class at the bottom holds sample data, chart-path generation, the heatmap color formula, and the transition-matrix intensity formula. Ignore template blocks for screens not reachable from the sidebar (legacy v1 screens).
+- `CREST Redesign v2.dc.html` — v2 prototype (pre-workflow job views), kept for reference only.
 - `CREST Redesign.dc.html` — v1 prototype (previous IA), kept for reference only.
