@@ -12,6 +12,7 @@ import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
+import ScenarioChips from './parts/ScenarioChips.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -99,6 +100,12 @@ const analysisParamRows = computed(() => {
 const analysisResultsFetchPage = (params) => creditRiskAPI.getRunResults(wf.value.analysis.run_id, params)
 const analysisResultsFetchDistinct = (col) => creditRiskAPI.getRunResultsDistinct(wf.value.analysis.run_id, col)
 
+const creditScenario = ref('All')
+const creditExternalFilters = computed(() => {
+  if (creditScenario.value === 'All') return {}
+  return { scenario: { mode: 'in', value: [creditScenario.value] } }
+})
+
 // ── actions ───────────────────────────────────────────────────────────────────
 const cancelWorkflow = async () => {
   actionBusy.value = true
@@ -109,6 +116,18 @@ const cancelWorkflow = async () => {
     toast.add({ severity: 'warn', summary: 'Workflow cancelled', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+  } finally {
+    actionBusy.value = false
+  }
+}
+const rerunWorkflow = async () => {
+  actionBusy.value = true
+  try {
+    const { data } = await workflowsAPI.rerun(runId.value)
+    toast.add({ severity: 'success', summary: 'Re-run queued', life: 2500 })
+    router.push({ name: 'jobs_workflow', params: { run_id: data.run_id } })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   } finally {
     actionBusy.value = false
   }
@@ -162,8 +181,12 @@ const confirmDelete = () => {
           <h1>{{ wf.name }}</h1>
         </div>
         <div class="job-header-actions">
-          <Button v-if="wf.status === 'running' || wf.status === 'queued'" label="Cancel" outlined class="btn-header" :loading="actionBusy" @click="cancelWorkflow" />
-          <Button v-else label="Delete" outlined class="btn-header" :disabled="actionBusy" @click="confirmDelete" />
+          <Button v-if="wf.status === 'running' || wf.status === 'queued'"
+                  label="Cancel" outlined class="btn-header" :loading="actionBusy" @click="cancelWorkflow" />
+          <template v-else>
+            <Button label="Delete" outlined class="btn-header" :disabled="actionBusy" @click="confirmDelete" />
+            <Button label="Re-run workflow" class="btn-header" :loading="actionBusy" @click="rerunWorkflow" />
+          </template>
         </div>
       </div>
 
@@ -188,7 +211,13 @@ const confirmDelete = () => {
         </div>
 
         <div class="panel target-panel">
-          <div class="chart-title">Targets ({{ wf.targets.length }})</div>
+          <div class="target-panel-header">
+            <div>
+              <div class="chart-title">Target models</div>
+              <div class="target-panel-caption">{{ wf.targets.length }} targets trained and forecast in this workflow</div>
+            </div>
+            <div class="target-panel-hint">Click a target to open its run</div>
+          </div>
           <div class="target-grid target-grid--head">
             <div>TARGET</div><div>ALGORITHM</div><div>SEGMENTATION</div><div>TRAINING</div><div>FORECAST</div><div>FINISHED</div>
           </div>
@@ -203,16 +232,6 @@ const confirmDelete = () => {
             </div>
             <div class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</div>
           </div>
-        </div>
-
-        <div class="panel analysis-panel">
-          <div class="chart-title">Credit analysis</div>
-          <div v-if="wf.analysis_skipped_reason" class="skip-line"><i class="pi pi-info-circle" />{{ wf.analysis_skipped_reason }}</div>
-          <div v-else-if="wf.analysis" class="analysis-line">
-            <StatusDot :status="wf.analysis.status" />
-            <span v-if="wf.analysis.status === 'success'" class="text-link" @click="activeTab = 'credit'">View credit results &rarr;</span>
-          </div>
-          <div v-else class="skip-line"><i class="pi pi-clock" />Pending forecasts</div>
         </div>
       </div>
 
@@ -239,12 +258,17 @@ const confirmDelete = () => {
               <span class="font-mono inset-value">{{ row.v }}</span>
             </div>
           </div>
+          <div class="credit-toolbar">
+            <span class="credit-toolbar-label">SCENARIO</span>
+            <ScenarioChips v-model="creditScenario" />
+          </div>
           <div class="panel results-panel">
             <CommonDataTable
               :key="wf.analysis.run_id"
               :columns="analysisResultColumns"
               :fetch-page="analysisResultsFetchPage"
               :fetch-distinct="analysisResultsFetchDistinct"
+              :external-filters="creditExternalFilters"
               empty-message="No results yet."
             >
               <template #cell-stage="{ data }">
@@ -283,15 +307,19 @@ const confirmDelete = () => {
 .tab-btn:hover { color: var(--ink); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
-.overview-tab { display: flex; flex-direction: column; gap: 16px; }
+.overview-tab { display: grid; grid-template-columns: 400px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
 .run-details { padding: 18px 20px 8px; }
 .detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
 .detail-key { flex: none; width: 200px; color: var(--text-color-muted); }
 .detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
-.target-panel, .analysis-panel { padding: 18px 20px; }
-.chart-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
+.target-panel { padding: 18px 20px; }
+.chart-title { font-size: 13.5px; font-weight: 700; }
+.target-panel-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+.target-panel-caption { font-size: 12px; color: var(--text-color-muted-2); margin-top: 3px; }
+.target-panel-hint { font-size: 11.5px; color: var(--text-color-muted-2); font-style: italic; flex-shrink: 0; margin-left: 16px; }
 
 .target-grid { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(120px, 1fr) minmax(140px, 1fr) 90px 90px 140px; column-gap: 12px; align-items: center; padding: 8px 2px; }
 .target-grid--head { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-color-muted); border-bottom: 2px solid var(--ink); padding-bottom: 8px; }
@@ -303,16 +331,14 @@ const confirmDelete = () => {
 .grid-caption { font-size: 12px; color: var(--text-color-muted-2); }
 .cell-mono { font-size: 11.5px; color: var(--text-color-secondary); }
 
-.skip-line, .analysis-line { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-color-secondary); }
-.text-link { font-size: 12.5px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; }
-.text-link:hover { color: var(--ink); }
-
 .credit-tab { display: flex; flex-direction: column; gap: 16px; }
 .inset-strip { display: flex; flex-wrap: wrap; gap: 22px; background: var(--surface-inset); border-radius: 2px; padding: 12px 16px; }
 .inset-field { display: flex; flex-direction: column; gap: 2px; }
 .inset-label { font-size: 10.5px; color: var(--text-color-muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .inset-value { font-size: 13px; font-weight: 600; }
 .results-panel { overflow: hidden; }
+.credit-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.credit-toolbar-label { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-color-muted); }
 
 .empty-note { text-align: center; color: var(--text-color-muted); padding: 32px 20px; }
 .empty-note i { font-size: 22px; display: block; margin-bottom: 8px; opacity: 0.6; }
