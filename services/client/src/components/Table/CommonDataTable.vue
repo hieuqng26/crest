@@ -30,7 +30,8 @@ const props = defineProps({
   initialSortField: { type: String, default: null },
   initialSortOrder: { type: Number, default: null }, // 1 | -1
   downloadFilename: { type: String, default: 'export' },
-  maxDownloadRows: { type: Number, default: 20000 }
+  maxDownloadRows: { type: Number, default: 20000 },
+  externalFilters: { type: Object, default: () => ({}) }
 })
 
 const GLOBAL_SEARCH_KEY = '__search__'
@@ -126,6 +127,7 @@ function buildFilterPayload(filters, search) {
   if (search && search.trim()) {
     out[GLOBAL_SEARCH_KEY] = { value: search.trim() }
   }
+  Object.assign(out, props.externalFilters)
   return out
 }
 
@@ -238,6 +240,8 @@ watch(
     resolveFilterKinds()
   }
 )
+
+watch(() => props.externalFilters, () => { page.value = 0; loadPage() }, { deep: true })
 
 defineExpose({ refresh: loadPage, rows, totalRecords })
 onMounted(loadPage)
