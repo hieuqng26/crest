@@ -13,6 +13,7 @@ import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
 import ScenarioChips from './parts/ScenarioChips.vue'
+import BaseTable from '@/views/composables/BaseTable.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -105,6 +106,15 @@ const creditExternalFilters = computed(() => {
   if (creditScenario.value === 'All') return {}
   return { scenario: { mode: 'in', value: [creditScenario.value] } }
 })
+
+const TARGET_COLS = [
+  { label: 'TARGET' },
+  { label: 'ALGORITHM' },
+  { label: 'SEGMENTATION' },
+  { label: 'TRAINING' },
+  { label: 'FORECAST' },
+  { label: 'FINISHED' },
+]
 
 // ── actions ───────────────────────────────────────────────────────────────────
 const cancelWorkflow = async () => {
@@ -218,26 +228,19 @@ const confirmDelete = () => {
             </div>
             <div class="target-panel-hint">Click a target to open its run</div>
           </div>
-          <div class="target-table-scroll">
-            <table class="target-table">
-              <thead>
-                <tr><th>TARGET</th><th>ALGORITHM</th><th>SEGMENTATION</th><th>TRAINING</th><th>FORECAST</th><th>FINISHED</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="t in wf.targets" :key="t.target_col" class="target-row">
-                  <td class="font-mono target-name" @click="goToTraining(t.calibration)">{{ t.target_col }}</td>
-                  <td class="font-mono">{{ t.calibration.algorithm ?? '—' }}</td>
-                  <td>{{ targetSegmentSummary(t.calibration) }}</td>
-                  <td><StatusDot :status="t.calibration.status" /></td>
-                  <td>
-                    <span v-if="t.forecast" class="target-forecast-link" @click="goToForecast(t.forecast)"><StatusDot :status="t.forecast.status" /></span>
-                    <span v-else class="grid-caption">Pending</span>
-                  </td>
-                  <td class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <BaseTable :columns="TARGET_COLS" :bleed="20">
+            <tr v-for="t in wf.targets" :key="t.target_col" class="target-row">
+              <td class="font-mono target-name" @click="goToTraining(t.calibration)">{{ t.target_col }}</td>
+              <td class="font-mono">{{ t.calibration.algorithm ?? '—' }}</td>
+              <td>{{ targetSegmentSummary(t.calibration) }}</td>
+              <td><StatusDot :status="t.calibration.status" /></td>
+              <td>
+                <span v-if="t.forecast" class="target-forecast-link" @click="goToForecast(t.forecast)"><StatusDot :status="t.forecast.status" /></span>
+                <span v-else class="grid-caption">Pending</span>
+              </td>
+              <td class="font-mono cell-mono">{{ (t.forecast?.finished_at ?? t.calibration.finished_at) ? fmtDate(t.forecast?.finished_at ?? t.calibration.finished_at) : '—' }}</td>
+            </tr>
+          </BaseTable>
         </div>
       </div>
 
@@ -313,7 +316,7 @@ const confirmDelete = () => {
 .tab-btn:hover { color: var(--ink); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
-.overview-tab { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 20px; align-items: start; }
+.overview-tab { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
 .run-details { padding: 18px 20px 8px; }
 .detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
@@ -328,15 +331,6 @@ const confirmDelete = () => {
 .target-panel-caption { font-size: 12px; color: var(--text-color-muted-2); margin-top: 3px; }
 .target-panel-hint { font-size: 11.5px; color: var(--text-color-muted-2); font-style: italic; flex-shrink: 0; margin-left: 16px; }
 
-.target-table-scroll { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
-.target-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.target-table thead tr { border-bottom: 2px solid var(--ink); }
-.target-table th { padding: 6px 12px 8px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-color-muted); text-align: left; white-space: nowrap; }
-.target-table th:first-child { padding-left: 2px; }
-.target-row { border-bottom: 1px solid var(--surface-border-row); }
-.target-row:last-child { border-bottom: none; }
-.target-table td { padding: 9px 12px 9px 0; font-size: 12.5px; vertical-align: middle; }
-.target-table td:first-child { padding-left: 2px; }
 .target-name { cursor: pointer; font-weight: 600; }
 .target-name:hover { color: var(--text-color-secondary); text-decoration: underline; }
 .target-forecast-link { cursor: pointer; }

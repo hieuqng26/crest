@@ -4,6 +4,7 @@ import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import BaseTable from '@/views/composables/BaseTable.vue'
 
 const props = defineProps({ runId: { type: String, required: true } })
 const toast = useToast()
@@ -42,6 +43,15 @@ const filtered = computed(() => {
 })
 
 const fmtMetric = (v) => (v == null ? '—' : Number(v).toFixed(4))
+
+const SEG_COLS = [
+  { label: 'SEGMENT' },
+  { label: 'N', align: 'right', width: '70px' },
+  { label: 'R²', align: 'right', width: '90px' },
+  { label: 'RMSE', align: 'right', width: '90px' },
+  { label: 'STATUS', width: '130px' },
+  { label: 'ACTION', align: 'right', width: '110px' },
+]
 
 // ── customize panel ─────────────────────────────────────────────────────────
 const customizingKey = ref(null)
@@ -101,69 +111,71 @@ const rerunSegment = async (seg) => {
       <InputText v-model="search" placeholder="Search segments…" class="segments-search" />
     </div>
 
-    <div class="seg-grid seg-grid--head">
-      <div>SEGMENT</div><div class="ta-right">N</div><div class="ta-right">R²</div><div class="ta-right">RMSE</div><div>STATUS</div><div class="ta-right">ACTION</div>
-    </div>
-
-    <div v-if="!loading && filtered.length === 0" class="empty-state">
-      <i class="pi pi-th-large" />
-      <p>No segment results yet.</p>
-    </div>
-
-    <template v-for="seg in filtered" :key="seg.segment_key">
-      <div class="seg-grid seg-grid--row">
-        <div class="seg-name-cell">
-          <div class="seg-sector">{{ seg.sector }}</div>
-          <div class="font-mono seg-value">{{ seg.split_value }}</div>
-        </div>
-        <div class="font-mono ta-right">{{ seg.row_count ?? '—' }}</div>
-        <div class="font-mono ta-right seg-r2">{{ fmtMetric(seg.train_metrics?.r2) }}</div>
-        <div class="font-mono ta-right seg-rmse">{{ fmtMetric(seg.train_metrics?.rmse) }}</div>
-        <div><StatusDot :status="seg.status === 'queued' || seg.status === 'running' ? 'running' : seg.status" :label="seg.status === 'queued' || seg.status === 'running' ? 'Re-training' : undefined" /></div>
-        <div class="ta-right">
-          <span
-            class="customize-link"
-            :class="{ 'is-disabled': seg.status === 'queued' || seg.status === 'running' }"
-            @click="!(seg.status === 'queued' || seg.status === 'running') && toggleCustomize(seg)"
-          >{{ customizingKey === seg.segment_key ? 'Close' : 'Customize' }}</span>
-        </div>
-      </div>
-
-      <div v-if="customizingKey === seg.segment_key" class="customize-panel">
-        <div class="eyebrow customize-title">
-          CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
-        </div>
-        <div class="customize-fields">
-          <div class="field">
-            <div class="font-mono field-label">algorithm</div>
-            <div class="field-static">{{ seg.algorithm ?? '—' }}</div>
-          </div>
-          <div v-for="p in algoMeta(seg.algorithm)?.params ?? []" :key="p.name" class="field">
-            <div class="font-mono field-label">{{ p.name }}</div>
-            <InputText v-if="p.type === 'string'" v-model="hyperparamForm[p.name]" class="w-full field-input" />
-            <InputNumber
-              v-else-if="p.type === 'float' || p.type === 'int'"
-              v-model="hyperparamForm[p.name]"
-              :useGrouping="false"
-              :minFractionDigits="p.type === 'float' ? 1 : 0"
-              :maxFractionDigits="p.type === 'float' ? 6 : 0"
-              class="w-full field-input"
-              fluid
-            />
-            <InputSwitch v-else-if="p.type === 'bool'" v-model="hyperparamForm[p.name]" />
-          </div>
-        </div>
-        <div class="customize-footer">
-          <span class="customize-note">Only this segment is retrained — all other segment models are kept</span>
-          <div class="spacer" />
-          <Button label="Cancel" outlined class="btn-cancel-seg" @click="cancelCustomize" />
-          <Button class="btn-rerun-seg btn-cta" :loading="submitting" @click="rerunSegment(seg)">
-            <span class="btn-play">▶</span>
-            <span>Re-run segment</span>
-          </Button>
-        </div>
-      </div>
-    </template>
+    <BaseTable :columns="SEG_COLS">
+      <tr v-if="!loading && filtered.length === 0" class="no-hover">
+        <td colspan="6" class="empty-state">
+          <i class="pi pi-th-large" />
+          <p>No segment results yet.</p>
+        </td>
+      </tr>
+      <template v-for="seg in filtered" :key="seg.segment_key">
+        <tr class="seg-row" :class="{ 'seg-row--open': customizingKey === seg.segment_key }">
+          <td class="seg-name-cell">
+            <div class="seg-sector">{{ seg.sector }}</div>
+            <div class="font-mono seg-value">{{ seg.split_value }}</div>
+          </td>
+          <td class="font-mono ta-right">{{ seg.row_count ?? '—' }}</td>
+          <td class="font-mono ta-right seg-r2">{{ fmtMetric(seg.train_metrics?.r2) }}</td>
+          <td class="font-mono ta-right seg-rmse">{{ fmtMetric(seg.train_metrics?.rmse) }}</td>
+          <td><StatusDot :status="seg.status === 'queued' || seg.status === 'running' ? 'running' : seg.status" :label="seg.status === 'queued' || seg.status === 'running' ? 'Re-training' : undefined" /></td>
+          <td class="ta-right">
+            <span
+              class="customize-link"
+              :class="{ 'is-disabled': seg.status === 'queued' || seg.status === 'running' }"
+              @click="!(seg.status === 'queued' || seg.status === 'running') && toggleCustomize(seg)"
+            >{{ customizingKey === seg.segment_key ? 'Close' : 'Customize' }}</span>
+          </td>
+        </tr>
+        <tr v-if="customizingKey === seg.segment_key" class="customize-row no-hover">
+          <td colspan="6" class="customize-cell">
+            <div class="customize-panel">
+              <div class="eyebrow customize-title">
+                CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
+              </div>
+              <div class="customize-fields">
+                <div class="field">
+                  <div class="font-mono field-label">algorithm</div>
+                  <div class="field-static">{{ seg.algorithm ?? '—' }}</div>
+                </div>
+                <div v-for="p in algoMeta(seg.algorithm)?.params ?? []" :key="p.name" class="field">
+                  <div class="font-mono field-label">{{ p.name }}</div>
+                  <InputText v-if="p.type === 'string'" v-model="hyperparamForm[p.name]" class="w-full field-input" />
+                  <InputNumber
+                    v-else-if="p.type === 'float' || p.type === 'int'"
+                    v-model="hyperparamForm[p.name]"
+                    :useGrouping="false"
+                    :minFractionDigits="p.type === 'float' ? 1 : 0"
+                    :maxFractionDigits="p.type === 'float' ? 6 : 0"
+                    class="w-full field-input"
+                    fluid
+                  />
+                  <InputSwitch v-else-if="p.type === 'bool'" v-model="hyperparamForm[p.name]" />
+                </div>
+              </div>
+              <div class="customize-footer">
+                <span class="customize-note">Only this segment is retrained — all other segment models are kept</span>
+                <div class="spacer" />
+                <Button label="Cancel" outlined class="btn-cancel-seg" @click="cancelCustomize" />
+                <Button class="btn-rerun-seg btn-cta" :loading="submitting" @click="rerunSegment(seg)">
+                  <span class="btn-play">▶</span>
+                  <span>Re-run segment</span>
+                </Button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      </template>
+    </BaseTable>
   </div>
 </template>
 
@@ -172,41 +184,22 @@ const rerunSegment = async (seg) => {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
   border-radius: 2px;
+  padding: 0 16px 4px;
 }
 .segments-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 14px 0;
 }
 .segments-header h3 { flex: none; }
 .segments-caption { font-size: 12px; color: var(--text-color-muted); }
 .spacer { flex: 1; }
 .segments-search { width: 200px; height: 32px; font-size: 12.5px !important; }
 
-.seg-grid {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.3fr) 70px 90px 90px 130px 120px;
-  column-gap: 12px;
-  align-items: center;
-  padding: 4px 16px;
-}
-.seg-grid--head {
-  height: 38px;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-bottom: 2px solid var(--ink);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: var(--text-color-muted);
-}
-.seg-grid--row {
-  min-height: 48px;
-  border-bottom: 1px solid var(--surface-border-row);
-}
-.seg-grid--row:hover { background: var(--surface-hover); }
+.seg-row--open { background: var(--surface-hover); }
 .ta-right { text-align: right; }
+.customize-cell { padding: 0 !important; }
 
 .seg-name-cell { display: flex; flex-direction: column; gap: 1px; }
 .seg-sector { font-size: 13px; font-weight: 600; }
@@ -271,7 +264,7 @@ const rerunSegment = async (seg) => {
 }
 .btn-play { color: var(--yellow); }
 
-.empty-state { text-align: center; padding: 40px 0; color: var(--text-color-muted); }
+.empty-state { text-align: center; padding: 40px 0; color: var(--text-color-muted); vertical-align: middle; }
 .empty-state i { font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.6; }
 .empty-state p { margin: 0; }
 </style>

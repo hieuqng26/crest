@@ -109,7 +109,7 @@
         <label for="role" class="block text-900 text-l font-medium mb-2"
           >Role</label
         >
-        <Dropdown id="role" v-model.trim="user.role" :options="roles" />
+        <EySelect id="role" v-model="user.role" :options="roles" class="w-full" />
       </div>
 
       <div class="field">
@@ -188,7 +188,7 @@
         <label for="role" class="block text-900 text-l font-medium mb-2"
           >Role</label
         >
-        <Dropdown id="role" v-model.trim="user.role" :options="roles" :disabled="isSelf" />
+        <EySelect id="role" v-model="user.role" :options="roles" :disabled="isSelf" class="w-full" />
         <small v-if="isSelf" class="text-color-secondary">You cannot change your own role.</small>
       </div>
 

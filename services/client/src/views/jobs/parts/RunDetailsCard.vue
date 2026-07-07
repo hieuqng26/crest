@@ -5,7 +5,7 @@ defineProps({
   progress: { type: Number, default: 0 },
   status: { type: String, default: 'queued' },
   errorMessage: { type: String, default: null },
-  labelWidth: { type: Number, default: 110 }
+  labelWidth: { type: Number, default: 95 }
 })
 </script>
 
@@ -36,24 +36,24 @@ defineProps({
 
 <style scoped>
 .run-details {
-  padding: 18px 20px 8px;
+  padding: 14px 16px 6px;
 }
 .detail-row {
   display: flex;
-  gap: 12px;
-  padding: 9px 0;
+  gap: 10px;
+  padding: 6px 0;
   border-bottom: 1px solid #F0F0F3;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .detail-key { flex: none; color: var(--text-color-muted); }
 .detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
-.progress-block { padding: 14px 0 12px; }
+.progress-block { padding: 10px 0 8px; }
 .progress-head {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
-  margin-bottom: 7px;
+  font-size: 11.5px;
+  margin-bottom: 6px;
 }
 .progress-label { color: var(--text-color-muted); font-weight: 600; }
 .progress-pct { font-weight: 600; }

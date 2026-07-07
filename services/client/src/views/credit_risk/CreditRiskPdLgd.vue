@@ -156,22 +156,22 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
       <template #actions>
         <div class="field-col">
           <span class="field-label">Metric</span>
-          <Dropdown
+          <EySelect
             v-model="selectedMetric"
             :options="METRIC_OPTIONS"
-            option-label="label"
-            class="w-8rem"
+            optionLabel="label"
+            style="width: 8rem"
           />
         </div>
         <div class="field-col">
           <span class="field-label">Client</span>
-          <Dropdown
+          <EySelect
             v-model="selectedClient"
             :options="clients"
             :loading="loadingRun"
             :disabled="!clients.length"
             placeholder="Select client"
-            class="w-12rem"
+            style="width: 12rem"
           />
         </div>
       </template>

@@ -45,7 +45,7 @@ watch(selectedForecast, async (fr) => {
       <div class="filter-bar">
         <div class="filter-col">
           <label class="field-label">Target</label>
-          <Dropdown v-model="selectedTargetCol" :options="targetsWithForecast.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="w-full font-mono" />
+          <EySelect v-model="selectedTargetCol" :options="targetsWithForecast.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="font-mono" />
         </div>
       </div>
 

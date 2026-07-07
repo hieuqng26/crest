@@ -142,23 +142,24 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
       <template #actions>
         <div class="field-col">
           <span class="field-label">Sector</span>
-          <Dropdown
+          <EySelect
             v-model="selectedSector"
             :options="sectors"
             placeholder="Select sector"
             :disabled="!sectors.length"
-            class="w-12rem"
+            style="width: 12rem"
           />
         </div>
         <div class="field-col">
           <span class="field-label">Company</span>
-          <Dropdown
+          <EySelect
             v-model="selectedCompany"
             :options="companyOptions"
             placeholder="All companies"
             :disabled="!companyOptions.length"
             showClear
-            class="w-12rem font-mono"
+            class="font-mono"
+            style="width: 12rem"
           />
         </div>
       </template>

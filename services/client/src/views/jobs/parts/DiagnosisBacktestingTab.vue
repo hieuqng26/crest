@@ -195,15 +195,15 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
     <div class="filter-bar">
       <div class="filter-col">
         <label class="field-label">Target</label>
-        <Dropdown v-model="selectedTargetCol" :options="targets.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="w-full font-mono" />
+        <EySelect v-model="selectedTargetCol" :options="targets.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="font-mono" />
       </div>
       <div v-if="isSegmented" class="filter-col">
         <label class="field-label">Sector</label>
-        <Dropdown v-model="selectedSector" :options="sectorOptions" optionLabel="label" optionValue="value" class="w-full" :disabled="loadingSegments" />
+        <EySelect v-model="selectedSector" :options="sectorOptions" optionLabel="label" optionValue="value" :disabled="loadingSegments" />
       </div>
       <div v-if="isSegmented && selectedSector" class="filter-col">
         <label class="field-label">Segment</label>
-        <Dropdown v-model="selectedSegmentKey" :options="segmentOptions" optionLabel="label" optionValue="value" class="w-full font-mono" />
+        <EySelect v-model="selectedSegmentKey" :options="segmentOptions" optionLabel="label" optionValue="value" class="font-mono" />
       </div>
     </div>
 

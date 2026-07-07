@@ -158,13 +158,14 @@ const saveQuery = () => {
           <InputText v-model="search" placeholder="Search datasets…" class="w-full" />
         </IconField>
 
-        <Dropdown
+        <EySelect
           v-model="sourceFilter"
           :options="sourceOptions"
           optionLabel="label"
           optionValue="value"
           placeholder="All"
-          class="w-11rem"
+          showClear
+          style="width: 11rem"
         />
 
         <template v-if="!selectMode">
@@ -281,7 +282,7 @@ const saveQuery = () => {
 
         <div class="flex flex-column gap-1">
           <label class="font-medium text-sm">Type</label>
-          <Dropdown v-model="uploadKind" :options="KIND_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+          <EySelect v-model="uploadKind" :options="KIND_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
           <div class="text-xs text-color-secondary">
             <span v-if="uploadKind === 'calibration'">Used for model training and backtesting.</span>
             <span v-else-if="uploadKind === 'credit'">Credit portfolio data for KMV / IFRS 9 analysis (client_id, market_cap, vol_equity, rating).</span>

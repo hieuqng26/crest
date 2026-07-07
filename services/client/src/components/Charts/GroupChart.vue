@@ -28,11 +28,11 @@ const selectedUnit = computed(() => props.columns[selectedOtherColumn.value])
 <template>
   <Panel :header="props.title">
     <div class="flex justify-content-center">
-      <Dropdown
+      <EySelect
         v-model="selectedOtherColumn"
         :options="Object.keys(props.columns)"
         placeholder=""
-        class="w-full md:w-14rem"
+        style="width: 14rem"
       />
     </div>
     <LineChart :data="selectedOtherChartData" :yTitle="selectedUnit" />

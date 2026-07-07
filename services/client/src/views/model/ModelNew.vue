@@ -330,10 +330,11 @@ onUnmounted(() => { loaded = false })
         <span class="step-title">Targets &amp; sectors</span>
       </div>
       <div class="field-label">Target columns</div>
-      <MultiSelect
+      <EySelect
         v-model="targetCols" :options="numericColumnOptions" placeholder="Select target columns"
-        :disabled="numericColumnOptions.length === 0" display="chip" :showToggleAll="true"
-        class="w-full font-mono mb-3" :filter="true"
+        :disabled="numericColumnOptions.length === 0" :multiple="true"
+        class="w-full font-mono mb-3" :filter="true" :showToggleAll="true"
+        :triggerLabel="targetCols.length ? targetsTriggerLabel : null"
       />
       <div v-if="targetCols.length" class="target-chip-row">
         <span v-for="t in targetCols" :key="t" class="tag-outline target-chip">
@@ -344,12 +345,14 @@ onUnmounted(() => { loaded = false })
 
       <div class="field-label mt-4">Sectors to model</div>
       <div v-if="loadingSectors" class="grid-caption"><i class="pi pi-spin pi-spinner" /> Loading sectors…</div>
-      <MultiSelect
+      <EySelect
         v-else
         v-model="selectedSectors" :options="availableSectors"
         :disabled="!calibrationDataset || availableSectors.length === 0"
-        display="chip" :showToggleAll="true" class="w-full"
-        :placeholder="sectorsTriggerLabel" filter
+        :multiple="true" :showToggleAll="true"
+        :placeholder="sectorsTriggerLabel"
+        :triggerLabel="selectedSectors.length ? sectorsTriggerLabel : null"
+        class="w-full" filter
       />
       <div class="grid-caption mt-2">A separate segmented model is trained for each selected sector, per target</div>
     </div>
@@ -375,11 +378,11 @@ onUnmounted(() => { loaded = false })
         <div class="field-grid-2">
           <div class="field-col">
             <label class="field-label">Optimization metric</label>
-            <Dropdown v-model="optimizationMetric" :options="OPTIMIZATION_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+            <EySelect v-model="optimizationMetric" :options="OPTIMIZATION_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
           </div>
           <div class="field-col">
             <label class="field-label">Training budget</label>
-            <Dropdown v-model="trainingBudget" :options="BUDGET_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+            <EySelect v-model="trainingBudget" :options="BUDGET_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
           </div>
         </div>
       </template>
@@ -391,13 +394,12 @@ onUnmounted(() => { loaded = false })
           <div class="spacer" />
           <span class="text-link" @click="router.push({ name: 'model_configurations' })">Manage configurations &rarr;</span>
         </div>
-        <Dropdown v-model="selectedConfigId" :options="configs" optionValue="id" placeholder="Select a configuration" class="w-full mb-3" filter>
-          <template #value="{ value }">
-            <span v-if="selectedConfig" class="cfg-value">
-              <span class="font-mono">{{ selectedConfig.name }}</span>
-              <span class="tag-fill cfg-algo-tag">{{ selectedConfig.algorithm }}</span>
+        <EySelect v-model="selectedConfigId" :options="configs" optionValue="id" placeholder="Select a configuration" class="w-full mb-3" :filter="true">
+          <template #value="{ option }">
+            <span v-if="option" class="cfg-value">
+              <span class="font-mono">{{ option.name }}</span>
+              <span class="tag-fill cfg-algo-tag">{{ option.algorithm }}</span>
             </span>
-            <span v-else class="p-placeholder">Select a configuration</span>
           </template>
           <template #option="{ option }">
             <span class="cfg-option">
@@ -405,7 +407,7 @@ onUnmounted(() => { loaded = false })
               <span class="tag-outline">{{ option.algorithm }}</span>
             </span>
           </template>
-        </Dropdown>
+        </EySelect>
         <div v-if="configs.length === 0" class="grid-caption mb-3">No configurations saved yet — <span class="text-link" @click="router.push({ name: 'model_configurations' })">create one</span>.</div>
 
         <div v-if="selectedConfig" class="inset-strip mb-4">
@@ -420,10 +422,10 @@ onUnmounted(() => { loaded = false })
           <div class="spacer" />
           <span class="text-link" @click="router.push({ name: 'model_feature_selection' })">Advanced feature selection &rarr;</span>
         </div>
-        <MultiSelect
+        <EySelect
           v-model="featureCols" :options="featureOptions" :disabled="!targetCols.length"
-          display="chip" :showToggleAll="true" class="w-full font-mono"
-          :placeholder="featsTriggerLabel" filter
+          :multiple="true" :showToggleAll="true" class="w-full font-mono"
+          :placeholder="featsTriggerLabel" :triggerLabel="featsTriggerLabel" filter
         />
         <div class="grid-caption mt-2 mb-4">Numeric columns present in the forecast dataset, excluding target columns, are used by default</div>
 
@@ -452,11 +454,11 @@ onUnmounted(() => { loaded = false })
             <div class="field-grid-2 mb-3">
               <div class="field-col">
                 <label class="field-label">Configuration</label>
-                <Dropdown v-model="targetOverrideDraft.model_config_id" :options="configs" optionValue="id" class="w-full" filter>
-                  <template #value="{ value }">
-                    <span v-if="configs.find(c => c.id === value)" class="cfg-value">
-                      <span class="font-mono">{{ configs.find(c => c.id === value).name }}</span>
-                      <span class="tag-outline">{{ configs.find(c => c.id === value).algorithm }}</span>
+                <EySelect v-model="targetOverrideDraft.model_config_id" :options="configs" optionValue="id" class="w-full" :filter="true">
+                  <template #value="{ option }">
+                    <span v-if="option" class="cfg-value">
+                      <span class="font-mono">{{ option.name }}</span>
+                      <span class="tag-outline">{{ option.algorithm }}</span>
                     </span>
                   </template>
                   <template #option="{ option }">
@@ -465,11 +467,11 @@ onUnmounted(() => { loaded = false })
                       <span class="tag-outline">{{ option.algorithm }}</span>
                     </span>
                   </template>
-                </Dropdown>
+                </EySelect>
               </div>
               <div class="field-col">
                 <label class="field-label">Feature columns</label>
-                <MultiSelect v-model="targetOverrideDraft.feature_cols" :options="featureOptions" display="chip" :showToggleAll="true" class="w-full font-mono" :placeholder="targetOverrideFeatsLabel" filter />
+                <EySelect v-model="targetOverrideDraft.feature_cols" :options="featureOptions" :multiple="true" :showToggleAll="true" class="w-full font-mono" :placeholder="targetOverrideFeatsLabel" :triggerLabel="targetOverrideFeatsLabel" filter />
               </div>
             </div>
             <div class="ps-override-footer">
@@ -507,11 +509,11 @@ onUnmounted(() => { loaded = false })
               <div class="field-grid-2 mb-3">
                 <div class="field-col">
                   <label class="field-label">Configuration</label>
-                  <Dropdown v-model="overrideDraft.model_config_id" :options="configs" optionValue="id" class="w-full" filter>
-                    <template #value="{ value }">
-                      <span v-if="configs.find(c => c.id === value)" class="cfg-value">
-                        <span class="font-mono">{{ configs.find(c => c.id === value).name }}</span>
-                        <span class="tag-outline">{{ configs.find(c => c.id === value).algorithm }}</span>
+                  <EySelect v-model="overrideDraft.model_config_id" :options="configs" optionValue="id" class="w-full" :filter="true">
+                    <template #value="{ option }">
+                      <span v-if="option" class="cfg-value">
+                        <span class="font-mono">{{ option.name }}</span>
+                        <span class="tag-outline">{{ option.algorithm }}</span>
                       </span>
                     </template>
                     <template #option="{ option }">
@@ -520,11 +522,11 @@ onUnmounted(() => { loaded = false })
                         <span class="tag-outline">{{ option.algorithm }}</span>
                       </span>
                     </template>
-                  </Dropdown>
+                  </EySelect>
                 </div>
                 <div class="field-col">
                   <label class="field-label">Feature columns</label>
-                  <MultiSelect v-model="overrideDraft.feature_cols" :options="overrideFeatureOptions" display="chip" :showToggleAll="true" class="w-full font-mono" :placeholder="overrideFeatsLabel" filter />
+                  <EySelect v-model="overrideDraft.feature_cols" :options="overrideFeatureOptions" :multiple="true" :showToggleAll="true" class="w-full font-mono" :placeholder="overrideFeatsLabel" :triggerLabel="overrideFeatsLabel" filter />
                 </div>
               </div>
               <div class="ps-override-footer">
@@ -577,7 +579,7 @@ onUnmounted(() => { loaded = false })
         </div>
         <div class="field-col">
           <label class="field-label">PD curve</label>
-          <Dropdown v-model="analysisParams.curve" :options="[{ label: 'Moody\'s', value: 'moodys' }]" optionLabel="label" optionValue="value" class="w-full" />
+          <EySelect v-model="analysisParams.curve" :options="[{ label: 'Moody\'s', value: 'moodys' }]" optionLabel="label" optionValue="value" class="w-full" />
         </div>
       </div>
 

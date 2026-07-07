@@ -274,7 +274,7 @@ const onDelete = (cfg) => {
             </div>
             <div class="field-col">
               <label class="field-label">Algorithm</label>
-              <Dropdown v-model="form.algorithm" :options="registry" optionLabel="algorithm" optionValue="algorithm" placeholder="Select algorithm" class="w-full" />
+              <EySelect v-model="form.algorithm" :options="registry" optionLabel="algorithm" optionValue="algorithm" placeholder="Select algorithm" class="w-full" />
             </div>
           </div>
 
@@ -340,7 +340,7 @@ const onDelete = (cfg) => {
                   </div>
                   <div class="field-col">
                     <label class="field-label">Scoring</label>
-                    <Dropdown v-model="form.cvSearch.scoring" :options="SCORING_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
+                    <EySelect v-model="form.cvSearch.scoring" :options="SCORING_OPTIONS" optionLabel="label" optionValue="value" class="w-full" />
                   </div>
                 </div>
                 <div class="grid-caption mb-2">{{ enabledParamCount }} of {{ selectedAlgoMeta.params.length }} enabled · {{ combinationCount.toLocaleString() }} combos</div>
@@ -353,7 +353,7 @@ const onDelete = (cfg) => {
                       <td><Checkbox v-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].enabled" :binary="true" /></td>
                       <td><span class="font-mono">{{ p.name }}</span></td>
                       <td>
-                        <Dropdown
+                        <EySelect
                           v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int')"
                           v-model="form.paramGrid[p.name].kind" :options="[{label:'Linear',value:'linspace'},{label:'Log',value:'logspace'},{label:'Values',value:'list'}]"
                           optionLabel="label" optionValue="value" :disabled="!form.paramGrid[p.name]?.enabled" class="w-full"

@@ -108,6 +108,7 @@ import TreeTable from 'primevue/treetable'
 import TriStateCheckbox from 'primevue/tristatecheckbox'
 import VirtualScroller from 'primevue/virtualscroller'
 import VueApexCharts from 'vue3-apexcharts'
+import EySelect from '@/components/ui/EySelect.vue'
 
 import store from './store'
 import { can } from '@/directives/can'
@@ -224,5 +225,6 @@ app.component('TreeSelect', TreeSelect)
 app.component('TreeTable', TreeTable)
 app.component('TriStateCheckbox', TriStateCheckbox)
 app.component('VirtualScroller', VirtualScroller)
+app.component('EySelect', EySelect)
 
 store.dispatch('fetchMe').finally(() => app.mount('#app'))

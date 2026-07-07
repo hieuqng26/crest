@@ -429,12 +429,12 @@ const predictionsFetchDistinct = (field) => calibrationsAPI.backtestPredictionsD
           <div v-if="hasCountry || hasClientId" class="flex align-items-center gap-3 flex-wrap mb-3">
             <div v-if="hasCountry" class="flex align-items-center gap-2">
               <span class="text-xs text-color-secondary">Country</span>
-              <Dropdown v-model="clsCountryFilter" :options="clsCountryOptions"
+              <EySelect v-model="clsCountryFilter" :options="clsCountryOptions"
                         placeholder="All" showClear class="ctrl-drop" />
             </div>
             <div v-if="hasClientId" class="flex align-items-center gap-2">
               <span class="text-xs text-color-secondary">Client</span>
-              <Dropdown v-model="clsClientIdFilter" :options="clsClientIdOptions"
+              <EySelect v-model="clsClientIdFilter" :options="clsClientIdOptions"
                         placeholder="All" showClear filter class="ctrl-drop" style="min-width:9rem" />
             </div>
           </div>
@@ -488,12 +488,12 @@ const predictionsFetchDistinct = (field) => calibrationsAPI.backtestPredictionsD
           <div class="flex align-items-center gap-3 flex-wrap mb-3">
             <div v-if="hasCountry" class="flex align-items-center gap-2">
               <span class="text-xs text-color-secondary">Country</span>
-              <Dropdown v-model="countryFilter" :options="countryOptions"
+              <EySelect v-model="countryFilter" :options="countryOptions"
                         placeholder="All" showClear class="ctrl-drop" />
             </div>
             <div v-if="hasClientId" class="flex align-items-center gap-2">
               <span class="text-xs text-color-secondary">Client</span>
-              <Dropdown v-model="clientIdFilter" :options="clientIdOptions"
+              <EySelect v-model="clientIdFilter" :options="clientIdOptions"
                         placeholder="All" showClear filter class="ctrl-drop" style="min-width:9rem" />
             </div>
             <div class="flex gap-2 ml-auto">

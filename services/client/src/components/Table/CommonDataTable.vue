@@ -264,7 +264,7 @@ onMounted(loadPage)
         @click="toggleFiltersPanel"
       />
 
-      <Dropdown
+      <EySelect
         v-model="sortFieldDraft"
         :options="sortOptions"
         optionLabel="label"
@@ -299,13 +299,13 @@ onMounted(loadPage)
       <div class="cdt-filters-panel-inner">
         <div v-for="col in filterableColumns" :key="col.field" class="cdt-filter-row">
           <div class="cdt-filter-row-label">{{ col.header || col.field }}</div>
-          <MultiSelect
+          <EySelect
             v-if="columnFilterKind[col.field] === 'categorical'"
             v-model="filterDrafts[col.field]"
             :options="distinctOptions[col.field]"
-            filter
+            :filter="true"
             placeholder="Any value"
-            display="chip"
+            :multiple="true"
             class="cdt-filter-multiselect"
           />
           <InputText

@@ -161,24 +161,25 @@ async function fetchECL() {
       <template #actions>
         <div class="field-col">
           <span class="field-label">Client</span>
-          <Dropdown
+          <EySelect
             v-model="selectedClient"
             :options="clients"
             :loading="loadingRun"
             :disabled="!clients.length"
             placeholder="Select client"
-            class="w-12rem"
+            style="width: 12rem"
           />
         </div>
         <div class="field-col">
           <span class="field-label">Scenario</span>
-          <Dropdown
+          <EySelect
             v-model="selectedScenario"
             :options="[null, ...scenarioOptions]"
             :optionLabel="v => v ?? 'All scenarios'"
             placeholder="All scenarios"
             :disabled="!eclRows.length"
-            class="w-12rem"
+            showClear
+            style="width: 12rem"
           />
         </div>
       </template>

@@ -21,37 +21,37 @@
         </div>
         <div class="filter-field">
           <label class="field-label">Module</label>
-          <MultiSelect
+          <EySelect
             v-model="selectedModules"
             :loading="loadingDD"
             :options="moduleOptions"
             :filter="moduleOptions.length >= 5"
             placeholder="All"
-            :maxSelectedLabels="3"
+            :multiple="true"
             class="w-full"
           />
         </div>
         <div class="filter-field">
           <label class="field-label">Sub-Module</label>
-          <MultiSelect
+          <EySelect
             v-model="selectedSubmodules"
             :loading="loadingDD"
             :options="submoduleOptions"
             :filter="submoduleOptions.length >= 5"
             placeholder="All"
-            :maxSelectedLabels="3"
+            :multiple="true"
             class="w-full"
           />
         </div>
         <div class="filter-field">
           <label class="field-label">Action</label>
-          <MultiSelect
+          <EySelect
             v-model="selectedActions"
             :loading="loadingDD"
             :options="actionOptions"
             :filter="actionOptions.length >= 5"
             placeholder="All"
-            :maxSelectedLabels="3"
+            :multiple="true"
             class="w-full"
           />
         </div>
@@ -61,13 +61,14 @@
         <div class="filter-field" style="min-width: 16rem">
           <label class="field-label">Sort By</label>
           <div class="flex align-items-center gap-2">
-            <Dropdown
+            <EySelect
               v-model="selectedSortColumn"
               :options="searchColumns"
               :loading="loadingTable && searchColumns.length === 0"
               :filter="true"
               showClear
               class="flex-1"
+              placeholder="Sort by…"
             />
             <button
               class="sort-dir-btn"
@@ -156,7 +157,7 @@
           </span>
           <div class="flex align-items-center gap-2">
             <span class="text-xs text-color-secondary">Rows per page</span>
-            <Dropdown v-model="selectedPerPage" :options="[20, 50, 80, 100]" class="w-7rem" />
+            <EySelect v-model="selectedPerPage" :options="[20, 50, 80, 100]" style="width: 7rem" />
             <Paginator
               :totalRecords="totalSize"
               :perPage="pageSize"
