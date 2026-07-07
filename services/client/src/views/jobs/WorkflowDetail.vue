@@ -185,7 +185,7 @@ const confirmDelete = () => {
                   label="Cancel" outlined class="btn-header" :loading="actionBusy" @click="cancelWorkflow" />
           <template v-else>
             <Button label="Delete" outlined class="btn-header" :disabled="actionBusy" @click="confirmDelete" />
-            <Button label="Re-run workflow" class="btn-header" :loading="actionBusy" @click="rerunWorkflow" />
+            <Button label="Re-run workflow" class="btn-header" :loading="actionBusy" :disabled="actionBusy" @click="rerunWorkflow" />
           </template>
         </div>
       </div>

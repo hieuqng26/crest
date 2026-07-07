@@ -1,11 +1,12 @@
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
-from project import app_session
+from project import app_session, db
 from project.api.auth.decorators import current_permissions, require_perm
 from project.api.auth.permissions import has_permission
 from project.core.calibration_launch import (
@@ -128,6 +129,8 @@ def _launch_workflow(
         wf_dict = wf.to_dict()
 
     for c in created:
+        # Dispatch after the session commits. If the session rolls back unexpectedly, these
+        # tasks will reference non-existent rows — see .claude/bugs/detached-instance-in-celery-tasks.md
         run_calibration.delay(c["calibration_run_id"])
 
     return wf_dict, created
@@ -422,10 +425,15 @@ def rerun_workflow(run_id):
     if not wf:
         return jsonify({"error": "Not found"}), 404
 
+    if wf.status in ("queued", "running"):
+        return jsonify(
+            {"error": "Workflow is still active — cancel it before re-running"}
+        ), 409
+
     targets_raw = json.loads(wf.targets_json or "[]")
     resolved_targets = []
     for t in targets_raw:
-        cfg = ModelConfig.query.get(t["model_config_id"])
+        cfg = db.session.get(ModelConfig, t["model_config_id"])
         if not cfg:
             return jsonify(
                 {
@@ -468,7 +476,7 @@ def rerun_workflow(run_id):
         "credit": credit_ds,
         "financial": fin_ds,
     }
-    name = wf.name + " (re-run)"
+    name = re.sub(r"( \(re-run\))+$", "", wf.name) + " (re-run)"
     wf_dict, created_list = _launch_workflow(
         name, resolved_targets, analysis_params, datasets, get_jwt_identity()
     )

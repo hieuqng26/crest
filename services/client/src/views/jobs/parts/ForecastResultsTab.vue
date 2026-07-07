@@ -75,7 +75,6 @@ watch(selectedForecast, async (fr) => {
 .filter-bar { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; background: var(--surface-inset); border-radius: 2px; padding: 14px 16px; }
 .filter-col { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
 .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
-.grid-caption { font-size: 12px; color: var(--text-color-muted-2); }
 
 .scenario-bar { display: flex; align-items: center; gap: 12px; }
 
