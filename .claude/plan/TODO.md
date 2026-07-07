@@ -1,3 +1,11 @@
+- Job History: 
+    - [x] Add Delete, Multi-delete, Rerun, Cancel action buttons. "Type" should be MANUAL or AUTO, not Workflow, Training, Forecast,  or Analysis. Add ability to activate a job so Analysis pages will load
+    - [ ] Backtesting plots: interactive, add coefs (with p-value and statistical tests), qq plots
+
+- [ ] Financial Forecast page: add multi-select dropdown for which target variables to show (only show target variables of the active job, not some derived ones like cogs/revenue)
+
+- Some pages are loading too slow: Heatmap, Financial Forecast, Job History, Job View
+
 - [x] Modelling workflow:
     - [x] I want to make the model setup a bit more "automated" for manual. First, user don't need to choose training dataset, the backend will pull the latest data from financial data table. 
     - [x] Second, users can choose to run multiple targets at once, but we need to think carefully how we should design this: we need a default model configuration applied to all targets, but also need to offer capability to customize if user wants to. 

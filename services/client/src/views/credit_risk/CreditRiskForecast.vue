@@ -16,6 +16,9 @@ const companiesBySector = ref({})
 const selectedSector     = ref(null)
 const selectedCompany    = ref(null)
 
+const forecastTargets = ref([])          // [{ key, title }] from meta
+const selectedTargets = ref([])          // array of slot keys
+
 const companyOptions = computed(() => (companiesBySector.value[selectedSector.value] || []))
 
 const forecastData = ref(null) // { sector, client_id, metrics: [...] }
@@ -26,6 +29,8 @@ async function fetchMeta() {
     const { data } = await creditRiskAPI.analysisMeta()
     sectors.value = data.sectors ?? []
     companiesBySector.value = data.companies_by_sector ?? {}
+    forecastTargets.value = data.forecast_targets ?? []
+    selectedTargets.value = forecastTargets.value.map((t) => t.key)
     if (sectors.value.length) selectedSector.value = sectors.value[0]
     noActiveRun.value = false
   } catch (e) {
@@ -38,12 +43,14 @@ async function fetchMeta() {
 
 async function fetchForecast() {
   if (!selectedSector.value) return
+  if (!selectedTargets.value.length) { forecastData.value = { metrics: [] }; return }
   loading.value = true
   errorMessage.value = null
   try {
     const { data } = await creditRiskAPI.analysisForecast({
       sector: selectedSector.value,
       client_id: selectedCompany.value || undefined,
+      targets: selectedTargets.value.join(','),
     })
     forecastData.value = data
   } catch (e) {
@@ -56,6 +63,7 @@ async function fetchForecast() {
 
 watch(selectedSector, () => { selectedCompany.value = null; fetchForecast() })
 watch(selectedCompany, fetchForecast)
+watch(selectedTargets, fetchForecast)
 
 onMounted(async () => {
   await fetchMeta()
@@ -162,6 +170,20 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
             style="width: 12rem"
           />
         </div>
+        <div class="field-col">
+          <span class="field-label">Targets</span>
+          <EySelect
+            v-model="selectedTargets"
+            :options="forecastTargets"
+            optionLabel="title"
+            optionValue="key"
+            multiple
+            showToggleAll
+            filter
+            :disabled="!forecastTargets.length"
+            style="width: 14rem"
+          />
+        </div>
       </template>
     </PageHeader>
 
@@ -188,7 +210,17 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
         <span class="legend-item"><span class="legend-swatch legend-dashed" />Severely Adverse</span>
       </div>
 
-      <div class="fin-grid">
+      <div
+        v-if="!selectedTargets.length"
+        class="panel flex flex-column align-items-center justify-content-center gap-2"
+        style="height: 16rem"
+      >
+        <i class="pi pi-filter-slash text-3xl text-color-secondary opacity-50" />
+        <div class="text-sm font-medium">
+          {{ forecastTargets.length ? 'Select at least one target variable' : 'This analysis run has no forecast targets' }}
+        </div>
+      </div>
+      <div v-else class="fin-grid">
         <div v-for="fin in cards" :key="fin.key" class="panel">
           <div class="fin-head">
             <div>
@@ -198,12 +230,12 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
             <div class="flex-1" />
             <div v-if="!fin.unavailable" class="text-right">
               <div class="font-mono fin-val">{{ fin.value }}</div>
-              <div class="font-mono fin-delta">{{ fin.delta_pct >= 0 ? '+' : '' }}{{ fin.delta_pct }}{{ fin.key === 'cogs_to_revenue' ? 'pp' : '%' }} vs {{ fin.base_year }} · baseline latest</div>
+              <div class="font-mono fin-delta">{{ fin.delta_pct >= 0 ? '+' : '' }}{{ fin.delta_pct }}% vs {{ fin.base_year }} · baseline latest</div>
             </div>
           </div>
 
           <div v-if="fin.unavailable" class="fin-empty">
-            Requires a forecast run linked for <span class="font-mono">{{ fin.key === 'cogs_to_revenue' ? 'total_revenue &amp; total_cogs' : fin.slot }}</span> on the active analysis run.
+            No forecast data available for <span class="font-medium">{{ fin.title }}</span> on the active analysis run.
           </div>
           <svg v-else viewBox="0 0 500 210" class="fin-svg">
             <template v-for="t in fin.ticks" :key="t.y">

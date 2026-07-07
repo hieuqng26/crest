@@ -776,31 +776,16 @@ _HEATMAP_METRICS = {
     },
 }
 
-_FORECAST_METRIC_DEFS = [
-    {
-        "key": "total_revenue",
-        "title": "Revenue",
-        "slot": "total_revenue",
-        "indexed": True,
-    },
-    {
-        "key": "cogs_to_revenue",
-        "title": "COGS / Revenue",
-        "slot": None,
-        "indexed": False,
-    },
-    {
-        "key": "total_assets",
-        "title": "Total Assets",
-        "slot": "total_assets",
-        "indexed": True,
-    },
-    {
-        "key": "short_term_debts",
-        "title": "Short-term Debts",
-        "slot": "short_term_debts",
-        "indexed": True,
-    },
+# Real forecast targets that the Financial Forecast page can chart — each maps to
+# a linked ForecastRun "slot" (see _slot_forecast_runs). Derived ratios (e.g.
+# COGS/Revenue) are intentionally excluded here; they live on the Heatmap page.
+# Order is canonical and drives both the dropdown and the card grid.
+_FORECAST_TARGET_SLOTS: list[tuple[str, str]] = [
+    ("total_assets", "Total Assets"),
+    ("short_term_debts", "Short-term Debts"),
+    ("long_term_debts", "Long-term Debts"),
+    ("total_revenue", "Revenue"),
+    ("total_cogs", "COGS"),
 ]
 
 
@@ -1023,6 +1008,11 @@ def get_analysis_meta():
             "run_id": cr.run_id,
             "sectors": sorted(companies_by_sector.keys()),
             "companies_by_sector": companies_by_sector,
+            "forecast_targets": [
+                {"key": key, "title": title}
+                for key, title in _FORECAST_TARGET_SLOTS
+                if key in slots
+            ],
             "available_metrics": {
                 k: k in slots
                 for k in (
@@ -1200,6 +1190,11 @@ def get_analysis_forecast():
     if not sector:
         return jsonify({"error": "sector is required"}), 400
 
+    requested = request.args.get("targets")
+    requested_keys = (
+        {t.strip() for t in requested.split(",") if t.strip()} if requested else None
+    )
+
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
         portfolio_df = _analysis_portfolio_df(cr)
@@ -1220,75 +1215,18 @@ def get_analysis_forecast():
         return [{"year": y, "value": round(levels[y], 4)} for y in sorted(levels)]
 
     metrics_out = []
-    for spec in _FORECAST_METRIC_DEFS:
-        if spec["key"] == "cogs_to_revenue":
-            rev_fr, cogs_fr = slots.get("total_revenue"), slots.get("total_cogs")
-            if not rev_fr or not cogs_fr:
-                metrics_out.append(
-                    {
-                        "key": spec["key"],
-                        "title": spec["title"],
-                        "unit": "%",
-                        "available": False,
-                    }
-                )
-                continue
-            rev_hist = _historical_series(rev_fr, sector, client_id)
-            cogs_hist = _historical_series(cogs_fr, sector, client_id)
-            hist_years = sorted(set(rev_hist) & set(cogs_hist))
-            history = [
-                {"year": y, "value": round(cogs_hist[y] / rev_hist[y] * 100, 2)}
-                for y in hist_years
-                if rev_hist[y]
-            ]
-            scenarios_out = {}
-            for scen in _all_scenarios(rev_fr):
-                rev_lv = _variable_levels(rows_df, rev_fr, scen, {})
-                cogs_lv = _variable_levels(rows_df, cogs_fr, scen, {})
-                years = sorted(set(rev_lv) & set(cogs_lv))
-                scenarios_out[scen] = [
-                    {"year": y, "value": round(cogs_lv[y] / rev_lv[y] * 100, 2)}
-                    for y in years
-                    if rev_lv[y]
-                ]
-            baseline_pts = scenarios_out.get("Baseline", [])
-            metrics_out.append(
-                {
-                    "key": spec["key"],
-                    "title": spec["title"],
-                    "unit": "%",
-                    "available": True,
-                    "history": history,
-                    "scenarios": scenarios_out,
-                    "value": baseline_pts[-1]["value"] if baseline_pts else None,
-                    "delta_pct": (
-                        round(baseline_pts[-1]["value"] - history[-1]["value"], 2)
-                        if baseline_pts and history
-                        else None
-                    ),
-                    "base_year": hist_years[0] if hist_years else None,
-                }
-            )
-            continue
-
-        fr = slots.get(spec["slot"])
+    for slot_key, title in _FORECAST_TARGET_SLOTS:
+        fr = slots.get(slot_key)
         if not fr:
-            metrics_out.append(
-                {
-                    "key": spec["key"],
-                    "title": spec["title"],
-                    "unit": "Indexed",
-                    "available": False,
-                    "slot": spec["slot"],
-                }
-            )
+            continue
+        if requested_keys is not None and slot_key not in requested_keys:
             continue
 
         hist = _historical_series(fr, sector, client_id)
         base_year = min(hist) if hist else None
         base_val = hist.get(base_year) if base_year is not None else None
 
-        def to_index(levels: dict) -> list[dict]:
+        def to_index(levels: dict, base_val=base_val) -> list[dict]:
             if not base_val:
                 return series_points(levels)
             return [
@@ -1305,8 +1243,8 @@ def get_analysis_forecast():
         baseline_pts = scenarios_out.get("Baseline", [])
         metrics_out.append(
             {
-                "key": spec["key"],
-                "title": spec["title"],
+                "key": slot_key,
+                "title": title,
                 "unit": f"Indexed · {base_year} = 100" if base_year else "Indexed",
                 "available": True,
                 "history": history_points,
