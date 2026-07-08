@@ -16,7 +16,7 @@ class Dataset(db.Model):
     row_count = db.Column(db.Integer, nullable=True)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     status = db.Column(db.String(32), nullable=False, default="ready")
     kind = db.Column(db.String(32), nullable=False, default="calibration")
@@ -56,7 +56,7 @@ class ModelConfig(db.Model):
     max_segments = db.Column(db.Integer, nullable=False, default=5)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     calibration_runs = db.relationship(
@@ -99,7 +99,7 @@ class CalibrationRun(db.Model):
         db.String(64), db.ForeignKey("users.email"), nullable=False
     )
     artifact_path = db.Column(db.String(1024), nullable=True)
-    started_at = db.Column(db.DateTime, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=True, index=True)
     finished_at = db.Column(db.DateTime, nullable=True)
     train_metrics_json = db.Column(db.Text, nullable=True)
     val_metrics_json = db.Column(db.Text, nullable=True)
@@ -196,20 +196,28 @@ class CalibrationRunLog(db.Model):
         db.String(16), nullable=False, default="info"
     )  # info | warn | error
     message = db.Column(db.String(1024), nullable=False)
+    # Set only on segment-scoped lines (per-segment fit / retrain), so the unified
+    # workflow log view can filter by sector/segment. NULL on general lines.
+    sector = db.Column(db.String(128), nullable=True)
+    segment = db.Column(db.String(128), nullable=True)
 
     def to_dict(self):
         return dict(
+            id=self.id,
             # Full UTC timestamp — the client renders it in the configured
             # display timezone (see client utils/datetime.js), same as run
             # started_at/finished_at, so log lines and run details agree.
             t=self.logged_at.strftime("%Y-%m-%d %H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
+            sector=self.sector,
+            segment=self.segment,
         )
 
 
 class CalibrationRunSegment(db.Model):
     __tablename__ = "calibration_run_segments"
+    __table_args__ = (db.Index("ix_crs_run_sector", "calibration_run_id", "sector"),)
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     calibration_run_id = db.Column(
@@ -275,12 +283,12 @@ class Forecast(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     calibration_run_id = db.Column(
-        db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False
+        db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False, index=True
     )
     forecast_horizon = db.Column(db.Integer, nullable=True)
     forecast_json = db.Column(db.Text, nullable=True)  # legacy; NULL for new rows
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     results = db.relationship(

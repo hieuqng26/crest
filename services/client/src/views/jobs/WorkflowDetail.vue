@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
+import { usePolling } from '@/composables/usePolling'
 import workflowsAPI from '@/api/workflowsAPI'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
@@ -15,7 +16,7 @@ import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
-import LogsPanel from './parts/LogsPanel.vue'
+import WorkflowLogsPanel from './parts/WorkflowLogsPanel.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
 const route = useRoute()
@@ -28,19 +29,68 @@ const wf = ref(null)
 const loading = ref(false)
 const actionBusy = ref(false)
 
+const handleFetchError = (e) => {
+  // A background purge can remove the workflow while this page is open → 404.
+  if (e?.response?.status === 404) {
+    poll.stop()
+    toast.add({ severity: 'info', summary: 'Workflow deleted', life: 2500 })
+    router.push({ name: 'jobs_history' })
+    return
+  }
+  toast.add({ severity: 'error', summary: 'Failed to load workflow', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+}
+
+// Full load — used on mount and after an action. Returns the complete object
+// graph (metrics, dataset names, config/algorithm) that the light poll omits.
 const fetchWorkflow = async () => {
   try {
     const { data } = await workflowsAPI.get(runId.value)
     wf.value = data
   } catch (e) {
-    // A background purge can remove the workflow while this page is open → 404.
-    if (e?.response?.status === 404) {
-      stopPolling()
-      toast.add({ severity: 'info', summary: 'Workflow deleted', life: 2500 })
-      router.push({ name: 'jobs_history' })
-      return
+    handleFetchError(e)
+  }
+}
+
+// Merge a status-only poll into the object we already hold, updating just the
+// live fields (statuses, progress, retraining count) and preserving every static
+// field the light payload doesn't carry. Returns true when the poll reveals a
+// newly-created forecast or analysis run whose full details we still need to pull.
+const mergeLight = (light) => {
+  if (!wf.value) return false
+  wf.value.status = light.status
+  wf.value.current_stage = light.current_stage
+  wf.value.finished_at = light.finished_at
+  wf.value.error_message = light.error_message
+
+  let needsFull = false
+  const byCol = new Map((light.targets ?? []).map((t) => [t.target_col, t]))
+  for (const tgt of wf.value.targets ?? []) {
+    const lt = byCol.get(tgt.target_col)
+    if (!lt) continue
+    if (tgt.calibration && lt.calibration) {
+      Object.assign(tgt.calibration, lt.calibration)
     }
-    toast.add({ severity: 'error', summary: 'Failed to load workflow', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    if (lt.forecast && !tgt.forecast) {
+      needsFull = true // a forecast run appeared → fetch its full record once
+    } else if (lt.forecast && tgt.forecast) {
+      Object.assign(tgt.forecast, lt.forecast)
+    }
+  }
+
+  if (light.analysis && !wf.value.analysis) {
+    needsFull = true // analysis run appeared → fetch its full record once
+  } else if (light.analysis && wf.value.analysis) {
+    Object.assign(wf.value.analysis, light.analysis)
+  }
+  return needsFull
+}
+
+const pollWorkflow = async () => {
+  try {
+    const { data } = await workflowsAPI.get(runId.value, { light: 1 })
+    if (mergeLight(data)) await fetchWorkflow()
+  } catch (e) {
+    handleFetchError(e)
   }
 }
 
@@ -53,19 +103,22 @@ const isRetraining = computed(() =>
   (wf.value?.status === 'success' && wf.value?.analysis?.status === 'running')
 )
 
-let pollTimer = null
+const poll = usePolling(pollWorkflow, { interval: 5000 })
 const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status) || isRetraining.value
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 5000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
+// Reactive form for the log panel's live-refresh prop (isLive() is a plain fn).
+const isWorkflowLive = computed(() => isLive())
+
+// Overview "Run Details & Logs" panel: expanded while live, collapsed once done.
+const runLogCollapsed = ref(false)
+watch(isWorkflowLive, (live) => { runLogCollapsed.value = !live }, { immediate: true })
 
 onMounted(async () => {
   loading.value = true
   await fetchWorkflow()
   loading.value = false
-  if (isLive()) startPolling()
+  if (isLive()) poll.start()
 })
-onUnmounted(stopPolling)
-watch([() => wf.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
+watch([() => wf.value?.status, isRetraining], () => { if (isLive()) poll.start(); else poll.stop() })
 
 const STATUS_META = {
   success: { dot: 'var(--success-color)', text: 'var(--success-text-color)', label: 'SUCCESS' },
@@ -115,12 +168,6 @@ const goToForecast = (fr) => router.push({ name: 'jobs_detail', params: { kind: 
 const analysisResultsFetchPage = (params) => creditRiskAPI.getRunResults(wf.value.analysis.run_id, params)
 const analysisResultsFetchDistinct = (col) => creditRiskAPI.getRunResultsDistinct(wf.value.analysis.run_id, col)
 
-// Show live logs only while the analysis run is still in progress.
-const isAnalysisLive = computed(() => {
-  const s = wf.value?.analysis?.status
-  return s === 'running' || s === 'queued'
-})
-
 const TARGET_COLS = [
   { field: 'target', label: 'TARGET' },
   { field: 'algorithm', label: 'ALGORITHM' },
@@ -136,7 +183,7 @@ const cancelWorkflow = async () => {
   try {
     await workflowsAPI.cancel(runId.value)
     await fetchWorkflow()
-    stopPolling()
+    poll.stop()
     toast.add({ severity: 'warn', summary: 'Workflow cancelled', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -228,14 +275,6 @@ const confirmDelete = () => {
 
       <!-- Overview -->
       <div v-if="activeTab === 'overview'" class="overview-tab">
-        <div class="card--emphasis run-details">
-          <div class="eyebrow">RUN DETAILS</div>
-          <div v-for="row in runDetailRows" :key="row.k" class="detail-row">
-            <div class="detail-key">{{ row.k }}</div>
-            <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
-          </div>
-        </div>
-
         <div class="panel target-panel">
           <div class="target-panel-header">
             <div>
@@ -274,13 +313,31 @@ const confirmDelete = () => {
             </template>
           </BaseTable>
         </div>
+
+        <!-- Run details + unified workflow logs (collapsible) -->
+        <div class="runlog-box" :class="{ 'is-collapsed': runLogCollapsed }">
+          <div class="runlog-bar" @click="runLogCollapsed = !runLogCollapsed">
+            <span class="eyebrow">RUN DETAILS &amp; LOGS</span>
+            <div class="spacer" />
+            <i class="pi toggle-icon" :class="runLogCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
+          </div>
+          <div v-if="!runLogCollapsed" class="runlog-body">
+            <div class="runlog-details">
+              <div v-for="row in runDetailRows" :key="row.k" class="detail-chip">
+                <span class="detail-chip-key">{{ row.k }}</span>
+                <span class="detail-chip-val" :class="{ 'font-mono': row.mono }">{{ row.v }}</span>
+              </div>
+            </div>
+            <WorkflowLogsPanel :run-id="runId" />
+          </div>
+        </div>
       </div>
 
       <!-- Diagnosis & Backtesting -->
       <DiagnosisBacktestingTab v-else-if="activeTab === 'diagnosis'" :targets="wf.targets" />
 
       <!-- Forecast -->
-      <ForecastResultsTab v-else-if="activeTab === 'forecast'" :targets="wf.targets" />
+      <ForecastResultsTab v-else-if="activeTab === 'forecast'" :run-id="runId" :targets="wf.targets" />
 
       <!-- Credit Results -->
       <div v-else-if="activeTab === 'credit'" class="credit-tab">
@@ -310,15 +367,6 @@ const confirmDelete = () => {
               </template>
             </CommonDataTable>
           </div>
-
-          <LogsPanel
-            v-if="isAnalysisLive"
-            :key="`log-${wf.analysis.run_id}`"
-            :kind="'analysis'"
-            :run-id="wf.analysis.run_id"
-            :status="wf.analysis.status"
-            collapsible
-          />
         </template>
       </div>
     </template>
@@ -350,12 +398,20 @@ const confirmDelete = () => {
 .tab-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--yellow); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
-.overview-tab { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
-.run-details { padding: 18px 20px 8px; }
-.detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
-.detail-key { flex: none; width: 140px; color: var(--text-color-muted); }
-.detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
+.overview-tab { display: flex; flex-direction: column; gap: 20px; }
+
+/* Collapsible Run details + unified logs box (below the full-width target table). */
+.runlog-box { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
+.runlog-bar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none; }
+.runlog-box:not(.is-collapsed) .runlog-bar { border-bottom: 1px solid var(--surface-border); }
+.runlog-bar:hover { background: var(--surface-hover); }
+.runlog-bar .spacer { flex: 1; }
+.runlog-bar .toggle-icon { font-size: 11px; color: var(--text-color-muted); }
+.runlog-body { padding: 16px; }
+.runlog-details { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 16px; }
+.detail-chip { display: flex; flex-direction: column; gap: 2px; }
+.detail-chip-key { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
+.detail-chip-val { font-size: 12.5px; color: var(--text-color); word-break: break-word; }
 
 /* .panel is global (_brand.scss). */
 .target-panel { padding: 18px 20px; min-width: 0; }

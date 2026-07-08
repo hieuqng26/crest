@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
+import { usePolling } from '@/composables/usePolling'
 import jobsAPI, { KIND } from '@/api/jobs'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
@@ -39,21 +40,18 @@ const isRetraining = computed(
   () => job.value?.status === 'success' && (job.value?.raw?.retraining_segment_count ?? 0) > 0
 )
 
-let pollTimer = null
+const poll = usePolling(fetchJob, { interval: 5000 })
 const isLive = () => job.value?.status === 'running' || job.value?.status === 'queued' || isRetraining.value
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchJob, 5000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(async () => {
   loading.value = true
   await fetchJob()
   loading.value = false
-  if (isLive()) startPolling()
+  if (isLive()) poll.start()
 })
-onUnmounted(stopPolling)
 
-watch([() => job.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
-watch([kind, runId], async () => { stopPolling(); job.value = null; loading.value = true; await fetchJob(); loading.value = false; if (isLive()) startPolling() })
+watch([() => job.value?.status, isRetraining], () => { if (isLive()) poll.start(); else poll.stop() })
+watch([kind, runId], async () => { poll.stop(); job.value = null; loading.value = true; await fetchJob(); loading.value = false; if (isLive()) poll.start() })
 
 const typeLabel = computed(() => ({ [KIND.TRAINING]: 'TRAINING', [KIND.FORECAST]: 'FORECAST', [KIND.ANALYSIS]: 'ANALYSIS' }[kind.value]))
 
@@ -140,6 +138,10 @@ const resultsDisabled = computed(() => job.value?.status !== 'success')
 // to a slim summary and the segment models table takes over. Non-segmented runs
 // have no follow-on table, so their box stays expanded.
 const trainingLive = computed(() => job.value?.status === 'running' || job.value?.status === 'queued')
+// A run opened from a workflow already has its logs in the workflow's Overview
+// (unified across all steps), so we drop the per-run log here and show run details
+// only. Standalone runs keep their logs — it's the only place they live.
+const isWorkflowChild = computed(() => !!job.value?.raw?.workflow_run_uuid)
 const runLogCollapsed = ref(false)
 watch(() => job.value?.status, (s) => {
   if (s === 'running' || s === 'queued') runLogCollapsed.value = false
@@ -153,7 +155,7 @@ const cancelJob = async () => {
   try {
     await jobsAPI.cancelJob(kind.value, runId.value)
     await fetchJob()
-    stopPolling()
+    poll.stop()
     toast.add({ severity: 'warn', summary: 'Run cancelled', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -166,7 +168,7 @@ const rerunJob = async () => {
   try {
     await jobsAPI.rerunJob(kind.value, runId.value)
     await fetchJob()
-    startPolling()
+    poll.start()
     toast.add({ severity: 'info', summary: 'Re-run queued', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -255,7 +257,7 @@ const confirmDelete = () => {
 
         <div class="runlog-box" :class="{ 'is-collapsed': runLogCollapsed }">
           <div class="runlog-bar" @click="toggleRunLog">
-            <span class="eyebrow">RUN DETAILS &amp; LOGS</span>
+            <span class="eyebrow">{{ isWorkflowChild ? 'RUN DETAILS' : 'RUN DETAILS &amp; LOGS' }}</span>
             <span v-if="runLogCollapsed" class="runlog-summary">
               <span class="status-dot" :style="{ backgroundColor: statusMeta.dot }" />
               <span class="runlog-summary-label" :style="{ color: statusMeta.text }">{{ statusMeta.label }}</span>
@@ -264,7 +266,7 @@ const confirmDelete = () => {
             <div class="spacer" />
             <i class="pi toggle-icon" :class="runLogCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
           </div>
-          <div v-if="!runLogCollapsed" class="runlog-grid">
+          <div v-if="!runLogCollapsed" class="runlog-grid" :class="{ 'runlog-grid--details-only': isWorkflowChild }">
             <RunDetailsCard
               class="runlog-details"
               bare
@@ -273,7 +275,7 @@ const confirmDelete = () => {
               :status="job.status"
               :error-message="job.raw.error_message"
             />
-            <LogsPanel class="runlog-logs" embedded :kind="kind" :run-id="runId" :status="job.status" />
+            <LogsPanel v-if="!isWorkflowChild" class="runlog-logs" embedded :kind="kind" :run-id="runId" :status="job.status" />
           </div>
         </div>
       </div>
@@ -392,6 +394,9 @@ const confirmDelete = () => {
   align-items: stretch;
   min-height: 340px;
 }
+/* Workflow children drop the log column → run details spans the full width. */
+.runlog-grid--details-only { grid-template-columns: 1fr; min-height: 0; }
+.runlog-grid--details-only .runlog-details { border-right: none; }
 .runlog-details { border-right: 1px solid var(--surface-border); min-width: 0; }
 .runlog-logs { min-width: 0; }
 @media (max-width: 900px) {

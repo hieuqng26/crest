@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
+import { usePolling } from '@/composables/usePolling'
 import jobsAPI, { KIND } from '@/api/jobs'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import workflowsAPI from '@/api/workflowsAPI'
@@ -39,30 +40,22 @@ const autoSetActiveAnalysisRun = async () => {
   try { await creditRiskAPI.setActiveRun(latest.run_id) } catch { /* best-effort */ }
 }
 
-let pollTimer = null
 // `deleting` counts as active: an async workflow purge keeps the row visible
 // until the backend removes it, so we must keep polling to see it disappear.
 const hasActive = computed(() =>
   jobs.value.some((j) => j.status === 'running' || j.status === 'queued') ||
   workflows.value.some((w) => w.status === 'running' || w.status === 'queued' || w.status === 'deleting')
 )
-const startPolling = () => {
-  if (pollTimer) return
-  pollTimer = setInterval(async () => {
-    if (!hasActive.value) { stopPolling(); return }
-    await fetchJobs()
-  }, 5000)
-}
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
+const poll = usePolling(fetchJobs, { interval: 5000 })
 
 onMounted(async () => {
   loading.value = true
   await fetchJobs()
   loading.value = false
   await autoSetActiveAnalysisRun()
-  if (hasActive.value) startPolling()
+  if (hasActive.value) poll.start()
 })
-onUnmounted(stopPolling)
+watch(hasActive, (active) => { if (active) poll.start(); else poll.stop() })
 
 // ── Standalone jobs ───────────────────────────────────────────────────────────
 const standaloneJobs = computed(() => jobs.value.filter((j) => !j.raw.workflow_run_id))
@@ -174,7 +167,7 @@ const bulkDelete = async () => {
     if (accepted) toast.add({ severity: 'success', summary: 'Deleting', detail: `${accepted} run${accepted !== 1 ? 's' : ''} queued for deletion`, life: 3000 })
     if (blocked)  toast.add({ severity: 'warn', summary: 'Some blocked', detail: `${blocked} run${blocked !== 1 ? 's' : ''} could not be deleted (dependencies)`, life: 5000 })
     await fetchJobs()
-    startPolling()   // workflow purges are async — keep polling until rows clear
+    poll.start()   // workflow purges are async — keep polling until rows clear
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
@@ -278,7 +271,7 @@ async function deleteWorkflow(wf) {
       // `deleting` status; refetch to show it and keep polling until it's gone.
       toast.add({ severity: 'info', summary: 'Deleting…', detail: wf.name, life: 3000 })
       await fetchJobs()
-      startPolling()
+      poll.start()
     }
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })

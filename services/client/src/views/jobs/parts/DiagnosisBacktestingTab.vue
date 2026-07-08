@@ -39,6 +39,21 @@ const segmentOptions = computed(() =>
 )
 const activeSegment = computed(() => segments.value.find((s) => s.segment_key === selectedSegmentKey.value) || null)
 
+// The per-observation val_obs arrays are stripped from the segment LIST (they made
+// it multi-MB); fetch them for just the selected segment when its backtest scatter
+// is shown. getDiagnostics(run, segKey) returns the full metrics incl. val_obs.
+const activeSegmentObs = ref(null)
+watch(selectedSegmentKey, async (segKey) => {
+  activeSegmentObs.value = null
+  if (!segKey || !cal.value) return
+  try {
+    const { data } = await calibrationsAPI.getDiagnostics(cal.value.run_id, segKey)
+    activeSegmentObs.value = data.metrics?.val_obs ?? null
+  } catch {
+    activeSegmentObs.value = null // scatter is best-effort
+  }
+})
+
 const loadSegmentsForTarget = async () => {
   segments.value = []
   selectedSector.value = null
@@ -154,9 +169,9 @@ const residHist = computed(() => {
 const backtestPairs = computed(() => {
   let actual, predicted
   if (isSegmented.value) {
-    if (!selectedSegmentKey.value || !activeSegment.value?.val_metrics?.val_obs) return []
-    actual = activeSegment.value.val_metrics.val_obs.actual ?? []
-    predicted = activeSegment.value.val_metrics.val_obs.predicted ?? []
+    if (!selectedSegmentKey.value || !activeSegmentObs.value) return []
+    actual = activeSegmentObs.value.actual ?? []
+    predicted = activeSegmentObs.value.predicted ?? []
   } else {
     actual = forecastActual.value
     predicted = forecastPredicted.value

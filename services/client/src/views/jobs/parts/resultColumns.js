@@ -20,6 +20,19 @@ export const analysisResultColumns = [
   { field: 'ecl', header: 'ECL', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
 ]
 
+// Unified workflow log table (Overview tab). Step/Target/Sector/Segment/Level are
+// categorical → CommonDataTable turns them into dropdown filters via fetchDistinct;
+// Time isn't filterable and Message is covered by the toolbar's global search.
+export const workflowLogColumns = [
+  { field: 'step', header: 'Step', width: '7rem' },
+  { field: 'target', header: 'Target', width: '9rem', mono: true },
+  { field: 'sector', header: 'Sector', width: '9rem' },
+  { field: 'segment', header: 'Segment', width: '9rem', mono: true },
+  { field: 't', header: 'Time', width: '6rem', mono: true, sortable: false, filterable: false },
+  { field: 'level', header: 'Level', width: '6rem' },
+  { field: 'message', header: 'Message', width: '30rem', sortable: false, filterable: false }
+]
+
 // Forecast/backtest result schemas vary by dataset (sector/subsector/country/
 // segment_key are present only when the calibration was segmented on that
 // dimension), so the workflow's Forecast and Diagnosis & Backtesting tabs

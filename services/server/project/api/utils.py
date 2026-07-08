@@ -172,6 +172,31 @@ def valid_uuid(uuid_id):
         # return make_response(jsonify({'message': str(e)}), 404)
 
 
+def paginate_logs(base_query, id_col, default_limit=1000, max_limit=5000):
+    """Cursor-paginate a run-log query for the live log panels.
+
+    Poll requests pass ``after_id`` (the id of the last row the client already
+    holds) and only the newer rows are returned — instead of re-sending the whole,
+    ever-growing log table every 2s. Without a cursor the initial load returns the
+    most recent ``limit`` rows (chronologically ordered), so a long run doesn't ship
+    its entire history up front. Rows are always returned oldest→newest so the
+    client can append.
+    """
+    after_id = request.args.get("after_id", type=int)
+    limit = request.args.get("limit", type=int) or default_limit
+    limit = max(1, min(limit, max_limit))
+    if after_id is not None:
+        return (
+            base_query.filter(id_col > after_id)
+            .order_by(id_col.asc())
+            .limit(limit)
+            .all()
+        )
+    rows = base_query.order_by(id_col.desc()).limit(limit).all()
+    rows.reverse()
+    return rows
+
+
 def is_empty_df(df):
     if (
         (df is None)

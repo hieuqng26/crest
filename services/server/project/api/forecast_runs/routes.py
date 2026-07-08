@@ -7,6 +7,7 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project.api.auth.decorators import require_perm
+from project.api.utils import paginate_logs
 from project.core import table_query
 from project.db_models.calibration_models import (
     CalibrationRun,
@@ -324,8 +325,8 @@ def get_logs(run_id: str):
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
-    logs = (
-        ForecastRunLog.query.filter_by(run_id=run_id).order_by(ForecastRunLog.id).all()
+    logs = paginate_logs(
+        ForecastRunLog.query.filter_by(run_id=run_id), ForecastRunLog.id
     )
     return jsonify([log.to_dict() for log in logs]), 200
 

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import jobsAPI from '@/api/jobs'
 import { fmtTime } from '@/utils/datetime'
+import { usePolling } from '@/composables/usePolling'
 
 const props = defineProps({
   kind:        { type: String,  required: true },
@@ -32,10 +33,18 @@ const counts = computed(() => {
   return c
 })
 
-const fetchLogs = async () => {
+// Cursor into the log stream: poll ticks fetch only rows newer than the last one
+// we hold (via ?after_id) and append them, instead of re-downloading the whole,
+// ever-growing log table every 2s.
+let lastId = 0
+
+const fetchLogs = async ({ reset = false } = {}) => {
   try {
-    const { data } = await jobsAPI.getJobLogs(props.kind, props.runId)
-    logs.value = data
+    const params = reset ? {} : { after_id: lastId }
+    const { data } = await jobsAPI.getJobLogs(props.kind, props.runId, params)
+    if (reset) logs.value = data
+    else if (data.length) logs.value.push(...data)
+    if (data.length) lastId = data[data.length - 1].id ?? lastId
   } catch {
     // best-effort
   }
@@ -46,22 +55,23 @@ watch(filteredLogs, async () => {
   if (!collapsed.value && logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
 }, { flush: 'post' })
 
-let pollTimer = null
+const poll = usePolling(fetchLogs, { interval: 2000 })
 const isLive = () => props.status === 'running' || props.status === 'queued'
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchLogs, 2000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(() => {
-  fetchLogs()
-  if (isLive()) startPolling()
+  fetchLogs({ reset: true })
+  if (isLive()) poll.start()
 })
-onUnmounted(stopPolling)
+watch(() => props.runId, () => {
+  lastId = 0
+  fetchLogs({ reset: true })
+})
 watch(() => props.status, (s) => {
   if (s === 'running' || s === 'queued') {
-    startPolling()
+    poll.start()
     if (props.collapsible) collapsed.value = false
   } else {
-    stopPolling()
+    poll.stop()
     fetchLogs()
     if (props.collapsible) collapsed.value = true
   }

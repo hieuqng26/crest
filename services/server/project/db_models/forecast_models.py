@@ -18,7 +18,10 @@ class ForecastRun(db.Model):
     status = db.Column(db.String(32), nullable=False, default="queued")
     triggered_by = db.Column(db.String(64), nullable=True)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
     )
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
@@ -118,6 +121,10 @@ class ForecastRunLog(db.Model):
     t = db.Column(db.String(32), nullable=True)
     level = db.Column(db.String(16), nullable=False, default="info")
     message = db.Column(db.Text, nullable=False)
+    # Set only on segment-scoped lines (segment re-score), so the unified workflow
+    # log view can filter by sector/segment. NULL on general lines.
+    sector = db.Column(db.String(128), nullable=True)
+    segment = db.Column(db.String(128), nullable=True)
 
     def to_dict(self):
         return dict(
@@ -126,4 +133,6 @@ class ForecastRunLog(db.Model):
             t=self.t,
             level=self.level,
             message=self.message,
+            sector=self.sector,
+            segment=self.segment,
         )
