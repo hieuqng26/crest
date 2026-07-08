@@ -190,12 +190,101 @@ def list_workflows():
     ), 200
 
 
+def _retraining_counts(cal_ids):
+    """Segments queued/running per calibration, in one grouped query.
+
+    A segment re-run leaves the parent run's status at "success", so this count
+    is the only signal the UI has to surface a per-target "Retraining" state.
+    """
+    if not cal_ids:
+        return {}
+    rows = (
+        db.session.query(
+            CalibrationRunSegment.calibration_run_id,
+            db.func.count(CalibrationRunSegment.id),
+        )
+        .filter(
+            CalibrationRunSegment.calibration_run_id.in_(cal_ids),
+            CalibrationRunSegment.status.in_(("queued", "running")),
+        )
+        .group_by(CalibrationRunSegment.calibration_run_id)
+        .all()
+    )
+    return dict(rows)
+
+
+def _get_workflow_light(wf):
+    """Status-only workflow payload for the 5s poll.
+
+    Returns just the fields the page needs to stay live — per-target statuses,
+    progress and the retraining count — without the heavy per-run to_dict()
+    (which serialises train_metrics_json / val_metrics_json blobs) or the
+    dataset-name lookups. The frontend merges this into the full object it
+    already holds, so the static fields it omits are preserved.
+    """
+    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
+    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
+    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).first()
+    fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
+    retraining_by_cal = _retraining_counts([c.id for c in cals])
+
+    targets = []
+    for cal in cals:
+        fr = fcs_by_cal.get(cal.id)
+        targets.append(
+            {
+                "target_col": cal.target_col,
+                "calibration": {
+                    "run_id": cal.run_id,
+                    "status": cal.status,
+                    "progress": cal.progress,
+                    "finished_at": cal.finished_at.isoformat()
+                    if cal.finished_at
+                    else None,
+                    "retraining_segment_count": retraining_by_cal.get(cal.id, 0),
+                },
+                "forecast": {
+                    "run_id": fr.run_id,
+                    "status": fr.status,
+                    "progress": fr.progress,
+                    "finished_at": fr.finished_at.isoformat()
+                    if fr.finished_at
+                    else None,
+                }
+                if fr
+                else None,
+            }
+        )
+
+    return jsonify(
+        {
+            "run_id": wf.run_id,
+            "status": wf.status,
+            "current_stage": wf.current_stage,
+            "finished_at": wf.finished_at.isoformat() if wf.finished_at else None,
+            "error_message": wf.error_message,
+            "targets": targets,
+            "analysis": {
+                "run_id": crs.run_id,
+                "status": crs.status,
+                "progress": crs.progress,
+                "finished_at": crs.finished_at.isoformat() if crs.finished_at else None,
+            }
+            if crs
+            else None,
+        }
+    ), 200
+
+
 @workflows.get("/<run_id>")
 @require_perm("calibration:read")
 def get_workflow(run_id):
     wf = WorkflowRun.query.filter_by(run_id=run_id).first()
     if not wf:
         return jsonify({"error": "Not found"}), 404
+
+    if request.args.get("light") in ("1", "true"):
+        return _get_workflow_light(wf)
 
     cals = (
         CalibrationRun.query.options(selectinload(CalibrationRun.model_config))
@@ -227,24 +316,7 @@ def get_workflow(run_id):
         else {}
     )
 
-    # Segments being re-trained (queued/running) per calibration, in one grouped
-    # query. A segment re-run leaves the parent run's status at "success", so this
-    # count is what lets the UI surface a "Retraining" state per target.
-    retraining_by_cal: dict[int, int] = {}
-    if cals:
-        rows = (
-            db.session.query(
-                CalibrationRunSegment.calibration_run_id,
-                db.func.count(CalibrationRunSegment.id),
-            )
-            .filter(
-                CalibrationRunSegment.calibration_run_id.in_([c.id for c in cals]),
-                CalibrationRunSegment.status.in_(("queued", "running")),
-            )
-            .group_by(CalibrationRunSegment.calibration_run_id)
-            .all()
-        )
-        retraining_by_cal = dict(rows)
+    retraining_by_cal = _retraining_counts([c.id for c in cals])
 
     targets = []
     for cal in cals:

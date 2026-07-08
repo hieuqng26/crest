@@ -10,7 +10,7 @@ const forecastRunsAPI = {
   bulkDelete: (runIds)  => httpClient.post('/forecast-runs/bulk-delete', { run_ids: runIds }),
   cancel:  (runId)   => httpClient.post(`/forecast-runs/${runId}/cancel`),
   rerun:   (runId)   => httpClient.post(`/forecast-runs/${runId}/rerun`),
-  logs:    (runId)   => httpClient.get(`/forecast-runs/${runId}/logs`),
+  logs:    (runId, params = {}) => httpClient.get(`/forecast-runs/${runId}/logs`, { params }),
 
   // GET /forecast-runs/:id/results?page=&page_size=&sort_column=&sort_order=&filters=
   results: (runId, pageState) => httpClient.get(`/forecast-runs/${runId}/results`, { params: toPageParams(pageState) }),

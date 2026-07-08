@@ -35,12 +35,14 @@ const segmentsFetchPage = localFetchPage(() => segments.value)
 const STATUS_SEV = { success: 'success', failed: 'danger', skipped: 'warning' }
 
 const primaryMetric = (seg) => {
-  try {
-    const m = JSON.parse(seg.val_metrics_json || 'null')
-    if (!m) return null
-    const key = Object.keys(m).find(k => ['auc_roc', 'r2', 'rmse'].includes(k))
-    return key ? { label: key.replace(/_/g, ' ').toUpperCase(), value: m[key] } : null
-  } catch { return null }
+  // to_dict() emits parsed `val_metrics` (an object), not `val_metrics_json` — the
+  // old code parsed a field that never existed, so this always returned null.
+  const m = seg.val_metrics
+  if (!m || typeof m !== 'object') return null
+  const key = Object.keys(m).find(k => ['auc_roc', 'r2', 'rmse'].includes(k))
+  return key != null && typeof m[key] === 'number'
+    ? { label: key.replace(/_/g, ' ').toUpperCase(), value: m[key] }
+    : null
 }
 
 const fmtEad = (v) => {

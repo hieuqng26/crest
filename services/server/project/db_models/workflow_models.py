@@ -25,7 +25,10 @@ class WorkflowRun(db.Model):
         db.String(64), db.ForeignKey("users.email"), nullable=False
     )
     created_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
     )
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)

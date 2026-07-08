@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useToast } from 'primevue/usetoast'
+import { usePolling } from '@/composables/usePolling'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
 import StatusDot from '@/components/ui/StatusDot.vue'
@@ -14,14 +15,36 @@ const segments = ref([])
 const loading = ref(true)
 const search = ref('')
 
+// Sector filter: a run can have many sectors, so we only load the segment models
+// for the sector(s) the user selects instead of every segment at once.
+const sectorOptions = ref([])
+const selectedSectors = ref([])
+
 // Run-level defaults + feature universe the customize panel offers as a baseline.
 const defaultConfigId = ref(null)
 const defaultFeatureCols = ref([])
 const featureOptions = ref([])
 
-const fetchSegments = async () => {
+const fetchSectors = async () => {
   try {
-    const { data } = await calibrationsAPI.segments(props.runId)
+    const { data } = await calibrationsAPI.segmentSectors(props.runId)
+    sectorOptions.value = data.sectors ?? []
+    // Default to the first sector so the table isn't empty on open, without
+    // pulling every sector's segments up front.
+    if (!selectedSectors.value.length && sectorOptions.value.length) {
+      selectedSectors.value = [sectorOptions.value[0]]
+    }
+  } catch {
+    sectorOptions.value = []
+  }
+}
+
+const fetchSegments = async () => {
+  if (!selectedSectors.value.length) { segments.value = []; return }
+  try {
+    const { data } = await calibrationsAPI.segments(props.runId, {
+      sectors: selectedSectors.value.join(','),
+    })
     segments.value = data.segments ?? []
     defaultConfigId.value = data.default_model_config_id ?? null
     defaultFeatureCols.value = data.default_feature_cols ?? []
@@ -31,18 +54,18 @@ const fetchSegments = async () => {
   }
 }
 
-let pollTimer = null
 const hasRetraining = computed(() => segments.value.some((s) => s.status === 'queued' || s.status === 'running'))
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(async () => { if (!hasRetraining.value) { stopPolling(); return } await fetchSegments() }, 3000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
+const poll = usePolling(fetchSegments, { interval: 3000 })
 
 onMounted(async () => {
   loading.value = true
+  await fetchSectors()
   await fetchSegments()
   loading.value = false
-  if (hasRetraining.value) startPolling()
+  if (hasRetraining.value) poll.start()
 })
-onUnmounted(stopPolling)
+watch(selectedSectors, fetchSegments)
+watch(hasRetraining, (active) => { if (active) poll.start(); else poll.stop() })
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -120,7 +143,7 @@ const rerunSegment = async (seg) => {
     const idx = segments.value.findIndex((s) => s.segment_key === seg.segment_key)
     if (idx >= 0) segments.value[idx] = { ...segments.value[idx], ...data }
     customizingKey.value = null
-    startPolling()
+    poll.start()
     toast.add({ severity: 'info', summary: 'Segment queued', detail: `${seg.sector} · ${seg.split_value}`, life: 3000 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -136,6 +159,15 @@ const rerunSegment = async (seg) => {
       <h3>Segment models</h3>
       <span class="segments-caption">{{ segments.length }} segments</span>
       <div class="spacer" />
+      <MultiSelect
+        v-model="selectedSectors"
+        :options="sectorOptions"
+        filter
+        placeholder="Select sectors"
+        :maxSelectedLabels="2"
+        selectedItemsLabel="{0} sectors"
+        class="segments-sectors"
+      />
       <InputText v-model="search" placeholder="Search segments…" class="segments-search" />
     </div>
 
@@ -247,6 +279,9 @@ const rerunSegment = async (seg) => {
 .segments-caption { font-size: 12px; color: var(--text-color-muted); }
 .spacer { flex: 1; }
 .segments-search { width: 200px; height: 32px; font-size: 12.5px !important; }
+.segments-sectors { min-width: 200px; }
+:deep(.segments-sectors.p-multiselect) { height: 32px; }
+:deep(.segments-sectors .p-multiselect-label) { padding-top: 6px; padding-bottom: 6px; font-size: 12.5px; }
 
 .seg-row--open { background: var(--surface-hover); }
 

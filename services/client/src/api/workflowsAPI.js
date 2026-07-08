@@ -4,7 +4,7 @@ const workflowsAPI = {
   resolveDatasets: () => httpClient.get('/workflows/resolve-datasets'),
   create:          (body)   => httpClient.post('/workflows/', body),
   list:            (params = {}) => httpClient.get('/workflows/', { params }),
-  get:             (runId)  => httpClient.get(`/workflows/${runId}`),
+  get:             (runId, params = {}) => httpClient.get(`/workflows/${runId}`, { params }),
   cancel:          (runId)  => httpClient.post(`/workflows/${runId}/cancel`),
   rerun:           (runId)  => httpClient.post(`/workflows/${runId}/rerun`),
   activate:        (runId)  => httpClient.put(`/workflows/${runId}/activate`),

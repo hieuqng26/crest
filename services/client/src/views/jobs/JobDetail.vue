@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
+import { usePolling } from '@/composables/usePolling'
 import jobsAPI, { KIND } from '@/api/jobs'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
@@ -38,21 +39,18 @@ const isRetraining = computed(
   () => job.value?.status === 'success' && (job.value?.raw?.retraining_segment_count ?? 0) > 0
 )
 
-let pollTimer = null
+const poll = usePolling(fetchJob, { interval: 5000 })
 const isLive = () => job.value?.status === 'running' || job.value?.status === 'queued' || isRetraining.value
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchJob, 5000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(async () => {
   loading.value = true
   await fetchJob()
   loading.value = false
-  if (isLive()) startPolling()
+  if (isLive()) poll.start()
 })
-onUnmounted(stopPolling)
 
-watch([() => job.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
-watch([kind, runId], async () => { stopPolling(); job.value = null; loading.value = true; await fetchJob(); loading.value = false; if (isLive()) startPolling() })
+watch([() => job.value?.status, isRetraining], () => { if (isLive()) poll.start(); else poll.stop() })
+watch([kind, runId], async () => { poll.stop(); job.value = null; loading.value = true; await fetchJob(); loading.value = false; if (isLive()) poll.start() })
 
 const typeLabel = computed(() => ({ [KIND.TRAINING]: 'TRAINING', [KIND.FORECAST]: 'FORECAST', [KIND.ANALYSIS]: 'ANALYSIS' }[kind.value]))
 
@@ -152,7 +150,7 @@ const cancelJob = async () => {
   try {
     await jobsAPI.cancelJob(kind.value, runId.value)
     await fetchJob()
-    stopPolling()
+    poll.stop()
     toast.add({ severity: 'warn', summary: 'Run cancelled', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -165,7 +163,7 @@ const rerunJob = async () => {
   try {
     await jobsAPI.rerunJob(kind.value, runId.value)
     await fetchJob()
-    startPolling()
+    poll.start()
     toast.add({ severity: 'info', summary: 'Re-run queued', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Re-run failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })

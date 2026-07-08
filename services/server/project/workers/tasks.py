@@ -28,8 +28,10 @@ def _load_forecast_data(forecast) -> dict:
     """Load forecast payload — forecast_results rows for new runs, forecast_json fallback for old."""
     from project.db_models.calibration_models import ForecastResult
 
-    if forecast.results.count() > 0:
-        rows = forecast.results.order_by(ForecastResult.id).all()
+    # Fetch rows once and branch on the result — the old `results.count() > 0`
+    # pre-check issued a second COUNT query on top of the same lazy relationship.
+    rows = forecast.results.order_by(ForecastResult.id).all()
+    if rows:
         actual = [r.actual for r in rows]
         predicted = [r.predicted for r in rows]
         client_id = [r.client_id for r in rows]
@@ -1681,6 +1683,43 @@ def run_credit_analysis(self, cr_run_id: str):
             raise
 
 
+@celery_app.task(name="backfill_analysis_series")
+def backfill_analysis_series(cr_run_id: str):
+    """Materialise the Heatmap / Financial Forecast level series for a run that has
+    none yet (a legacy run predating the feature, or one whose best-effort step at
+    job completion failed).
+
+    Dispatched from the analysis endpoints instead of computing inline in the web
+    request — the portfolio load + per-client aggregation is a heavy pandas job that
+    must never block an HTTP worker (or a 5s poll). Idempotent: rewrites the run's
+    rows. The caller dedups dispatch with a short cache lock so concurrent pollers
+    only enqueue this once.
+    """
+    from project import app_session
+    from project.api.credit_risk.routes import (
+        _analysis_portfolio_df,
+        _slot_forecast_runs,
+    )
+    from project.core.credit_risk.analysis_series import materialize_analysis_series
+    from project.db_models.credit_models import CreditRiskRun
+
+    try:
+        with app_session():
+            cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+            if not cr or cr.status != "success":
+                return
+            portfolio_df = _analysis_portfolio_df(cr)
+            slots = _slot_forecast_runs(cr)
+            n_series = materialize_analysis_series(cr, portfolio_df, slots)
+        _cr_log(cr_run_id, f"Backfilled {n_series} analysis series rows")
+    except Exception as exc:
+        logger.error(
+            f"Analysis-series backfill failed for {cr_run_id}: {exc}", exc_info=True
+        )
+        _cr_log(cr_run_id, f"Analysis series backfill failed: {exc}", level="warn")
+        raise
+
+
 def _load_df_by_dataset_id(ds_id: int) -> "pd.DataFrame":
     """Download a dataset by PK and return its DataFrame (csv/xlsx/parquet)."""
     from project.db_models.calibration_models import Dataset
@@ -1822,6 +1861,28 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                     s.add(fr)
                 # Credit needs all forecast inputs current — abort before it.
                 raise
+
+        # The re-scored forecast(s) feed the Heatmap / Financial Forecast level
+        # series and the cached forecast index. Invalidate that index cache and, if
+        # this workflow has a credit run, re-materialise the series so those pages
+        # reflect the re-fit segment instead of stale pre-retrain numbers. Done here
+        # (after the forecast stage, before the credit early-returns) because the
+        # forecast change alone can move the Heatmap even when credit is unaffected.
+        try:
+            from project import cache
+
+            for _, fr_run_uuid, _ in affected_ids:
+                cache.delete(f"cr_var_index:{fr_run_uuid}")
+            if workflow_run_id:
+                cr_for_series = CreditRiskRun.query.filter_by(
+                    workflow_run_id=workflow_run_id
+                ).first()
+                if cr_for_series and cr_for_series.status == "success":
+                    backfill_analysis_series.delay(cr_for_series.run_id)
+        except Exception:
+            logger.warning(
+                "post-recompute analysis-series refresh dispatch failed", exc_info=True
+            )
 
         # ── Credit stage: recompute only this segment's clients ──────────────────
         # Only when the retrained variable actually feeds KMV (revenue/cogs don't).

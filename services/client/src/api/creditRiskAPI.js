@@ -21,7 +21,7 @@ const creditRiskAPI = {
   getActiveRun:    ()              => httpClient.get('/credit-risk/runs/active'),
   getRun:          (runId)         => httpClient.get(`/credit-risk/runs/${runId}`),
   getClientResult: (runId, cId)    => httpClient.get(`/credit-risk/runs/${runId}/client/${cId}`),
-  getRunLogs:      (runId)         => httpClient.get(`/credit-risk/runs/${runId}/logs`),
+  getRunLogs:      (runId, params = {}) => httpClient.get(`/credit-risk/runs/${runId}/logs`, { params }),
   // GET /credit-risk/runs/:id/results?page=&page_size=&sort_column=&sort_order=&filters=
   getRunResults: (runId, pageState) => httpClient.get(`/credit-risk/runs/${runId}/results`, { params: toPageParams(pageState) }),
   getRunResultsDistinct: (runId, column) =>

@@ -62,7 +62,10 @@ class CreditRiskRun(db.Model):
     error_message = db.Column(db.Text, nullable=True)
     progress = db.Column(db.Integer, default=0)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
     )
     workflow_run_id = db.Column(
         db.Integer, db.ForeignKey("workflow_runs.id"), nullable=True, index=True

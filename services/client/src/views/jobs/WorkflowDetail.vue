@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 
+import { usePolling } from '@/composables/usePolling'
 import workflowsAPI from '@/api/workflowsAPI'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
@@ -25,19 +26,68 @@ const wf = ref(null)
 const loading = ref(false)
 const actionBusy = ref(false)
 
+const handleFetchError = (e) => {
+  // A background purge can remove the workflow while this page is open → 404.
+  if (e?.response?.status === 404) {
+    poll.stop()
+    toast.add({ severity: 'info', summary: 'Workflow deleted', life: 2500 })
+    router.push({ name: 'jobs_history' })
+    return
+  }
+  toast.add({ severity: 'error', summary: 'Failed to load workflow', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+}
+
+// Full load — used on mount and after an action. Returns the complete object
+// graph (metrics, dataset names, config/algorithm) that the light poll omits.
 const fetchWorkflow = async () => {
   try {
     const { data } = await workflowsAPI.get(runId.value)
     wf.value = data
   } catch (e) {
-    // A background purge can remove the workflow while this page is open → 404.
-    if (e?.response?.status === 404) {
-      stopPolling()
-      toast.add({ severity: 'info', summary: 'Workflow deleted', life: 2500 })
-      router.push({ name: 'jobs_history' })
-      return
+    handleFetchError(e)
+  }
+}
+
+// Merge a status-only poll into the object we already hold, updating just the
+// live fields (statuses, progress, retraining count) and preserving every static
+// field the light payload doesn't carry. Returns true when the poll reveals a
+// newly-created forecast or analysis run whose full details we still need to pull.
+const mergeLight = (light) => {
+  if (!wf.value) return false
+  wf.value.status = light.status
+  wf.value.current_stage = light.current_stage
+  wf.value.finished_at = light.finished_at
+  wf.value.error_message = light.error_message
+
+  let needsFull = false
+  const byCol = new Map((light.targets ?? []).map((t) => [t.target_col, t]))
+  for (const tgt of wf.value.targets ?? []) {
+    const lt = byCol.get(tgt.target_col)
+    if (!lt) continue
+    if (tgt.calibration && lt.calibration) {
+      Object.assign(tgt.calibration, lt.calibration)
     }
-    toast.add({ severity: 'error', summary: 'Failed to load workflow', detail: e?.response?.data?.error ?? e.message, life: 4000 })
+    if (lt.forecast && !tgt.forecast) {
+      needsFull = true // a forecast run appeared → fetch its full record once
+    } else if (lt.forecast && tgt.forecast) {
+      Object.assign(tgt.forecast, lt.forecast)
+    }
+  }
+
+  if (light.analysis && !wf.value.analysis) {
+    needsFull = true // analysis run appeared → fetch its full record once
+  } else if (light.analysis && wf.value.analysis) {
+    Object.assign(wf.value.analysis, light.analysis)
+  }
+  return needsFull
+}
+
+const pollWorkflow = async () => {
+  try {
+    const { data } = await workflowsAPI.get(runId.value, { light: 1 })
+    if (mergeLight(data)) await fetchWorkflow()
+  } catch (e) {
+    handleFetchError(e)
   }
 }
 
@@ -50,19 +100,16 @@ const isRetraining = computed(() =>
   (wf.value?.status === 'success' && wf.value?.analysis?.status === 'running')
 )
 
-let pollTimer = null
+const poll = usePolling(pollWorkflow, { interval: 5000 })
 const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status) || isRetraining.value
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 5000) }
-const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(async () => {
   loading.value = true
   await fetchWorkflow()
   loading.value = false
-  if (isLive()) startPolling()
+  if (isLive()) poll.start()
 })
-onUnmounted(stopPolling)
-watch([() => wf.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
+watch([() => wf.value?.status, isRetraining], () => { if (isLive()) poll.start(); else poll.stop() })
 
 const STATUS_META = {
   success: { dot: 'var(--success-color)', text: 'var(--success-text-color)', label: 'SUCCESS' },
@@ -133,7 +180,7 @@ const cancelWorkflow = async () => {
   try {
     await workflowsAPI.cancel(runId.value)
     await fetchWorkflow()
-    stopPolling()
+    poll.stop()
     toast.add({ severity: 'warn', summary: 'Workflow cancelled', life: 2500 })
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Cancel failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })

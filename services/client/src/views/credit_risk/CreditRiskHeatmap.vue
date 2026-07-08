@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 
@@ -20,6 +20,24 @@ const loading      = ref(false)
 const noActiveRun  = ref(false)
 const errorMessage = ref(null)
 const drilledSector = ref(null)
+
+// 202 {status:'materializing'}: the run's series is being computed in the
+// background — show a "preparing" state and retry on a bounded schedule.
+const materializing = ref(false)
+let materializeTimer = null
+let materializeAttempts = 0
+const MAX_MATERIALIZE_ATTEMPTS = 45 // ~3 min at 4s
+const isMaterializing = (data) => data?.status === 'materializing'
+function scheduleMaterializeRetry(fn) {
+  if (materializeAttempts >= MAX_MATERIALIZE_ATTEMPTS) {
+    materializing.value = false
+    errorMessage.value = 'Preparing analysis data is taking longer than expected. Please refresh the page.'
+    return
+  }
+  materializeAttempts += 1
+  materializeTimer = setTimeout(fn, 4000)
+}
+onUnmounted(() => clearTimeout(materializeTimer))
 
 // Company drill-down is opt-in: picking a sector shows a company multi-select +
 // Confirm, and only the chosen companies are computed/plotted (the per-company
@@ -45,6 +63,7 @@ function heatCell(v) {
 async function fetchMeta() {
   try {
     const { data } = await creditRiskAPI.analysisMeta()
+    if (isMaterializing(data)) return // heatmap retry will re-fetch meta once ready
     companiesBySector.value = data.companies_by_sector ?? {}
   } catch { /* meta is best-effort; drill-down falls back to sector companies from the heatmap */ }
 }
@@ -59,6 +78,13 @@ async function fetchHeatmap() {
       params.clients = appliedCompanies.value.join(',')
     }
     const { data } = await creditRiskAPI.analysisHeatmap(params)
+    if (isMaterializing(data)) {
+      materializing.value = true
+      scheduleMaterializeRetry(async () => { await Promise.all([fetchMeta(), fetchHeatmap()]) })
+      return
+    }
+    materializing.value = false
+    materializeAttempts = 0
     heat.value = data
     noActiveRun.value = false
   } catch (e) {
@@ -177,6 +203,15 @@ onMounted(async () => {
         <div class="text-xs text-color-secondary">{{ errorMessage }}</div>
       </div>
       <Button label="Job History" icon="pi pi-list" size="small" @click="router.push({ name: 'jobs_history' })" />
+    </div>
+
+    <!-- Preparing analysis data (backend is materialising the series) -->
+    <div v-else-if="materializing" class="panel flex flex-column align-items-center justify-content-center gap-3" style="height: 22rem">
+      <i class="pi pi-spin pi-spinner text-3xl text-color-secondary" />
+      <div class="text-center">
+        <div class="text-sm font-medium mb-1">Preparing analysis data…</div>
+        <div class="text-xs text-color-secondary">Computing this run's heatmap series. This page will refresh automatically.</div>
+      </div>
     </div>
 
     <!-- Loading -->

@@ -28,9 +28,16 @@ const isForecastLive = computed(() => {
   return s === 'running' || s === 'queued'
 })
 
-watch(selectedForecast, async (fr) => {
+// Key on stable primitives, not the forecast object: the 5s workflow poll
+// replaces the whole target graph each tick, so watching the object itself
+// re-probed columns (and remounted the table) on every poll for no reason.
+// The run_id + finished_at pair only changes when results actually change.
+const forecastKey = computed(() =>
+  selectedForecast.value ? `${selectedForecast.value.run_id}:${selectedForecast.value.finished_at ?? ''}` : ''
+)
+watch(forecastKey, async (key) => {
   columns.value = []
-  if (!fr) return
+  if (!key) return
   columns.value = await probeColumns(fetchPage)
 }, { immediate: true })
 </script>
