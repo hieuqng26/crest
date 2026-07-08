@@ -30,12 +30,19 @@ const fetchWorkflow = async () => {
     const { data } = await workflowsAPI.get(runId.value)
     wf.value = data
   } catch (e) {
+    // A background purge can remove the workflow while this page is open → 404.
+    if (e?.response?.status === 404) {
+      stopPolling()
+      toast.add({ severity: 'info', summary: 'Workflow deleted', life: 2500 })
+      router.push({ name: 'jobs_history' })
+      return
+    }
     toast.add({ severity: 'error', summary: 'Failed to load workflow', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
 }
 
 let pollTimer = null
-const isLive = () => wf.value?.status === 'running' || wf.value?.status === 'queued'
+const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status)
 const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 5000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
@@ -46,13 +53,14 @@ onMounted(async () => {
   if (isLive()) startPolling()
 })
 onUnmounted(stopPolling)
-watch(() => wf.value?.status, (s) => { if (s === 'running' || s === 'queued') startPolling(); else stopPolling() })
+watch(() => wf.value?.status, (s) => { if (['running', 'queued', 'deleting'].includes(s)) startPolling(); else stopPolling() })
 
 const STATUS_META = {
   success: { dot: 'var(--success-color)', text: 'var(--success-text-color)', label: 'SUCCESS' },
   failed: { dot: 'var(--error-color)', text: 'var(--error-text-color)', label: 'FAILED' },
   running: { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'RUNNING' },
-  queued: { dot: 'var(--queued-color)', text: 'var(--queued-text-color)', label: 'QUEUED' }
+  queued: { dot: 'var(--queued-color)', text: 'var(--queued-text-color)', label: 'QUEUED' },
+  deleting: { dot: 'var(--deleting-color)', text: 'var(--deleting-text-color)', label: 'DELETING…' }
 }
 const statusMeta = computed(() => STATUS_META[wf.value?.status] || STATUS_META.queued)
 
@@ -144,7 +152,9 @@ const confirmDelete = () => {
       try {
         const res = await workflowsAPI.delete(runId.value)
         if (res.status < 300) {
-          toast.add({ severity: 'success', summary: 'Workflow deleted', life: 2000 })
+          // 202 Accepted: purge runs in the background; return to the list where
+          // the row shows a "Deleting…" state until it disappears.
+          toast.add({ severity: 'info', summary: 'Deleting workflow…', life: 2500 })
           router.push({ name: 'jobs_history' })
           return
         }

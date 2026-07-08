@@ -39,9 +39,11 @@ const autoSetActiveAnalysisRun = async () => {
 }
 
 let pollTimer = null
+// `deleting` counts as active: an async workflow purge keeps the row visible
+// until the backend removes it, so we must keep polling to see it disappear.
 const hasActive = computed(() =>
   jobs.value.some((j) => j.status === 'running' || j.status === 'queued') ||
-  workflows.value.some((w) => w.status === 'running' || w.status === 'queued')
+  workflows.value.some((w) => w.status === 'running' || w.status === 'queued' || w.status === 'deleting')
 )
 const startPolling = () => {
   if (pollTimer) return
@@ -160,13 +162,17 @@ const exitSelectMode = () => { selectMode.value = false; selection.value = new S
 const bulkDelete = async () => {
   const rows = topLevelRows.value.filter((r) => selection.value.has(r.key))
   try {
-    await Promise.all(rows.map((r) =>
+    const results = await Promise.all(rows.map((r) =>
       r.type === 'workflow'
-        ? workflowsAPI.delete(r.wf.run_id)
+        ? workflowsAPI.delete(r.wf.run_id)   // 202 async, or 409 (resolves, not thrown)
         : jobsAPI.deleteJob(r.job.kind, r.job.run_id)
     ))
-    toast.add({ severity: 'success', summary: 'Deleted', detail: `${rows.length} run${rows.length !== 1 ? 's' : ''} deleted`, life: 3000 })
+    const blocked = results.filter((res) => res?.status === 409).length
+    const accepted = rows.length - blocked
+    if (accepted) toast.add({ severity: 'success', summary: 'Deleting', detail: `${accepted} run${accepted !== 1 ? 's' : ''} queued for deletion`, life: 3000 })
+    if (blocked)  toast.add({ severity: 'warn', summary: 'Some blocked', detail: `${blocked} run${blocked !== 1 ? 's' : ''} could not be deleted (dependencies)`, life: 5000 })
     await fetchJobs()
+    startPolling()   // workflow purges are async — keep polling until rows clear
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Delete failed', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
@@ -184,8 +190,9 @@ function openMenu(e, items) {
 }
 
 function buildWorkflowMenu(wf) {
-  const active = wf.status === 'running' || wf.status === 'queued'
-  const items  = []
+  const active   = wf.status === 'running' || wf.status === 'queued'
+  const deleting = wf.status === 'deleting'
+  const items    = []
 
   if (wf.analysis_summary?.status === 'success') {
     items.push({
@@ -196,10 +203,10 @@ function buildWorkflowMenu(wf) {
     })
   }
   items.push({ label: 'View', icon: 'pi pi-eye', command: () => openWorkflow(wf) })
-  if (!active) items.push({ label: 'Re-run', icon: 'pi pi-refresh', command: () => rerunWorkflow(wf) })
+  if (!active && !deleting) items.push({ label: 'Re-run', icon: 'pi pi-refresh', command: () => rerunWorkflow(wf) })
   if (active)  items.push({ label: 'Cancel',  icon: 'pi pi-times-circle', command: () => cancelWorkflow(wf) })
   items.push({ separator: true })
-  items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'menu-item-danger', command: () => deleteWorkflow(wf) })
+  items.push({ label: deleting ? 'Deleting…' : 'Delete', icon: 'pi pi-trash', class: 'menu-item-danger', disabled: deleting, command: () => deleteWorkflow(wf) })
   return items
 }
 
@@ -265,8 +272,11 @@ async function deleteWorkflow(wf) {
     if (res.status === 409) {
       toast.add({ severity: 'warn', summary: 'Cannot delete', detail: res.data?.error, life: 5000 })
     } else {
-      toast.add({ severity: 'success', summary: 'Deleted', detail: wf.name, life: 3000 })
+      // 202 Accepted: purge runs in the background. The row now reports the
+      // `deleting` status; refetch to show it and keep polling until it's gone.
+      toast.add({ severity: 'info', summary: 'Deleting…', detail: wf.name, life: 3000 })
       await fetchJobs()
+      startPolling()
     }
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Error', detail: e?.response?.data?.error ?? e.message, life: 4000 })
@@ -438,6 +448,9 @@ async function deleteJob(j) {
             <div v-if="row.wf.status === 'running'" class="progress-row">
               <div class="progress-track"><div class="progress-fill" style="width:50%" /></div>
             </div>
+            <div v-else-if="row.wf.status === 'deleting'" class="progress-row">
+              <div class="progress-track"><div class="progress-fill progress-fill--deleting" /></div>
+            </div>
             <span v-else class="progress-label">{{ workflowProgressLabel(row.wf) }}</span>
           </template>
           <template v-else>
@@ -581,6 +594,16 @@ async function deleteJob(j) {
 .progress-row { display: flex; align-items: center; gap: 8px; }
 .progress-track { flex: 1; min-width: 60px; height: 5px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--yellow); }
+/* Indeterminate "deleting" bar — a stripe sliding across the track. */
+.progress-fill--deleting {
+  width: 40%;
+  background: var(--deleting-color, var(--error-color));
+  animation: jh-indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes jh-indeterminate {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
 .progress-pct { font-size: 11px; color: var(--text-color-muted); }
 .progress-label { font-size: 12px; color: var(--text-color-muted-2); }
 

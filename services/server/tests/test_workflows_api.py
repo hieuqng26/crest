@@ -355,9 +355,12 @@ class TestWorkflowCancel:
 
 
 class TestWorkflowDelete:
-    def test_delete_removes_workflow_and_children_in_order(
+    def test_delete_marks_deleting_and_dispatches_task(
         self, client, login, app, base_env
     ):
+        """The route is async now: it flips the workflow to `deleting`, returns
+        202, and dispatches the purge task (mocked here) — it does NOT delete
+        inline."""
         from project import db
         from project.db_models.calibration_models import CalibrationRun
         from project.db_models.workflow_models import WorkflowRun
@@ -388,11 +391,110 @@ class TestWorkflowDelete:
         db.session.commit()
 
         login(d["user"].email)
-        resp = client.delete(f"/api/workflows/{wf.run_id}")
-        assert resp.status_code == 204
+        with patch(
+            "project.api.workflows.routes.delete_workflow_task.delay"
+        ) as mock_delay:
+            resp = client.delete(f"/api/workflows/{wf.run_id}")
+        assert resp.status_code == 202
+        assert resp.get_json()["status"] == "deleting"
+        mock_delay.assert_called_once_with("wf-delete-1")
 
-        assert WorkflowRun.query.filter_by(run_id="wf-delete-1").first() is None
-        assert CalibrationRun.query.filter_by(run_id="wf-delete-cal-1").first() is None
+        # Nothing deleted yet — only the status changed.
+        row = WorkflowRun.query.filter_by(run_id="wf-delete-1").first()
+        assert row is not None and row.status == "deleting"
+        assert (
+            CalibrationRun.query.filter_by(run_id="wf-delete-cal-1").first() is not None
+        )
+
+    def test_purge_workflow_removes_all_children_no_orphans(
+        self, client, app, base_env
+    ):
+        """purge_workflow (run by the Celery task) set-deletes the workflow and
+        every child run + result/log/segment row, leaving no orphans."""
+        from project import db
+        from project.core.workflow_delete import purge_workflow
+        from project.db_models.calibration_models import (
+            CalibrationRun,
+            CalibrationRunLog,
+            CalibrationRunSegment,
+        )
+        from project.db_models.forecast_models import (
+            ForecastRun,
+            ForecastRunResult,
+        )
+        from project.db_models.workflow_models import WorkflowRun
+
+        d = base_env
+        wf = WorkflowRun(
+            run_id="wf-purge-1",
+            name="wf-purge",
+            status="deleting",
+            current_stage="done",
+            triggered_by=d["user"].email,
+            created_at=datetime.now(timezone.utc),
+            calibration_dataset_id=d["cal_ds"].id,
+            forecast_dataset_id=d["fc_ds"].id,
+        )
+        db.session.add(wf)
+        db.session.commit()
+        cal = CalibrationRun(
+            run_id="wf-purge-cal-1",
+            dataset_id=d["cal_ds"].id,
+            model_config_id=d["cfg"].id,
+            status="success",
+            triggered_by=d["user"].email,
+            target_col="total_assets",
+            workflow_run_id=wf.id,
+        )
+        db.session.add(cal)
+        db.session.commit()
+        db.session.add_all(
+            [
+                CalibrationRunLog(
+                    run_id="wf-purge-cal-1",
+                    logged_at=datetime.now(timezone.utc),
+                    level="info",
+                    message="hi",
+                ),
+                CalibrationRunSegment(
+                    calibration_run_id=cal.id,
+                    segment_key="banks__EU",
+                    sector="banks",
+                    split_by="country",
+                    split_value="EU",
+                    status="success",
+                ),
+            ]
+        )
+        fr = ForecastRun(
+            run_id="wf-purge-fr-1",
+            calibration_run_id=cal.id,
+            dataset_id=d["fc_ds"].id,
+            status="success",
+            workflow_run_id=wf.id,
+        )
+        db.session.add(fr)
+        db.session.commit()
+        db.session.add(
+            ForecastRunResult(forecast_run_id=fr.id, date="2026", predicted=1.0)
+        )
+        db.session.commit()
+
+        wf_id = wf.id
+        # MinIO cleanup is best-effort I/O — stub it out in the unit test.
+        with patch("project.core.workflow_delete.storage.remove_prefix") as mock_rm:
+            purge_workflow(wf_id)
+        mock_rm.assert_called_once_with("artifacts/wf-purge-cal-1/")
+
+        assert WorkflowRun.query.filter_by(id=wf_id).first() is None
+        assert CalibrationRun.query.filter_by(run_id="wf-purge-cal-1").first() is None
+        assert ForecastRun.query.filter_by(run_id="wf-purge-fr-1").first() is None
+        assert CalibrationRunLog.query.filter_by(run_id="wf-purge-cal-1").count() == 0
+        assert (
+            CalibrationRunSegment.query.filter_by(calibration_run_id=cal.id).count()
+            == 0
+        )
+        assert ForecastRunResult.query.filter_by(forecast_run_id=fr.id).count() == 0
 
     def test_delete_blocked_while_child_active(
         self, client, login, workflow_with_children

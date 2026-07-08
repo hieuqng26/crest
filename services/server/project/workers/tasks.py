@@ -1714,3 +1714,37 @@ def advance_workflow(self, workflow_run_id: int):
     app = _make_flask_app()
     with app.app_context():
         advance_workflow_impl(workflow_run_id)
+
+
+@celery_app.task(bind=True, name="delete_workflow")
+def delete_workflow(self, run_id: str):
+    """Purge a workflow and all its runs in the background. The API route has
+    already validated the delete is safe and flipped the workflow to the
+    ``deleting`` status; this does the heavy set-based deletion + MinIO cleanup.
+
+    On any unexpected error the workflow is reverted out of ``deleting`` to a
+    ``failed`` status with the traceback, so a row can never get stuck showing
+    "Deleting…" forever.
+    """
+    from project import app_session
+    from project.core.workflow_delete import purge_workflow
+    from project.db_models.workflow_models import WorkflowRun
+
+    app = _make_flask_app()
+    with app.app_context():
+        wf = WorkflowRun.query.filter_by(run_id=run_id).first()
+        if not wf:
+            return  # already gone — idempotent no-op
+        wf_id = wf.id
+        try:
+            purge_workflow(wf_id)
+        except Exception as e:  # noqa: BLE001 - surface, never leave stuck
+            logger.exception("Workflow %s deletion failed", run_id)
+            with app_session() as s:
+                wf = WorkflowRun.query.filter_by(id=wf_id).first()
+                if wf:
+                    wf.status = "failed"
+                    wf.error_message = f"Deletion failed: {e}"
+                    wf.finished_at = datetime.now(timezone.utc)
+                    s.add(wf)
+            raise

@@ -2,6 +2,7 @@ import io
 import os
 
 from minio import Minio
+from minio.deleteobjects import DeleteObject
 from minio.error import S3Error
 
 from project.logger import get_logger
@@ -64,3 +65,29 @@ def upload_file(local_path: str, object_name: str) -> str:
     client = get_client()
     client.fput_object(bucket, object_name, local_path)
     return f"{bucket}/{object_name}"
+
+
+def remove_object(object_name: str) -> None:
+    """Remove a single object. Never raises — logs and swallows storage errors
+    so callers (e.g. run deletion) are not blocked by MinIO hiccups; the DB is
+    the source of truth."""
+    bucket = os.getenv("MINIO_BUCKET", "mst-artifacts")
+    try:
+        get_client().remove_object(bucket, object_name)
+    except Exception as e:  # noqa: BLE001 - best-effort cleanup
+        logger.error(f"MinIO remove_object error for {object_name}: {e}")
+
+
+def remove_prefix(prefix: str) -> None:
+    """Recursively remove every object under a key prefix (e.g. all artifacts
+    for a run under ``artifacts/{run_id}/``). Best-effort: logs per-object and
+    fatal errors, never raises, so run deletion is never blocked by storage."""
+    bucket = os.getenv("MINIO_BUCKET", "mst-artifacts")
+    try:
+        client = get_client()
+        objects = client.list_objects(bucket, prefix=prefix, recursive=True)
+        delete_list = (DeleteObject(obj.object_name) for obj in objects)
+        for err in client.remove_objects(bucket, delete_list):
+            logger.error(f"MinIO remove error under {prefix}: {err}")
+    except Exception as e:  # noqa: BLE001 - best-effort cleanup
+        logger.error(f"MinIO remove_prefix error for {prefix}: {e}")

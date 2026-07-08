@@ -17,7 +17,7 @@ class WorkflowRun(db.Model):
     name = db.Column(db.String(255), nullable=False)
     status = db.Column(
         db.String(32), nullable=False, default="queued"
-    )  # queued|running|success|failed
+    )  # queued|running|success|failed|deleting
     current_stage = db.Column(
         db.String(16), nullable=False, default="training"
     )  # training|forecast|analysis|done

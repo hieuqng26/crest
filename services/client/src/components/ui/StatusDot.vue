@@ -13,7 +13,8 @@ const STATUS_MAP = {
   failed:   { dot: 'var(--error-color)',   text: 'var(--error-text-color)',   label: 'Failed' },
   error:    { dot: 'var(--error-color)',   text: 'var(--error-text-color)',   label: 'Failed' },
   running:  { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'Running' },
-  queued:   { dot: 'var(--queued-color)',  text: 'var(--queued-text-color)',  label: 'Queued' }
+  queued:   { dot: 'var(--queued-color)',  text: 'var(--queued-text-color)',  label: 'Queued' },
+  deleting: { dot: 'var(--deleting-color)', text: 'var(--deleting-text-color)', label: 'Deleting…', pulse: true }
 }
 
 const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
@@ -23,6 +24,7 @@ const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
   <span class="status-dot-wrap">
     <span
       class="status-dot"
+      :class="{ 'status-dot--pulse': config.pulse }"
       :style="{ backgroundColor: config.dot, width: size + 'px', height: size + 'px' }"
     ></span>
     <span class="status-text" :style="{ color: config.text }">{{ label || config.label }}</span>
@@ -38,6 +40,13 @@ const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
 .status-dot {
   border-radius: 50%;
   flex-shrink: 0;
+}
+.status-dot--pulse {
+  animation: status-dot-pulse 1s ease-in-out infinite;
+}
+@keyframes status-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
 }
 .status-text {
   font-size: 12px;

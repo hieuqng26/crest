@@ -18,10 +18,10 @@ from project.db_models.calibration_models import CalibrationRun, Dataset, ModelC
 from project.db_models.credit_models import (
     CreditRiskForecastInput,
     CreditRiskRun,
-    CreditRiskRunLog,
 )
 from project.db_models.forecast_models import ForecastRun
 from project.db_models.workflow_models import WorkflowRun
+from project.workers.tasks import delete_workflow as delete_workflow_task
 from project.workers.tasks import run_calibration
 
 from . import workflows
@@ -601,17 +601,16 @@ def delete_workflow(run_id):
             }
         ), 409
 
+    # Safe to delete. The actual purge (set-based deletes of potentially tens of
+    # thousands of result/log rows + MinIO artifact cleanup) can be slow, so run
+    # it in a Celery task: flip the workflow to "deleting" and return 202
+    # immediately. The frontend polls the list and shows a "Deleting…" state
+    # until the row disappears. Dispatch only after the status commit, so the
+    # worker never sees a stale status (mirrors the launch dispatch rule).
     with app_session() as s:
-        for cr in crs:
-            # CreditRiskRunLog FKs credit_risk_runs.run_id with no ORM cascade
-            # relationship, so it must be cleared explicitly (results and
-            # forecast inputs are cascade-deleted via their relationships).
-            CreditRiskRunLog.query.filter_by(run_id=cr.run_id).delete()
-            s.delete(CreditRiskRun.query.get(cr.id))
-        for fr in fcs:
-            s.delete(ForecastRun.query.get(fr.id))
-        for cal in cals:
-            s.delete(CalibrationRun.query.get(cal.id))
-        s.delete(WorkflowRun.query.get(wf.id))
+        wf.status = "deleting"
+        s.add(wf)
+        result = wf.to_dict()
 
-    return "", 204
+    delete_workflow_task.delay(run_id)
+    return jsonify(result), 202

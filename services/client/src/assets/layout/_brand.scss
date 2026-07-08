@@ -94,6 +94,8 @@
   --running-text-color: #8A7600;
   --queued-color:       #9B9BA6;
   --queued-text-color:  #747480;
+  --deleting-color:      #C4331D;
+  --deleting-text-color: #A32B18;
   /* legacy aliases kept for existing component styles */
   --warning-color: var(--running-color);
   --danger-color:  var(--error-color);

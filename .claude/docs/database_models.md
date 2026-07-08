@@ -84,9 +84,15 @@ datasets ──< calibration_runs ──< forecast_runs ──< credit_risk_run_
   than letting the DB raise. Use the pattern in `.claude/skills/delete-with-refs.md`.
 - A run with `workflow_run_id` set cannot be deleted or rerun individually via
   `/api/calibrations`, `/api/forecast-runs`, or `/api/credit-risk` — those routes
-  return 409 pointing at `DELETE /api/workflows/<run_id>` instead, which deletes the
-  whole workflow (credit run → forecast runs → calibration runs → workflow row) in
-  dependency order inside one transaction.
+  return 409 pointing at `DELETE /api/workflows/<run_id>` instead. That route is
+  **async**: it runs the same 409 pre-checks, sets `WorkflowRun.status = "deleting"`,
+  returns **202**, and dispatches the `delete_workflow` Celery task. The purge itself
+  (`project/core/workflow_delete.py::purge_workflow`) uses **set-based
+  `DELETE ... WHERE col IN (...)`** per table, child-first in FK order (credit results/
+  logs → forecast inputs → forecast results → forecasts → calibration logs/segments →
+  the run tables → workflow), then removes MinIO artifacts under `artifacts/{run_id}/`.
+  Set-based (not per-row ORM cascade) because the child result/log tables can hold tens
+  of thousands of rows. See `.claude/bugs/workflow-delete-flush-ordering.md`.
 
 ## Auth & RBAC tables (`api/auth/models.py`, `api/roles/models.py`)
 
