@@ -21,7 +21,16 @@ const noActiveRun  = ref(false)
 const errorMessage = ref(null)
 const drilledSector = ref(null)
 
+// Company drill-down is opt-in: picking a sector shows a company multi-select +
+// Confirm, and only the chosen companies are computed/plotted (the per-company
+// series is the expensive part, so we never compute the whole sector at once).
+const companiesBySector = ref({})
+const selectedCompanies = ref([])
+const appliedCompanies  = ref([])
+
 const heat = ref(null) // { metric, label, unit, years, drilled, title, subtitle, rows }
+
+const sectorCompanies = computed(() => companiesBySector.value[drilledSector.value] || [])
 
 function heatCell(v) {
   if (v == null) return { txt: '—', bg: 'var(--surface-ground)', color: 'var(--text-color-muted)' }
@@ -33,14 +42,23 @@ function heatCell(v) {
   return { txt: '−' + Math.abs(v).toFixed(1), bg: `rgba(46,46,56,${a.toFixed(2)})`, color: a > 0.45 ? '#FFFFFF' : '#1A1A24' }
 }
 
+async function fetchMeta() {
+  try {
+    const { data } = await creditRiskAPI.analysisMeta()
+    companiesBySector.value = data.companies_by_sector ?? {}
+  } catch { /* meta is best-effort; drill-down falls back to sector companies from the heatmap */ }
+}
+
 async function fetchHeatmap() {
   loading.value = true
   errorMessage.value = null
   try {
-    const { data } = await creditRiskAPI.analysisHeatmap({
-      metric: selectedMetric.value,
-      sector: drilledSector.value || undefined,
-    })
+    const params = { metric: selectedMetric.value }
+    if (drilledSector.value) {
+      params.sector = drilledSector.value
+      params.clients = appliedCompanies.value.join(',')
+    }
+    const { data } = await creditRiskAPI.analysisHeatmap(params)
     heat.value = data
     noActiveRun.value = false
   } catch (e) {
@@ -61,24 +79,48 @@ function selectMetric(key) {
 
 function drillInto(sector) {
   drilledSector.value = sector
+  // Default the picker to the sector's companies but don't plot until confirmed.
+  selectedCompanies.value = [...(companiesBySector.value[sector] || [])]
+  appliedCompanies.value = []
+  heat.value = null
+}
+
+function confirmCompanies() {
+  if (!selectedCompanies.value.length) {
+    toast.add({ severity: 'warn', summary: 'Select at least one company', life: 2500 })
+    return
+  }
+  appliedCompanies.value = [...selectedCompanies.value]
+  fetchHeatmap()
 }
 
 function backToSectors() {
   drilledSector.value = null
+  selectedCompanies.value = []
+  appliedCompanies.value = []
+  fetchHeatmap()
 }
 
-watch([selectedMetric, drilledSector], fetchHeatmap)
-onMounted(fetchHeatmap)
+// Metric change: re-fetch sector view immediately, or re-fetch drill-down only if
+// companies are already applied (don't auto-compute before the user confirms).
+watch(selectedMetric, () => {
+  if (drilledSector.value && !appliedCompanies.value.length) return
+  fetchHeatmap()
+})
+
+onMounted(async () => {
+  await Promise.all([fetchMeta(), fetchHeatmap()])
+})
 </script>
 
 <template>
   <div>
-    <div v-if="heat?.drilled" class="back-link" @click="backToSectors">&larr; All sectors</div>
+    <div v-if="drilledSector" class="back-link" @click="backToSectors">&larr; All sectors</div>
 
     <PageHeader
       eyebrow="ANALYSIS"
-      :title="heat?.title ?? 'Sector Heatmap'"
-      :subtitle="heat?.subtitle ?? 'Forecasted change by sector and year'"
+      :title="drilledSector ? drilledSector : (heat?.title ?? 'Sector Heatmap')"
+      :subtitle="drilledSector ? 'Company-level detail — select companies to plot' : (heat?.subtitle ?? 'Forecasted change by sector and year')"
     >
       <template #actions>
         <div class="legend-row">
@@ -98,6 +140,23 @@ onMounted(fetchHeatmap)
         @click="selectMetric(m.key)"
       >{{ m.label }}</div>
       <span class="font-mono unit-caption">{{ heat?.unit ?? '' }}</span>
+    </div>
+
+    <!-- Company picker (drill-down only) -->
+    <div v-if="drilledSector" class="company-bar">
+      <span class="metric-label">COMPANIES</span>
+      <MultiSelect
+        v-model="selectedCompanies"
+        :options="sectorCompanies"
+        filter
+        placeholder="Select companies"
+        :maxSelectedLabels="3"
+        selectedItemsLabel="{0} companies selected"
+        class="company-select font-mono"
+        style="min-width: 22rem"
+      />
+      <Button label="Confirm" icon="pi pi-check" size="small" @click="confirmCompanies" />
+      <span class="company-hint">{{ sectorCompanies.length }} companies in {{ drilledSector }}</span>
     </div>
 
     <!-- No active run -->
@@ -123,6 +182,13 @@ onMounted(fetchHeatmap)
     <!-- Loading -->
     <div v-else-if="loading" class="flex justify-content-center align-items-center" style="height: 12rem">
       <i class="pi pi-spin pi-spinner text-3xl text-color-secondary" />
+    </div>
+
+    <!-- Drill-down: awaiting company selection -->
+    <div v-else-if="drilledSector && !appliedCompanies.length" class="panel flex flex-column align-items-center justify-content-center gap-2" style="height: 16rem">
+      <i class="pi pi-building text-3xl text-color-secondary opacity-50" />
+      <div class="text-sm font-medium">Select companies and press Confirm</div>
+      <div class="text-xs text-color-secondary">Only the chosen companies are computed, keeping the view fast.</div>
     </div>
 
     <div v-else-if="heat" class="panel">
@@ -181,6 +247,18 @@ onMounted(fetchHeatmap)
 .metric-chip:hover { border-color: var(--ink); }
 .metric-chip.active { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
 .unit-caption { font-size: 11.5px; color: var(--text-color-muted); }
+
+.company-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: var(--surface-inset);
+  border-radius: 2px;
+}
+.company-hint { font-size: 11.5px; color: var(--text-color-muted); }
 
 .panel {
   background: var(--surface-card);

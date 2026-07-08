@@ -1091,6 +1091,12 @@ def get_analysis_heatmap():
     if metric not in _HEATMAP_METRICS:
         return jsonify({"error": f"Unknown metric '{metric}'"}), 400
     sector_filter = request.args.get("sector") or None
+    clients_arg = request.args.get("clients")
+    client_filter = (
+        {c.strip() for c in clients_arg.split(",") if c.strip()}
+        if clients_arg
+        else None
+    )
     spec = _HEATMAP_METRICS[metric]
 
     try:
@@ -1185,6 +1191,17 @@ def get_analysis_heatmap():
         sector_rows = portfolio_df[portfolio_df["sector"] == sector_filter]
         if sector_rows.empty:
             return jsonify({"error": f"Sector '{sector_filter}' not found"}), 404
+        # Only compute the companies the caller asked for — the per-client series
+        # is the expensive part, so restricting to a selected subset is what keeps
+        # the drill-down fast for large sectors.
+        if client_filter is not None:
+            sector_rows = sector_rows[
+                sector_rows["client_id"].astype(str).isin(client_filter)
+            ]
+            if sector_rows.empty:
+                return jsonify(
+                    {"error": "None of the selected companies are in this sector"}
+                ), 404
         rows_out = []
         # Group once by client_id instead of re-filtering sector_rows per client
         # (which was an O(C_sec^2) rescan inside the loop).
