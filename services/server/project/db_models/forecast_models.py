@@ -34,22 +34,33 @@ class ForecastRun(db.Model):
         "ForecastRunResult", cascade="all, delete-orphan", lazy="dynamic"
     )
 
-    def to_dict(self):
+    def to_dict(self, *, cal_run=None, dataset=None, config_name=None):
+        """Serialise the run.
+
+        Callers that already hold the related rows (list/detail endpoints that
+        batch-load them) can pass ``cal_run``, ``dataset`` and ``config_name`` to
+        avoid the three per-row ``.query.get()`` lookups this method would
+        otherwise fire. Single-item callers omit them and get the self-contained
+        path below.
+        """
         from project.db_models.calibration_models import (
             CalibrationRun,
             Dataset,
             ModelConfig,
         )
 
-        cal_run = CalibrationRun.query.get(self.calibration_run_id)
-        ds = Dataset.query.get(self.dataset_id)
+        if cal_run is None:
+            cal_run = CalibrationRun.query.get(self.calibration_run_id)
+        if dataset is None:
+            dataset = Dataset.query.get(self.dataset_id)
+        ds = dataset
 
         target_col = None
-        config_name = None
         if cal_run:
             target_col = cal_run.target_col
-            cfg = ModelConfig.query.get(cal_run.model_config_id)
-            config_name = cfg.name if cfg else None
+            if config_name is None:
+                cfg = ModelConfig.query.get(cal_run.model_config_id)
+                config_name = cfg.name if cfg else None
 
         return dict(
             id=self.id,

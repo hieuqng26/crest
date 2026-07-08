@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
+from sqlalchemy.orm import selectinload
 
 from project import app_session, db
 from project.api.auth.decorators import current_permissions, require_perm
@@ -14,7 +15,11 @@ from project.core.calibration_launch import (
     validate_segmentation,
 )
 from project.db_models.calibration_models import CalibrationRun, Dataset, ModelConfig
-from project.db_models.credit_models import CreditRiskForecastInput, CreditRiskRun
+from project.db_models.credit_models import (
+    CreditRiskForecastInput,
+    CreditRiskRun,
+    CreditRiskRunLog,
+)
 from project.db_models.forecast_models import ForecastRun
 from project.db_models.workflow_models import WorkflowRun
 from project.workers.tasks import run_calibration
@@ -187,10 +192,35 @@ def get_workflow(run_id):
     if not wf:
         return jsonify({"error": "Not found"}), 404
 
-    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
+    cals = (
+        CalibrationRun.query.options(selectinload(CalibrationRun.model_config))
+        .filter_by(workflow_run_id=wf.id)
+        .all()
+    )
     fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
     crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).all()
     fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
+    cal_by_id = {cal.id: cal for cal in cals}
+
+    # Batch-load every dataset referenced by the forecast runs and by the four
+    # workflow dataset slots, so the per-target fr.to_dict() and the slot loop
+    # below don't each fire their own .get() (was 3 queries/target + 4 slot gets).
+    ds_ids = {fr.dataset_id for fr in fcs}
+    ds_ids.update(
+        i
+        for i in (
+            wf.calibration_dataset_id,
+            wf.forecast_dataset_id,
+            wf.credit_dataset_id,
+            wf.financial_dataset_id,
+        )
+        if i
+    )
+    datasets = (
+        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
+        if ds_ids
+        else {}
+    )
 
     targets = []
     for cal in cals:
@@ -198,11 +228,20 @@ def get_workflow(run_id):
         cal_d["config_name"] = cal.model_config.name if cal.model_config else None
         cal_d["algorithm"] = cal.model_config.algorithm if cal.model_config else None
         fr = fcs_by_cal.get(cal.id)
+        forecast_d = None
+        if fr:
+            fr_cal = cal_by_id.get(fr.calibration_run_id)
+            fr_cfg = fr_cal.model_config if fr_cal else None
+            forecast_d = fr.to_dict(
+                cal_run=fr_cal,
+                dataset=datasets.get(fr.dataset_id),
+                config_name=fr_cfg.name if fr_cfg else None,
+            )
         targets.append(
             {
                 "target_col": cal.target_col,
                 "calibration": cal_d,
-                "forecast": fr.to_dict() if fr else None,
+                "forecast": forecast_d,
             }
         )
 
@@ -215,7 +254,7 @@ def get_workflow(run_id):
         ("credit_dataset_name", wf.credit_dataset_id),
         ("financial_dataset_name", wf.financial_dataset_id),
     ):
-        ds = Dataset.query.get(ds_id) if ds_id else None
+        ds = datasets.get(ds_id) if ds_id else None
         d[key] = ds.name if ds else None
     return jsonify(d), 200
 
@@ -564,6 +603,10 @@ def delete_workflow(run_id):
 
     with app_session() as s:
         for cr in crs:
+            # CreditRiskRunLog FKs credit_risk_runs.run_id with no ORM cascade
+            # relationship, so it must be cleared explicitly (results and
+            # forecast inputs are cascade-deleted via their relationships).
+            CreditRiskRunLog.query.filter_by(run_id=cr.run_id).delete()
             s.delete(CreditRiskRun.query.get(cr.id))
         for fr in fcs:
             s.delete(ForecastRun.query.get(fr.id))

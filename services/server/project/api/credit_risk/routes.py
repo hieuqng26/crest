@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
+from sqlalchemy.orm import selectinload
 
 from project import cache
 from project.api.auth.decorators import require_perm
@@ -221,14 +222,32 @@ def compute_ecl_v2():
 @credit_risk.get("/runs")
 @require_perm("credit_risk:read")
 def list_runs():
-    runs = CreditRiskRun.query.order_by(CreditRiskRun.created_at.desc()).all()
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+
+    runs = (
+        CreditRiskRun.query.options(selectinload(CreditRiskRun.forecast_inputs_rel))
+        .order_by(CreditRiskRun.created_at.desc())
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
+
+    ds_ids = {r.dataset_id for r in runs.items}
+    datasets = (
+        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
+        if ds_ids
+        else {}
+    )
+
     result = []
-    for r in runs:
+    for r in runs.items:
         d = r.to_dict()
-        ds = Dataset.query.get(r.dataset_id)
+        ds = datasets.get(r.dataset_id)
         d["dataset_name"] = ds.name if ds else None
         result.append(d)
-    return jsonify(result), 200
+
+    return jsonify(
+        {"items": result, "total": runs.total, "page": page, "pages": runs.pages}
+    ), 200
 
 
 @credit_risk.post("/runs")
@@ -316,8 +335,13 @@ def get_active_run():
     d = cr.to_dict()
     ds = Dataset.query.get(cr.dataset_id)
     d["dataset_name"] = ds.name if ds else None
-    results = CreditRiskResult.query.filter_by(run_id=cr.run_id).all()
-    d["client_ids"] = sorted({r.client_id for r in results})
+    client_ids = (
+        CreditRiskResult.query.with_entities(CreditRiskResult.client_id)
+        .filter_by(run_id=cr.run_id)
+        .distinct()
+        .all()
+    )
+    d["client_ids"] = sorted(c[0] for c in client_ids)
     return jsonify(d), 200
 
 
@@ -584,8 +608,13 @@ def get_run(cr_run_id: str):
     d = cr.to_dict()
     ds = Dataset.query.get(cr.dataset_id)
     d["dataset_name"] = ds.name if ds else None
-    results = CreditRiskResult.query.filter_by(run_id=cr_run_id).all()
-    d["client_ids"] = sorted({r.client_id for r in results})
+    client_ids = (
+        CreditRiskResult.query.with_entities(CreditRiskResult.client_id)
+        .filter_by(run_id=cr_run_id)
+        .distinct()
+        .all()
+    )
+    d["client_ids"] = sorted(c[0] for c in client_ids)
     if cr.workflow_run_id:
         from project.db_models.workflow_models import WorkflowRun
 
@@ -791,33 +820,42 @@ _FORECAST_TARGET_SLOTS: list[tuple[str, str]] = [
 
 def _load_dataset_df(dataset) -> pd.DataFrame:
     """Download + parse a Dataset's file from MinIO — same object-key convention
-    as the credit-risk analysis Celery task (`run_credit_analysis`). Memoized on
-    Flask's request-scoped `g` since one heatmap/forecast request can reference the
-    same dataset (e.g. a forecast run's calibration source) several times over."""
+    as the credit-risk analysis Celery task (`run_credit_analysis`).
+
+    Two cache layers: request-scoped `g` (one request can reference the same
+    dataset several times) and the cross-request app `cache` keyed by dataset id +
+    file_path. A dataset's file is immutable per file_path (a re-upload gets a new
+    path), so the cross-request entry never goes stale and only needs a TTL for
+    memory hygiene. This is the fix for re-downloading + re-parsing on every
+    heatmap/forecast request and every 5 s poll."""
     import io
 
     from flask import g
 
     from project.core import storage
 
-    cache_key = f"_dataset_df_{dataset.id}"
-    cached = getattr(g, cache_key, None)
+    g_key = f"_dataset_df_{dataset.id}"
+    cached = getattr(g, g_key, None)
     if cached is not None:
         return cached
 
-    file_bytes = storage.download_bytes(dataset.file_path.split("/", 1)[-1])
-    ext = dataset.file_path.rsplit(".", 1)[-1].lower()
-    buf = io.BytesIO(file_bytes)
-    if ext == "csv":
-        df = pd.read_csv(buf)
-    elif ext == "xlsx":
-        df = pd.read_excel(buf)
-    elif ext == "parquet":
-        df = pd.read_parquet(buf)
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
+    xcache_key = f"cr_dataset_df:{dataset.id}:{dataset.file_path}"
+    df = cache.get(xcache_key)
+    if df is None:
+        file_bytes = storage.download_bytes(dataset.file_path.split("/", 1)[-1])
+        ext = dataset.file_path.rsplit(".", 1)[-1].lower()
+        buf = io.BytesIO(file_bytes)
+        if ext == "csv":
+            df = pd.read_csv(buf)
+        elif ext == "xlsx":
+            df = pd.read_excel(buf)
+        elif ext == "parquet":
+            df = pd.read_parquet(buf)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+        cache.set(xcache_key, df, timeout=3600)
 
-    setattr(g, cache_key, df)
+    setattr(g, g_key, df)
     return df
 
 
@@ -887,7 +925,16 @@ def _historical_series(
 
     from project.db_models.calibration_models import CalibrationRun
 
-    cal_run = CalibrationRun.query.get(fr.calibration_run_id)
+    # Cache the resolved CalibrationRun per forecast run — this helper is called
+    # once per sector (heatmap overview) or once per client (drill-down), and the
+    # bare .get() would otherwise re-fire that identical query every time.
+    cal_key = f"_cal_run_{fr.id}"
+    cal_run = getattr(g, cal_key, None)
+    if cal_run is None:
+        cal_run = CalibrationRun.query.get(fr.calibration_run_id)
+        setattr(g, cal_key, cal_run if cal_run is not None else False)
+    elif cal_run is False:
+        return {}
     if not cal_run or not cal_run.target_col:
         return {}
     target = cal_run.target_col
@@ -936,18 +983,28 @@ def _cached_variable_index(fr: ForecastRun) -> tuple[dict, dict]:
     """Memoized build_variable_index — the heatmap drill-down and forecast screen
     call this once per client row (dozens to hundreds per request); rebuilding the
     segmentation info + prediction index from ForecastRunResult rows each time would
-    be an N+1 query pattern, so cache it per forecast run on Flask's request-scoped
-    `g`."""
+    be an N+1 query pattern.
+
+    Cached on request-scoped `g` and, for successful runs, on the cross-request app
+    `cache` keyed by the immutable `run_id` (a succeeded run's results never change,
+    so the entry is safe basically forever — TTL is only memory hygiene)."""
     from flask import g
 
     from project.core.credit_risk.forecast_lookup import build_variable_index
 
-    cache_key = f"_variable_index_{fr.id}"
-    cached = getattr(g, cache_key, None)
+    g_key = f"_variable_index_{fr.id}"
+    cached = getattr(g, g_key, None)
     if cached is not None:
         return cached
-    result = build_variable_index(fr)
-    setattr(g, cache_key, result)
+
+    xcache_key = f"cr_var_index:{fr.run_id}"
+    result = cache.get(xcache_key) if fr.status == "success" else None
+    if result is None:
+        result = build_variable_index(fr)
+        if fr.status == "success":
+            cache.set(xcache_key, result, timeout=3600)
+
+    setattr(g, g_key, result)
     return result
 
 
@@ -1129,9 +1186,10 @@ def get_analysis_heatmap():
         if sector_rows.empty:
             return jsonify({"error": f"Sector '{sector_filter}' not found"}), 404
         rows_out = []
-        for _, client_row in sector_rows.iterrows():
-            client_id = str(client_row["client_id"])
-            client_df = sector_rows[sector_rows["client_id"] == client_row["client_id"]]
+        # Group once by client_id instead of re-filtering sector_rows per client
+        # (which was an O(C_sec^2) rescan inside the loop).
+        for client_key, client_df in sector_rows.groupby("client_id", sort=False):
+            client_id = str(client_key)
             series = metric_series(client_df, None, client_id)
             rows_out.append(
                 {

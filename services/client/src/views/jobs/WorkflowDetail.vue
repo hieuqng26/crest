@@ -36,7 +36,7 @@ const fetchWorkflow = async () => {
 
 let pollTimer = null
 const isLive = () => wf.value?.status === 'running' || wf.value?.status === 'queued'
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 3000) }
+const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 5000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(async () => {

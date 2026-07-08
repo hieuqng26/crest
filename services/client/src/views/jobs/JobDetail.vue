@@ -34,7 +34,7 @@ const fetchJob = async () => {
 
 let pollTimer = null
 const isLive = () => job.value?.status === 'running' || job.value?.status === 'queued'
-const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchJob, 3000) }
+const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchJob, 5000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
 onMounted(async () => {

@@ -50,13 +50,15 @@ const normalizeCreditRisk = (r) => ({
 async function listJobs() {
   const [cRes, fRes, xRes] = await Promise.allSettled([
     calibrationsAPI.list({ per_page: 200 }),
-    forecastRunsAPI.list(),
-    creditRiskAPI.listRuns()
+    forecastRunsAPI.list({ per_page: 200 }),
+    creditRiskAPI.listRuns({ per_page: 200 })
   ])
   const training =
     cRes.status === 'fulfilled' ? (cRes.value.data.items ?? cRes.value.data ?? []).map(normalizeCalibration) : []
-  const forecast = fRes.status === 'fulfilled' ? (fRes.value.data ?? []).map(normalizeForecast) : []
-  const analysis = xRes.status === 'fulfilled' ? (xRes.value.data ?? []).map(normalizeCreditRisk) : []
+  const forecast =
+    fRes.status === 'fulfilled' ? (fRes.value.data.items ?? fRes.value.data ?? []).map(normalizeForecast) : []
+  const analysis =
+    xRes.status === 'fulfilled' ? (xRes.value.data.items ?? xRes.value.data ?? []).map(normalizeCreditRisk) : []
   return [...training, ...forecast, ...analysis]
 }
 

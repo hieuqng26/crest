@@ -107,7 +107,6 @@ import TreeSelect from 'primevue/treeselect'
 import TreeTable from 'primevue/treetable'
 import TriStateCheckbox from 'primevue/tristatecheckbox'
 import VirtualScroller from 'primevue/virtualscroller'
-import VueApexCharts from 'vue3-apexcharts'
 import EySelect from '@/components/ui/EySelect.vue'
 
 import store from './store'
@@ -122,7 +121,6 @@ app.use(PrimeVue, { ripple: true })
 app.use(ToastService)
 app.use(DialogService)
 app.use(ConfirmationService)
-app.use(VueApexCharts)
 
 app.directive('tooltip', Tooltip)
 app.directive('badge', BadgeDirective)
@@ -227,4 +225,9 @@ app.component('TriStateCheckbox', TriStateCheckbox)
 app.component('VirtualScroller', VirtualScroller)
 app.component('EySelect', EySelect)
 
-store.dispatch('fetchMe').finally(() => app.mount('#app'))
+// Kick off the session fetch but DON'T gate first paint on it: the router's
+// beforeEach guard already awaits fetchMe before any requiresAuth route renders
+// (and redirects to /login on failure), so mounting immediately is safe and lets
+// the app shell paint without waiting on the /me round trip.
+store.dispatch('fetchMe')
+app.mount('#app')

@@ -7,7 +7,7 @@
     - [x] Add multi-select dropdown for the target variables. If only one is chosen, show the plot in full width
     - [x] Make the plots interactive: on hovering, able to disable the scenarios when clicking on legend items
     - [x] Dont index all series to 100 at base year by default. Give user the option to switch it on if they want. Disable by default
-- [ ] Some pages are loading too slow: Heatmap, Financial Forecast, Job History, Job View
+- [x] Some pages are loading too slow: Heatmap, Financial Forecast, Job History, Job View
 - [ ] Add more audit logs
 
 - Job History: 

@@ -25,6 +25,11 @@ class Config:
 
     CACHE_TYPE = "SimpleCache"  # overridden to RedisCache in Dev/Prod
 
+    # Seconds to cache a "session is valid" verdict before re-checking the DB.
+    # In-app revocation invalidates the cache synchronously; this TTL only bounds
+    # out-of-band (raw-DB) revocation latency. Kept short for a security control.
+    SESSION_REVOCATION_CACHE_TTL = int(os.getenv("SESSION_REVOCATION_CACHE_TTL", 30))
+
     # JWT — cookie transport, revocable sessions
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")  # required; no baked-in default
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(
@@ -111,7 +116,7 @@ class DevelopmentConfig(Config):
 
     SQLALCHEMY_DATABASE_URI = f"mssql+pyodbc:///?odbc_connect={params_main}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ECHO = True
+    SQLALCHEMY_ECHO = os.getenv("APP_DB_ECHO", "False").lower() == "true"
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_size": int(
             os.getenv("APP_DB_POOL_SIZE", 5)

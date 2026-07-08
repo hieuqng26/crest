@@ -1,9 +1,13 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
 import PageHeader from '@/components/ui/PageHeader.vue'
+
+// apexcharts (~500KB) is code-split here instead of registered globally in
+// main.js, so it only downloads when this chart view actually mounts.
+const apexchart = defineAsyncComponent(() => import('vue3-apexcharts'))
 
 const router = useRouter()
 
@@ -61,13 +65,22 @@ async function fetchForecast() {
   }
 }
 
-watch(selectedSector, () => { selectedCompany.value = null; fetchForecast() })
-watch(selectedCompany, fetchForecast)
-watch(selectedTargets, fetchForecast)
+// Coalesce the filter cascade: changing a sector also resets the company and can
+// retrigger several watchers in one tick — debounce so we fire one request.
+let forecastTimer = null
+function scheduleForecast() {
+  if (forecastTimer) clearTimeout(forecastTimer)
+  forecastTimer = setTimeout(fetchForecast, 150)
+}
+
+watch(selectedSector, () => { selectedCompany.value = null; scheduleForecast() })
+watch(selectedCompany, scheduleForecast)
+watch(selectedTargets, scheduleForecast)
 
 onMounted(async () => {
   await fetchMeta()
-  if (selectedSector.value) await fetchForecast()
+  // fetchMeta sets selectedSector, whose watcher already schedules the first
+  // forecast fetch — no explicit call here (avoids a duplicate request).
 })
 
 // ── chart styling ──────────────────────────────────────────────────────────────

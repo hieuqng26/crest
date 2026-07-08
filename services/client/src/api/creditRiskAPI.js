@@ -16,7 +16,7 @@ const creditRiskAPI = {
   ecl: (payload) =>
     httpClient.post('/credit-risk/ecl', payload),
 
-  listRuns:        ()              => httpClient.get('/credit-risk/runs'),
+  listRuns:        (params)        => httpClient.get('/credit-risk/runs', { params }),
   createRun:       (payload)       => httpClient.post('/credit-risk/runs', payload),
   getActiveRun:    ()              => httpClient.get('/credit-risk/runs/active'),
   getRun:          (runId)         => httpClient.get(`/credit-risk/runs/${runId}`),

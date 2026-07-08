@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
+from sqlalchemy.orm import selectinload
 
 from project import app_session
 from project.api.auth.decorators import require_perm
@@ -38,7 +39,11 @@ def list_runs():
     status_filter = request.args.get("status")
 
     q = (
-        CalibrationRun.query.join(Dataset, CalibrationRun.dataset_id == Dataset.id)
+        CalibrationRun.query.options(
+            selectinload(CalibrationRun.model_config),
+            selectinload(CalibrationRun.dataset),
+        )
+        .join(Dataset, CalibrationRun.dataset_id == Dataset.id)
         .join(ModelConfig, CalibrationRun.model_config_id == ModelConfig.id)
         .order_by(CalibrationRun.started_at.desc())
     )

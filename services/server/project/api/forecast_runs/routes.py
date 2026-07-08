@@ -27,11 +27,55 @@ from . import forecast_runs
 @require_perm("forecast:read")
 def list_runs():
     status = request.args.get("status")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+
     q = ForecastRun.query
     if status:
         q = q.filter_by(status=status)
-    runs = q.order_by(ForecastRun.created_at.desc()).all()
-    return jsonify([r.to_dict() for r in runs]), 200
+    runs = q.order_by(ForecastRun.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    items = runs.items
+
+    # Batch-load the related rows so ForecastRun.to_dict() doesn't fire three
+    # per-row queries (was 1 + 3N; now a handful of IN(...) lookups).
+    from project.db_models.calibration_models import ModelConfig
+
+    cal_ids = {r.calibration_run_id for r in items}
+    ds_ids = {r.dataset_id for r in items}
+    cals = (
+        {c.id: c for c in CalibrationRun.query.filter(CalibrationRun.id.in_(cal_ids))}
+        if cal_ids
+        else {}
+    )
+    cfg_ids = {c.model_config_id for c in cals.values()}
+    cfgs = (
+        {m.id: m for m in ModelConfig.query.filter(ModelConfig.id.in_(cfg_ids))}
+        if cfg_ids
+        else {}
+    )
+    datasets = (
+        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
+        if ds_ids
+        else {}
+    )
+
+    result = []
+    for r in items:
+        cal = cals.get(r.calibration_run_id)
+        cfg = cfgs.get(cal.model_config_id) if cal else None
+        result.append(
+            r.to_dict(
+                cal_run=cal,
+                dataset=datasets.get(r.dataset_id),
+                config_name=cfg.name if cfg else None,
+            )
+        )
+
+    return jsonify(
+        {"items": result, "total": runs.total, "page": page, "pages": runs.pages}
+    ), 200
 
 
 @forecast_runs.post("")
