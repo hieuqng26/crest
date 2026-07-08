@@ -1018,7 +1018,7 @@ def _write_forecast_progress(
         from project import app_session
         from project.db_models.forecast_models import ForecastRun, ForecastRunLog
 
-        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with app_session() as s:
             r = ForecastRun.query.filter_by(run_id=run_id).first()
             if r:
@@ -1273,7 +1273,7 @@ def _cr_log(
         from project import app_session
         from project.db_models.credit_models import CreditRiskRun, CreditRiskRunLog
 
-        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with app_session() as s:
             s.add(
                 CreditRiskRunLog(run_id=cr_run_id, t=now, level=level, message=message)
@@ -1776,7 +1776,7 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
         affected_ids = [(fr.id, fr.run_id, fr.dataset_id) for fr in affected]
 
         # ── Forecast stage: re-score this segment into each affected run ──────────
-        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         for fr_id, fr_run_uuid, fr_dataset_id in affected_ids:
             # Txn 1: gate the tab OFF before any delete.
             with app_session() as s:

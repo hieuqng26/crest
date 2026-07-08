@@ -108,11 +108,55 @@ dark hover. Prefer `text-color`/`text-color-secondary` for identifiers.
   (e.g. Dashboard's KPI captions are derived from actual run data, or omitted — never a
   made-up number).
 
+## Tables — one canonical skin
+
+- The app-wide DataTable/paginator/sortable-header skin lives in `_brand.scss`
+  (no `!important` — selectors are doubled with `.p-datatable-sm` to beat the
+  base theme; see `.claude/bugs/global-important-vs-row-tints.md`). Components
+  only declare *deltas*: `BaseTable` keeps its flush-left cell boxes,
+  `CommonDataTable` its alignment helpers.
+- **CommonDataTable** is the standard server-driven table: header-click
+  sorting (instant, server-side), staged search/filters with a **dirty-Apply**
+  highlight, skeleton rows on first load, dashed empty state, CSV download.
+  Pass `card` + `title` to render it as a self-contained table card inside an
+  **unpadded** `.panel` (the workflow tabs pattern); default mode stays flush
+  for padded wrappers (DatasetView, credit-risk `.bare-table`).
+- Numeric columns: `align: 'right', mono: true` in the column def (or
+  `bodyClass="cell-num" headerClass="cell-num-h"` on a raw Column). Widths in
+  px, never rem.
+- `.panel` is a global class — never re-declare it in a view.
+- Shared primitives in `components/ui/`: `EmptyState` (dashed box + icon),
+  `RetrainingBanner`, `FilterBar`/`FilterField` (inset strip above results),
+  `StageTag` (IFRS 9 stages), plus the existing `StatusDot`/`EySelect`/
+  `StatCard`/`PageHeader`. Check here before hand-rolling.
+
+## Dates & times
+
+- Everything renders through `@/utils/datetime` (`fmtDate`, `fmtDateShort`,
+  `fmtTime`, `duration`) in the configured display timezone
+  (`DATETIME_CONFIG`). Backend serialises full UTC timestamps (log lines
+  included — never bare `%H:%M:%S`, which caused an 8-hour log/run-detail
+  mismatch). Never format dates ad hoc in a view.
+
+## Filter placements (three sanctioned idioms)
+
+1. **Status/type chips** above job-style lists (All / Auto / Manual with
+   counts) — quick mutually-exclusive scopes.
+2. **CommonDataTable toolbar + filter strip** — staged, applies on Apply.
+3. **FilterBar + FilterField** above a results panel — page-scope selectors
+   (target/sector/segment, ECL client/scenario).
+Don't invent a fourth.
+
 ## Charts
 - Charts read CSS tokens via `getComputedStyle` so they auto-adapt to the theme.
   Series palette is `--chart-1…8` (slot 1 = `--yellow-chart #E8C400`, the darkened
   yellow used for chart lines — the raw accent `--yellow` is reserved for UI state,
-  not data series).
+  not data series). Use the helpers in `@/utils/chartTheme`
+  (`cssVar`, `chartPalette`, `scenarioLineStyles`, `fallbackSeriesColors`,
+  `axisDefaults`) — never hardcode the token *values* in a chart config.
+  Scenario mapping: Baseline = chart-1, Adverse = chart-2 (ink),
+  Severely Adverse = chart-3 dashed; on pages where History occupies the ink
+  slot (Financial Forecast), both stress scenarios go muted (solid vs dashed).
 - apexcharts → time-series & bar/line; chart.js → simple pie/donut;
   plotly.js → statistical residual plots.
 

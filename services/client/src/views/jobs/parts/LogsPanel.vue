@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import jobsAPI from '@/api/jobs'
+import { fmtTime } from '@/utils/datetime'
 
 const props = defineProps({
   kind:        { type: String,  required: true },
@@ -84,7 +85,7 @@ watch(() => props.status, (s) => {
         {{ logs.length === 0 ? 'No logs yet.' : 'No log lines match your filter.' }}
       </div>
       <div v-for="(l, i) in filteredLogs" :key="i" class="log-line">
-        <span class="log-time">{{ l.t }}</span>
+        <span class="log-time">{{ fmtTime(l.t) }}</span>
         <span class="log-level" :class="`log-level--${l.level}`">{{ l.level.toUpperCase() }}</span>
         <span class="log-msg">{{ l.message }}</span>
       </div>

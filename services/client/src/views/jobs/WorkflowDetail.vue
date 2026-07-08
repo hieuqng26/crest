@@ -8,6 +8,9 @@ import workflowsAPI from '@/api/workflowsAPI'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import StageTag from '@/components/ui/StageTag.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import RetrainingBanner from '@/components/ui/RetrainingBanner.vue'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
@@ -281,29 +284,28 @@ const confirmDelete = () => {
 
       <!-- Credit Results -->
       <div v-else-if="activeTab === 'credit'" class="credit-tab">
-        <div v-if="wf.analysis_skipped_reason" class="panel empty-note">
-          <i class="pi pi-info-circle" />
-          <p>{{ wf.analysis_skipped_reason }}</p>
+        <div v-if="wf.analysis_skipped_reason" class="panel">
+          <EmptyState icon="pi pi-info-circle">{{ wf.analysis_skipped_reason }}</EmptyState>
         </div>
-        <div v-else-if="!wf.analysis" class="panel empty-note">
-          <i class="pi pi-clock" />
-          <p>Credit analysis will start automatically once all forecasts finish.</p>
+        <div v-else-if="!wf.analysis" class="panel">
+          <EmptyState icon="pi pi-clock">Credit analysis will start automatically once all forecasts finish.</EmptyState>
         </div>
         <template v-else>
-          <div v-if="isRetraining" class="retraining-banner">
-            <i class="pi pi-sync" />
-            <span>A segment model is re-training — credit results for its clients still reflect the previous model and will refresh automatically.</span>
-          </div>
+          <RetrainingBanner v-if="isRetraining">
+            A segment model is re-training — credit results for its clients still reflect the previous model and will refresh automatically.
+          </RetrainingBanner>
           <div class="panel results-panel">
             <CommonDataTable
               :key="`${wf.analysis.run_id}:${wf.analysis.finished_at ?? ''}`"
+              card
+              title="Credit results"
               :columns="analysisResultColumns"
               :fetch-page="analysisResultsFetchPage"
               :fetch-distinct="analysisResultsFetchDistinct"
               empty-message="No results yet."
             >
               <template #cell-stage="{ data }">
-                <span v-if="data.stage != null" class="stage-tag" :class="`stage-tag--${data.stage}`">STAGE {{ data.stage }}</span>
+                <StageTag v-if="data.stage != null" :stage="data.stage" />
                 <span v-else>—</span>
               </template>
             </CommonDataTable>
@@ -330,15 +332,6 @@ const confirmDelete = () => {
 .back-link:hover { color: var(--ink); }
 .back-link i { font-size: 11px; }
 
-.retraining-banner {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; margin-bottom: 14px;
-  font-size: 12.5px; color: var(--text-color-secondary);
-  background: var(--surface-inset); border: 1px solid var(--surface-border);
-  border-left: 3px solid var(--running-color); border-radius: 2px;
-}
-.retraining-banner i { color: var(--running-color); font-size: 13px; }
-
 .job-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; min-width: 0; }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .job-status-line { display: flex; align-items: center; gap: 8px; }
@@ -354,16 +347,17 @@ const confirmDelete = () => {
 .tab-bar { display: flex; width: 100%; border-bottom: 2px solid var(--ink); margin-bottom: 24px; flex-wrap: wrap; }
 .tab-btn { padding: 10px 18px; font-size: 13.5px; font-weight: 400; color: var(--text-color-muted); background: transparent; border: none; cursor: pointer; }
 .tab-btn:hover { color: var(--ink); }
+.tab-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--yellow); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
 .overview-tab { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
 .run-details { padding: 18px 20px 8px; }
 .detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
-.detail-key { flex: none; width: 200px; color: var(--text-color-muted); }
+.detail-key { flex: none; width: 140px; color: var(--text-color-muted); }
 .detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
-.panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
+/* .panel is global (_brand.scss). */
 .target-panel { padding: 18px 20px; min-width: 0; }
 .target-table-scroll { overflow-x: auto; }
 .chart-title { font-size: 13.5px; font-weight: 700; }
@@ -379,13 +373,4 @@ const confirmDelete = () => {
 
 .credit-tab { display: flex; flex-direction: column; gap: 16px; }
 .results-panel { overflow: hidden; }
-
-.empty-note { text-align: center; color: var(--text-color-muted); padding: 32px 20px; }
-.empty-note i { font-size: 22px; display: block; margin-bottom: 8px; opacity: 0.6; }
-.empty-note p { margin: 0; font-size: 13px; }
-
-.stage-tag { display: inline-block; padding: 3px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; border-radius: 2px; font-family: 'IBM Plex Mono', monospace; }
-.stage-tag--1 { background: #FFFFFF; color: var(--text-color-secondary); border: 1px solid var(--surface-border-input); }
-.stage-tag--2 { background: var(--ink); color: var(--yellow); }
-.stage-tag--3 { background: var(--error-color); color: #fff; }
 </style>

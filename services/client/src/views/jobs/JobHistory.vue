@@ -9,6 +9,7 @@ import { fmtDate } from '@/utils/datetime'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
 const router = useRouter()
@@ -133,13 +134,14 @@ const clickRow = (row) => {
 }
 
 // ── Progress labels ───────────────────────────────────────────────────────────
+// Terminal success shows nothing here — STATUS already says it. Only labels
+// that add information survive: the failure point, or the live stage.
 const progressLabel = (j) =>
-  j.status === 'success' ? 'Completed' : j.status === 'failed' ? `Failed at ${j.progress}%` : '—'
+  j.status === 'failed' ? `Failed at ${j.progress}%` : '—'
 
-const STAGE_LABEL = { training: 'Training', forecast: 'Forecasting', analysis: 'Analyzing', done: 'Completed' }
+const STAGE_LABEL = { training: 'Training', forecast: 'Forecasting', analysis: 'Analyzing' }
 const workflowProgressLabel = (wf) => {
-  if (wf.status === 'success') return 'Completed'
-  if (wf.status === 'failed') return 'Failed'
+  if (wf.status === 'success' || wf.status === 'failed') return '—'
   return STAGE_LABEL[wf.current_stage] ?? '—'
 }
 const workflowRef = (wf) => (wf.targets ?? []).map((t) => t.target_col).join(', ') || '—'
@@ -401,10 +403,7 @@ async function deleteJob(j) {
         </template>
 
         <template #empty>
-          <div v-if="!loading" class="empty-state">
-            <i class="pi pi-inbox" />
-            <p>No runs match your filters.</p>
-          </div>
+          <EmptyState v-if="!loading">No runs match your filters.</EmptyState>
         </template>
 
         <!-- Select checkbox -->
@@ -420,7 +419,11 @@ async function deleteJob(j) {
         <template #cell-run="{ row }">
           <div class="run-name">
             <span class="run-name-text">{{ rowName(row) }}</span>
-            <span v-if="rowIsActive(row)" class="active-badge">ACTIVE</span>
+            <span
+              v-if="rowIsActive(row)"
+              v-tooltip.top="'Feeds the IFRS 9 ECL, PD/LGD and Transitions pages'"
+              class="active-badge"
+            >ACTIVE</span>
           </div>
           <div class="run-id font-mono">{{ rowRunId(row) }}</div>
         </template>
@@ -434,7 +437,7 @@ async function deleteJob(j) {
 
         <!-- INPUT -->
         <template #cell-input="{ row }">
-          <span class="font-mono cell-secondary">{{ row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref }}</span>
+          <span class="font-mono cell-secondary cell-truncate" :title="row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref">{{ row.type === 'workflow' ? workflowRef(row.wf) : row.job.ref }}</span>
         </template>
 
         <!-- STATUS -->
@@ -483,6 +486,7 @@ async function deleteJob(j) {
             <button
               class="action-btn"
               :class="{ 'is-busy': busy === rowRunId(row) }"
+              aria-label="Run actions"
               @click="openMenu($event, rowMenu(row))"
             >
               <i class="pi pi-ellipsis-v" />
@@ -526,6 +530,7 @@ async function deleteJob(j) {
   transition: border-color 0.15s ease;
 }
 .type-chip:hover { border-color: var(--ink); }
+.type-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--yellow); }
 .type-chip.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .chip-count { color: var(--text-color-muted-2); }
 .type-chip.is-active .chip-count { color: var(--yellow); }
@@ -563,7 +568,7 @@ async function deleteJob(j) {
 /* Run name cell */
 .run-name { display: flex; align-items: center; gap: 6px; }
 .run-name-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
-.run-id { font-size: 10.5px; color: var(--text-color-muted-2); margin-top: 2px; }
+.run-id { font-size: 10.5px; color: var(--text-color-muted-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
 
 .active-badge {
   display: inline-block;
@@ -590,6 +595,7 @@ async function deleteJob(j) {
 .type-tag--auto { background: var(--ink); color: var(--yellow); border-color: var(--ink); }
 
 .cell-secondary { font-size: 11.5px; color: var(--text-color-secondary); }
+.cell-truncate { display: inline-block; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 .progress-row { display: flex; align-items: center; gap: 8px; }
 .progress-track { flex: 1; min-width: 60px; height: 5px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
@@ -603,6 +609,9 @@ async function deleteJob(j) {
 @keyframes jh-indeterminate {
   0%   { margin-left: -40%; }
   100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill--deleting { animation: none; width: 100%; opacity: 0.5; }
 }
 .progress-pct { font-size: 11px; color: var(--text-color-muted); }
 .progress-label { font-size: 12px; color: var(--text-color-muted-2); }
@@ -622,11 +631,9 @@ async function deleteJob(j) {
   font-size: 14px;
 }
 .action-btn:hover { background: var(--surface-hover); color: var(--ink); }
+.action-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--yellow); }
 .action-btn.is-busy { opacity: 0.5; pointer-events: none; }
 
-.empty-state { text-align: center; padding: 40px 0; color: var(--text-color-muted); }
-.empty-state i { font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.6; }
-.empty-state p { margin: 0; }
 </style>
 
 <!-- Menu item styles — not scoped so they reach the teleported Menu overlay -->

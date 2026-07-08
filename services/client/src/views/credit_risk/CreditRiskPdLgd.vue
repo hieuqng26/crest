@@ -6,6 +6,7 @@ import { useToast } from 'primevue/usetoast'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { localFetchPage } from '@/utils/tableQuery'
+import { scenarioLineStyles, fallbackSeriesColors, axisDefaults } from '@/utils/chartTheme'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
@@ -33,16 +34,10 @@ const METRIC_OPTIONS = [
 const selectedMetric = ref(METRIC_OPTIONS[0])
 
 // ── chart data ────────────────────────────────────────────────────────────────
-// Fixed scenario → style mapping per the v2 design tokens; any other scenario
-// name falls back to the muted palette below.
-const SCENARIO_STYLE = {
-  Baseline: { color: '#E8C400', width: 2.6, dash: [] },
-  Adverse: { color: '#2E2E38', width: 1.6, dash: [] },
-  'Severely Adverse': { color: '#9B9BA6', width: 1.6, dash: [5, 4] }
-}
-const FALLBACK_COLORS = ['#2D6FD6', '#7C5CD6', '#E0792A', '#0E9BB5', '#C4331D']
-
+// Scenario → line style comes from the shared token-driven chart theme.
 function buildChartData(field) {
+  const scenarioStyle = scenarioLineStyles()
+  const fallbackColors = fallbackSeriesColors()
   const scenarios = [...new Set((kmvRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
   const allYears  = [...new Set((kmvRows.value || []).map(r => r.YEAR))].sort()
   let fallbackIdx = 0
@@ -51,7 +46,7 @@ function buildChartData(field) {
     datasets: scenarios.map((scen) => {
       const rows   = kmvRows.value.filter(r => r.SCENARIO === scen)
       const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
-      const style = SCENARIO_STYLE[scen] ?? { color: FALLBACK_COLORS[fallbackIdx++ % FALLBACK_COLORS.length], width: 2, dash: [] }
+      const style = scenarioStyle[scen] ?? { color: fallbackColors[fallbackIdx++ % fallbackColors.length], width: 2, dash: [] }
       return {
         label: scen,
         data: allYears.map(y => byYear[y]?.[field] ?? null),
@@ -69,31 +64,25 @@ function buildChartData(field) {
 
 const activeChartData = computed(() => buildChartData(selectedMetric.value.value))
 
-const pctOptions = {
-  maintainAspectRatio: false,
-  plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(2)}%` } } },
-  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-  scales: {
-    x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } },
-    y: {
-      ticks: { color: '#9ca3af', font: { size: 10 }, callback: v => (v * 100).toFixed(1) + '%' },
-      grid: { color: 'rgba(156,163,175,0.08)' },
-      border: { display: false },
+function buildChartOptions(pct) {
+  const scales = axisDefaults()
+  if (pct) scales.y.ticks.callback = (v) => (v * 100).toFixed(1) + '%'
+  return {
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        ...(pct && { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(2)}%` } }),
+      },
     },
-  },
+    interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    scales,
+  }
 }
 
-const rawOptions = {
-  maintainAspectRatio: false,
-  plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
-  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-  scales: {
-    x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } },
-    y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(156,163,175,0.08)' }, border: { display: false } },
-  },
-}
-
-const activeChartOptions = computed(() => selectedMetric.value.pct ? pctOptions : rawOptions)
+const activeChartOptions = computed(() => buildChartOptions(selectedMetric.value.pct))
 
 const legendItems = computed(() =>
   (activeChartData.value.datasets || []).map((d) => ({ label: d.label, color: d.borderColor }))

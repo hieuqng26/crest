@@ -44,6 +44,9 @@ const config = computed(() => STATUS_MAP[props.status] || STATUS_MAP.queued)
 .status-dot--pulse {
   animation: status-dot-pulse 1s ease-in-out infinite;
 }
+@media (prefers-reduced-motion: reduce) {
+  .status-dot--pulse, [class*='status-dot'] { animation: none !important; }
+}
 @keyframes status-dot-pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }

@@ -2,7 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import datasetsAPI from '@/api/datasetsAPI'
-import { getDataset, fetchDatasets, datasets } from './datasetsStore'
+import { getDataset, fetchDatasets } from './datasetsStore'
 import { fmtDate as formatDate } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 

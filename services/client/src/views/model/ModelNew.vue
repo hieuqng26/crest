@@ -6,7 +6,7 @@ import workflowsAPI from '@/api/workflowsAPI'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import { fmtDate } from '@/utils/datetime'
 import {
-  mode, resolvedDatasets, loadingDatasets, targetCols, selectedSectors, availableSectors, loadingSectors,
+  mode, loadingDatasets, targetCols, selectedSectors, availableSectors, loadingSectors,
   configs, selectedConfigId, featureCols, targetOverrides, sectorOverrides, modelName, analysisParams,
   calibrationDataset, forecastDataset, creditDataset, financialDataset,
   targetColumnOptions, featureOptions, selectedConfig, objectiveFor,

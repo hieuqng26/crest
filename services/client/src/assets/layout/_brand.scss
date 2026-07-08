@@ -91,7 +91,7 @@
   --error-color:        #C4331D;
   --error-text-color:   #A32B18;
   --running-color:      #D6B600;
-  --running-text-color: #8A7600;
+  --running-text-color: #715F00; /* ≥4.5:1 on the warning tint */
   --queued-color:       #9B9BA6;
   --queued-text-color:  #747480;
   --deleting-color:      #C4331D;
@@ -393,33 +393,150 @@ code, kbd, pre, .font-mono {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * DataTable — 2px ink rule under the header row, hairline row dividers
+ * DataTable — the ONE canonical table skin: 11px uppercase muted header
+ * under a 2px ink rule, 13px body, hairline row dividers, warm hover.
+ *
+ * No !important here: this sheet loads after theme.css, so equal
+ * specificity wins — every selector is doubled with its `.p-datatable-sm`
+ * variant to also out-cascade the theme's size-small rules. Backgrounds
+ * are deliberately non-important so per-row tint classes (JobHistory's
+ * `.jh-row--*`, SegmentModelsPanel's `.seg-row--open`) can win again —
+ * the old !importants silently suppressed them.
+ * See .claude/bugs/global-important-vs-row-tints.md.
  * ───────────────────────────────────────────────────────────────────── */
 .p-datatable {
-  background: var(--surface-card) !important;
+  background: var(--surface-card);
 }
-.p-datatable .p-datatable-thead > tr > th {
-  background: var(--surface-card) !important;
-  color: var(--text-color-muted) !important;
-  font-size: 11px !important;
+.p-datatable .p-datatable-thead > tr > th,
+.p-datatable.p-datatable-sm .p-datatable-thead > tr > th {
+  background: var(--surface-card);
+  color: var(--text-color-muted);
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  font-weight: 700 !important;
-  border-bottom: 2px solid var(--ink) !important;
-  padding: 10px 14px !important;
+  font-weight: 700;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  padding: 12px 16px;
 }
 .p-datatable .p-datatable-tbody > tr {
-  background: transparent !important;
+  background: transparent;
 }
-.p-datatable .p-datatable-tbody > tr > td {
-  background: transparent !important;
-  border-bottom: 1px solid var(--surface-border-row) !important;
-  padding: 10px 14px !important;
+.p-datatable .p-datatable-tbody > tr > td,
+.p-datatable.p-datatable-sm .p-datatable-tbody > tr > td {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--surface-border-row);
+  padding: 11px 16px;
   font-size: 13px;
   color: var(--text-color);
 }
+.p-datatable .p-datatable-tbody > tr:last-child > td,
+.p-datatable.p-datatable-sm .p-datatable-tbody > tr:last-child > td {
+  border-bottom: 0;
+}
 .p-datatable .p-datatable-tbody > tr:hover > td {
-  background: var(--surface-hover) !important;
+  background: var(--surface-hover);
+}
+
+/* Numeric column helpers — pass bodyClass="cell-num" / headerClass="cell-num-h"
+ * on a Column to right-align magnitudes (design.md: numbers are scannable). */
+.p-datatable td.cell-num {
+  text-align: right;
+}
+.p-datatable th.cell-num-h .p-column-header-content {
+  justify-content: flex-end;
+}
+
+/* Sortable headers — arrows stay hidden at rest so the active sort is the
+ * only signal; hover reveals the affordance, the active column shows a
+ * single ink arrow. */
+.p-datatable .p-sortable-column .p-sortable-column-icon {
+  opacity: 0;
+  color: var(--text-color-muted);
+  width: 12px;
+  height: 12px;
+  margin-left: 6px;
+  transition: opacity 0.12s ease;
+}
+.p-datatable .p-sortable-column:hover .p-sortable-column-icon {
+  opacity: 0.6;
+}
+.p-datatable .p-sortable-column.p-highlight,
+.p-datatable .p-sortable-column.p-highlight:hover {
+  background: var(--surface-card);
+  color: var(--ink);
+}
+.p-datatable .p-sortable-column.p-highlight .p-sortable-column-icon,
+.p-datatable .p-sortable-column.p-highlight:hover .p-sortable-column-icon {
+  opacity: 1;
+  color: var(--ink);
+}
+.p-datatable .p-sortable-column:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--text-color-secondary);
+}
+.p-datatable .p-sortable-column:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--yellow);
+  outline: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Paginator — flat, square; the current page is the sanctioned yellow.
+ * ───────────────────────────────────────────────────────────────────── */
+.p-paginator {
+  background: transparent;
+  border: 0;
+  padding: 10px 4px 4px;
+  font-size: 12px;
+}
+.p-paginator .p-paginator-first,
+.p-paginator .p-paginator-prev,
+.p-paginator .p-paginator-next,
+.p-paginator .p-paginator-last,
+.p-paginator .p-paginator-pages .p-paginator-page {
+  min-width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-color-secondary);
+  border: 0;
+}
+.p-paginator .p-paginator-first:not(.p-disabled):hover,
+.p-paginator .p-paginator-prev:not(.p-disabled):hover,
+.p-paginator .p-paginator-next:not(.p-disabled):hover,
+.p-paginator .p-paginator-last:not(.p-disabled):hover,
+.p-paginator .p-paginator-pages .p-paginator-page:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.p-paginator .p-paginator-pages .p-paginator-page.p-highlight {
+  background: var(--yellow);
+  color: var(--ink);
+  font-weight: 700;
+}
+.p-paginator .p-paginator-current {
+  color: var(--text-color-muted);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+}
+.p-paginator .p-dropdown {
+  height: 30px;
+  align-items: center;
+}
+/* Separator above a table's own bottom paginator (the last row divider is
+ * suppressed, so this line closes the table body). */
+.p-datatable .p-paginator-bottom {
+  border-top: 1px solid var(--surface-border-row);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Panel — the flat v2 content card (surface + hairline border, no shadow).
+ * Shared by every view; don't re-declare locally.
+ * ───────────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
 }
 
 /* ─────────────────────────────────────────────────────────────────────

@@ -20,9 +20,9 @@
         <Column :exportable="false" style="width: 9rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
-              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary"
+              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" v-tooltip.top="'Edit role'" aria-label="Edit role"
                       :disabled="data.is_system || !canWrite" @click="openEdit(data)" />
-              <Button icon="pi pi-trash" text rounded size="small" severity="danger"
+              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete role'" aria-label="Delete role"
                       :disabled="data.is_system || !canWrite" @click="confirmDelete(data)" />
             </div>
           </template>

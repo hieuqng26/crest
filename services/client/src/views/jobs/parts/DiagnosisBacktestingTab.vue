@@ -4,6 +4,10 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import RetrainingBanner from '@/components/ui/RetrainingBanner.vue'
+import FilterBar from '@/components/ui/FilterBar.vue'
+import FilterField from '@/components/ui/FilterField.vue'
 import { probeColumns } from './resultColumns.js'
 
 const props = defineProps({
@@ -199,25 +203,21 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 
 <template>
   <div class="diag-tab">
-    <div class="filter-bar">
-      <div class="filter-col">
-        <label class="field-label">Target</label>
+    <FilterBar>
+      <FilterField label="Target">
         <EySelect v-model="selectedTargetCol" :options="targets.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="font-mono" />
-      </div>
-      <div v-if="isSegmented" class="filter-col">
-        <label class="field-label">Sector</label>
+      </FilterField>
+      <FilterField v-if="isSegmented" label="Sector">
         <EySelect v-model="selectedSector" :options="sectorOptions" optionLabel="label" optionValue="value" :disabled="loadingSegments" />
-      </div>
-      <div v-if="isSegmented && selectedSector" class="filter-col">
-        <label class="field-label">Segment</label>
+      </FilterField>
+      <FilterField v-if="isSegmented && selectedSector" label="Segment">
         <EySelect v-model="selectedSegmentKey" :options="segmentOptions" optionLabel="label" optionValue="value" class="font-mono" />
-      </div>
-    </div>
+      </FilterField>
+    </FilterBar>
 
-    <div v-if="retrainingCount > 0" class="retraining-banner">
-      <i class="pi pi-sync" />
-      <span>{{ retrainingCount }} segment{{ retrainingCount > 1 ? 's are' : ' is' }} re-training — the diagnosis below reflects the previous model{{ retrainingCount > 1 ? 's' : '' }} and will refresh when it completes.</span>
-    </div>
+    <RetrainingBanner v-if="retrainingCount > 0">
+      {{ retrainingCount }} segment{{ retrainingCount > 1 ? 's are' : ' is' }} re-training — the diagnosis below reflects the previous model{{ retrainingCount > 1 ? 's' : '' }} and will refresh when it completes.
+    </RetrainingBanner>
 
     <div v-if="loadingSegments" class="loading-line"><i class="pi pi-spin pi-spinner" /> Loading segments…</div>
 
@@ -249,16 +249,16 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
           <span class="legend-item"><span class="legend-swatch legend-predicted" />Predicted</span>
         </div>
       </div>
-      <div v-else-if="!canShowSinglePredictions" class="panel chart-card empty-note">
-        <i class="pi pi-th-large" />
-        <p>Select a specific segment above to view its backtesting chart and predictions.</p>
+      <div v-else-if="!canShowSinglePredictions" class="panel">
+        <EmptyState icon="pi pi-th-large">Select a specific segment above to view its backtesting chart and predictions.</EmptyState>
       </div>
 
       <div v-if="canShowSinglePredictions" class="panel results-panel">
-        <div class="chart-title results-title">Backtest predictions</div>
         <CommonDataTable
           v-if="predictionColumns.length"
           :key="predictionsKey"
+          card
+          title="Backtest predictions"
           :columns="predictionColumns"
           :fetch-page="predictionsFetchPage"
           :fetch-distinct="predictionsFetchDistinct"
@@ -267,9 +267,8 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
       </div>
     </template>
 
-    <div v-else class="panel chart-card empty-note">
-      <i class="pi pi-chart-bar" />
-      <p>No diagnostic data available for this target.</p>
+    <div v-else class="panel">
+      <EmptyState icon="pi pi-chart-bar">No diagnostic data available for this target.</EmptyState>
     </div>
 
     <a v-if="cal" class="diagnostics-link" @click="router.push({ name: 'jobs_detail', params: { kind: 'training', run_id: cal.run_id } })">
@@ -281,32 +280,18 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 <style scoped>
 .diag-tab { display: flex; flex-direction: column; gap: 16px; }
 
-.filter-bar { display: flex; gap: 16px; flex-wrap: wrap; background: var(--surface-inset); border-radius: 2px; padding: 14px 16px; }
-.filter-col { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
-.field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
-
 .loading-line { padding: 20px; text-align: center; color: var(--text-color-muted); font-size: 13px; }
 
-.panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
+/* .panel is global (_brand.scss). */
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .metric-card { padding: 14px 16px; }
 .metric-value { font-size: 24px; font-weight: 600; }
 .metric-label { margin-top: 6px; }
 
-.retraining-banner {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px;
-  font-size: 12.5px; color: var(--text-color-secondary);
-  background: var(--surface-inset); border: 1px solid var(--surface-border);
-  border-left: 3px solid var(--running-color); border-radius: 2px;
-}
-.retraining-banner i { color: var(--running-color); font-size: 13px; }
-
 .chart-card { padding: 18px 20px; }
 .chart-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
-.results-panel { padding: 18px 20px; overflow: hidden; }
-.results-title { margin-bottom: 10px; }
+.results-panel { overflow: hidden; }
 
 .hist-wrap { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
 .hist-bar { flex: 1; background: var(--ink-2); border-radius: 1px 1px 0 0; }
@@ -322,10 +307,6 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 .legend-swatch { width: 14px; height: 3px; border-radius: 1px; display: inline-block; }
 .legend-actual { background: var(--ink-2); }
 .legend-predicted { background: var(--yellow-chart); }
-
-.empty-note { text-align: center; color: var(--text-color-muted); padding: 32px 20px; }
-.empty-note i { font-size: 22px; display: block; margin-bottom: 8px; opacity: 0.6; }
-.empty-note p { margin: 0; font-size: 13px; }
 
 .diagnostics-link { display: inline-block; font-size: 12.5px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; width: fit-content; }
 .diagnostics-link:hover { color: var(--ink); }

@@ -3,9 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import datasetsAPI from '@/api/datasetsAPI'
-import { datasets, loading, fetchDatasets, addDataset, deleteDataset } from './datasetsStore'
+import { datasets, fetchDatasets, addDataset, deleteDataset } from './datasetsStore'
 import { fmtDate as formatDate } from '@/utils/datetime'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -202,16 +203,15 @@ const saveQuery = () => {
         :rows="15"
       >
         <template #empty>
-          <div class="text-center p-4 text-color-secondary">
-            <i class="pi pi-inbox text-3xl block mb-2" />
-            <p class="m-0">No datasets match your filters.</p>
-          </div>
+          <EmptyState>No datasets match your filters.</EmptyState>
         </template>
 
         <Column v-if="selectMode" selectionMode="multiple" style="width: 3rem" />
 
-        <Column field="id" header="ID" style="width:4rem" sortable />
         <Column field="name" header="Name" sortable />
+        <Column field="id" header="ID" style="width:64px" sortable>
+          <template #body="{ data }"><span class="font-mono text-color-secondary" style="font-size:12px">{{ data.id }}</span></template>
+        </Column>
         <Column field="source" header="Source" sortable>
           <template #body="{ data }">
             <Tag :value="data.source === 'live_query' ? 'Live Query' : 'Upload'" :severity="sourceSeverity(data.source)" />
@@ -225,8 +225,8 @@ const saveQuery = () => {
             />
           </template>
         </Column>
-        <Column field="row_count" header="Rows" sortable>
-          <template #body="{ data }">{{ data.row_count?.toLocaleString() }}</template>
+        <Column field="row_count" header="Rows" sortable bodyClass="cell-num" headerClass="cell-num-h">
+          <template #body="{ data }"><span class="font-mono" style="font-size:12px">{{ data.row_count?.toLocaleString() }}</span></template>
         </Column>
         <Column field="created_by" header="Created By" sortable />
         <Column field="created_at" header="Date" sortable>

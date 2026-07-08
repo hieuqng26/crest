@@ -43,6 +43,25 @@ export function fmtDateShort(iso) {
   })
 }
 
+/**
+ * Time-only format: HH:MM:SS in the configured timezone.
+ * Accepts full timestamps ("YYYY-MM-DD HH:MM:SS" / ISO, naive = UTC).
+ * Legacy bare "HH:MM:SS" strings (pre-fix log rows lack a date, so the
+ * timezone can't be recovered) are returned unchanged.
+ */
+export function fmtTime(iso) {
+  if (!iso) return '—'
+  if (/^\d{2}:\d{2}:\d{2}$/.test(iso)) return iso
+  let s = iso.includes('T') ? iso : iso.replace(' ', 'T')
+  if (!s.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(s)) s += 'Z'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return iso
+  return d.toLocaleTimeString(DATETIME_CONFIG.locale, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    timeZone: DATETIME_CONFIG.timezone,
+  })
+}
+
 function _toDate(iso) {
   if (!iso) return null
   let s = iso.includes('T') ? iso : iso.replace(' ', 'T')

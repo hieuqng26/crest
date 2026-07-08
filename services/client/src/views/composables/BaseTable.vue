@@ -96,16 +96,11 @@ const onExpandUpdate = (val) => emit('update:expandedRows', val)
 .ey-table.p-datatable .p-datatable-wrapper { background: transparent; }
 .ey-table.p-datatable table { border-collapse: collapse; width: 100%; font-size: 13px; }
 
-/* Header — 2px ink rule under the whole row, flush-left first cell. */
+/* Header — typography/ink rule come from the global _brand.scss skin; this
+   variant only re-shapes the cell box: flush-left first cell, tighter pad. */
 .ey-table.p-datatable .p-datatable-thead > tr > th {
   background: transparent;
-  border: none;
-  border-bottom: 2px solid var(--ink);
   padding: 6px 12px 9px 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: var(--text-color-muted);
   text-align: left;
   white-space: nowrap;
 }
@@ -124,14 +119,13 @@ const onExpandUpdate = (val) => emit('update:expandedRows', val)
   background: var(--surface-hover);
 }
 
-/* Cells — flush-left first cell, right-align opt-in. */
+/* Cells — flush-left first cell, right-align opt-in. Font/color come from
+   the global skin (13px); only the box changes here. */
 .ey-table.p-datatable .p-datatable-tbody > tr > td {
   background: inherit;
-  border: none;
+  border-bottom: 0;
   padding: 10px 12px 10px 0;
-  font-size: 12.5px;
   vertical-align: middle;
-  color: var(--text-color);
 }
 .ey-table.p-datatable .p-datatable-tbody > tr > td:first-child { padding-left: 0; }
 .ey-table.p-datatable .p-datatable-tbody > tr > td.ey-td-right { text-align: right; }

@@ -6,14 +6,16 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 // page/sort/filter change round-trips through `fetchPage` — the caller owns
 // the actual API call, this component only owns table state + rendering.
 //
-// Search/filters/sort live in a PrimeVue Toolbar above the table (not
-// per-column, per design.md) and are staged: editing them doesn't fetch
-// anything until "Apply" is clicked, so typing a search term or picking
-// several filter values doesn't fire a request per keystroke/click. The
-// "Filters" button toggles an inline filter strip (inset background, labeled
-// dropdowns). A column's filter is a text "contains" input by default, or a
-// searchable multi-select when it has <= categoricalThreshold distinct values
-// — see resolveFilterKinds().
+// Search/filters live in a PrimeVue Toolbar above the table (not per-column,
+// per design.md) and are staged: editing them doesn't fetch anything until
+// "Apply" is clicked, so typing a search term or picking several filter
+// values doesn't fire a request per keystroke/click; the Apply button
+// highlights while drafts differ from what's applied. Sorting is instant via
+// the column headers (server-side through fetchPage), the same model as
+// every other table in the app. The "Filters" button toggles an inline
+// filter strip (inset background, labeled dropdowns). A column's filter is a
+// text "contains" input by default, or a searchable multi-select when it has
+// <= categoricalThreshold distinct values — see resolveFilterKinds().
 const props = defineProps({
   // [{ field, header, sortable=true, filterable=true, width, hidden=false,
   //    align?: 'left'|'right'|'center', mono?: boolean, formatter?(value, row) }]
@@ -32,6 +34,11 @@ const props = defineProps({
   initialPageSize: { type: Number, default: 50 },
   categoricalThreshold: { type: Number, default: 30 },
   emptyMessage: { type: String, default: 'No data found.' },
+  emptyIcon: { type: String, default: 'pi pi-inbox' },
+  // Card mode: the component owns its internal padding (header/toolbar/strip/
+  // paginator) so callers can wrap it in an unpadded .panel and get a
+  // consistent "table card". Default (false) renders flush, as before.
+  card: { type: Boolean, default: false },
   scrollHeight: { type: String, default: null },
   initialSortField: { type: String, default: null },
   initialSortOrder: { type: Number, default: null }, // 1 | -1
@@ -45,6 +52,7 @@ const GLOBAL_SEARCH_KEY = '__search__'
 const rows = ref([])
 const totalRecords = ref(0)
 const loading = ref(true)
+const hasLoadedOnce = ref(false) // first load renders skeleton rows, not the overlay
 const error = ref(null)
 
 const page = ref(0)
@@ -57,15 +65,11 @@ const sortOrder = ref(props.initialSortField ? (props.initialSortOrder ?? 1) : n
 const appliedSearch = ref('')
 const appliedFilters = reactive({}) // field -> { mode, value }
 
-const sortFieldDraft = ref(sortField.value)
-const sortDescDraft = ref(sortOrder.value === -1) // ToggleButton needs a boolean, not 1/-1
 const searchDraft = ref('')
 const filterDrafts = reactive({}) // field -> string | string[]
 
 const visibleColumns = computed(() => props.columns.filter((c) => !c.hidden))
 const filterableColumns = computed(() => visibleColumns.value.filter((c) => c.filterable !== false))
-const sortableColumns = computed(() => visibleColumns.value.filter((c) => c.sortable !== false))
-const sortOptions = computed(() => sortableColumns.value.map((c) => ({ label: c.header || c.field, value: c.field })))
 
 const resolvedCaption = computed(() => {
   if (props.caption) return props.caption
@@ -162,6 +166,7 @@ async function loadPage() {
     totalRecords.value = 0
   } finally {
     loading.value = false
+    hasLoadedOnce.value = true
     if (!filterKindsResolved.value) {
       filterKindsResolved.value = true
       resolveFilterKinds()
@@ -175,6 +180,14 @@ function onPage(e) {
   loadPage()
 }
 
+// Header-click sorting — instant (no Apply), server-side via fetchPage.
+function onSort(e) {
+  sortField.value = e.sortField ?? null
+  sortOrder.value = e.sortOrder || null
+  page.value = 0
+  loadPage()
+}
+
 // Inline filter strip (design.png): toggled by the "Filters" toolbar button.
 const showFilters = ref(false)
 const hasFilterStrip = computed(() => filterableColumns.value.length > 0)
@@ -183,8 +196,6 @@ function toggleFilters() {
 }
 
 function applyToolbar() {
-  sortField.value = sortFieldDraft.value
-  sortOrder.value = sortFieldDraft.value ? (sortDescDraft.value ? -1 : 1) : null
   appliedSearch.value = searchDraft.value
   Object.keys(appliedFilters).forEach((k) => delete appliedFilters[k])
   Object.assign(appliedFilters, filterDrafts)
@@ -194,10 +205,33 @@ function applyToolbar() {
 
 function resetToolbar() {
   searchDraft.value = ''
-  sortFieldDraft.value = null
-  sortDescDraft.value = false
+  sortField.value = null
+  sortOrder.value = null
   for (const field of Object.keys(filterDrafts)) filterDrafts[field] = null
   applyToolbar()
+}
+
+// Staged-state indicator: highlight Apply while the drafts differ from what
+// the table is actually showing, so unapplied edits can't be mistaken for
+// applied ones.
+function normalizedFilters(src) {
+  const out = {}
+  for (const [k, v] of Object.entries(src)) {
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) continue
+    out[k] = Array.isArray(v) ? [...v].sort() : v
+  }
+  return out
+}
+const toolbarDirty = computed(() =>
+  searchDraft.value.trim() !== appliedSearch.value.trim() ||
+  JSON.stringify(normalizedFilters(filterDrafts)) !== JSON.stringify(normalizedFilters(appliedFilters))
+)
+
+// First-load skeleton — one bar per visible column, deterministic varied
+// widths so the shimmer doesn't look like a uniform grid.
+const skeletonRowCount = computed(() => Math.min(pageSize.value, 8))
+function skeletonWidth(rowIdx, colIdx) {
+  return `${55 + ((rowIdx * 7 + colIdx * 13) % 35)}%`
 }
 
 function cellValue(col, data) {
@@ -279,7 +313,7 @@ onMounted(loadPage)
 </script>
 
 <template>
-  <div class="cdt-wrap">
+  <div class="cdt-wrap" :class="{ 'cdt-wrap--card': card }">
     <div v-if="title" class="cdt-header">
       <span class="cdt-title">{{ title }}</span>
       <span v-if="resolvedCaption" class="cdt-caption">{{ resolvedCaption }}</span>
@@ -301,27 +335,12 @@ onMounted(loadPage)
           @click="toggleFilters"
         />
 
-        <EySelect
-          v-model="sortFieldDraft"
-          :options="sortOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Sort by…"
-          showClear
-          class="cdt-sort-drop"
+        <Button
+          label="Apply"
+          class="cdt-btn-dark"
+          :class="{ 'cdt-btn-apply--dirty': toolbarDirty }"
+          @click="applyToolbar"
         />
-        <ToggleButton
-          v-model="sortDescDraft"
-          onLabel=""
-          offLabel=""
-          onIcon="pi pi-sort-amount-down"
-          offIcon="pi pi-sort-amount-up"
-          :disabled="!sortFieldDraft"
-          v-tooltip.top="sortDescDraft ? 'Descending' : 'Ascending'"
-          class="cdt-sort-toggle"
-        />
-
-        <Button label="Apply" class="cdt-btn-dark" @click="applyToolbar" />
         <Button label="Reset" text class="cdt-btn-reset" @click="resetToolbar" />
       </template>
 
@@ -369,7 +388,23 @@ onMounted(loadPage)
       <span>{{ error }}</span>
     </div>
 
+    <!-- First load: skeleton rows instead of a spinner over an empty box. -->
+    <div v-if="loading && !hasLoadedOnce" class="cdt-skeleton" aria-hidden="true">
+      <div class="cdt-skeleton-row cdt-skeleton-row--head" :style="{ '--cdt-cols': visibleColumns.length }">
+        <Skeleton v-for="(col, i) in visibleColumns" :key="col.field" height="10px" :width="skeletonWidth(0, i)" />
+      </div>
+      <div
+        v-for="r in skeletonRowCount"
+        :key="r"
+        class="cdt-skeleton-row"
+        :style="{ '--cdt-cols': visibleColumns.length }"
+      >
+        <Skeleton v-for="(col, i) in visibleColumns" :key="col.field" height="14px" :width="skeletonWidth(r, i)" />
+      </div>
+    </div>
+
     <DataTable
+      v-else
       :value="rows"
       :dataKey="rowKey"
       lazy
@@ -383,13 +418,20 @@ onMounted(loadPage)
       class="cdt-table"
       :scrollable="!!scrollHeight"
       :scrollHeight="scrollHeight"
+      :sortField="sortField"
+      :sortOrder="sortOrder"
+      removableSort
       currentPageReportTemplate="{first}–{last} of {totalRecords}"
       paginatorTemplate="FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink RowsPerPageDropdown"
       :alwaysShowPaginator="totalRecords > 0"
       @page="onPage"
+      @sort="onSort"
     >
       <template #empty>
-        <div class="cdt-empty">{{ emptyMessage }}</div>
+        <div class="cdt-empty">
+          <i :class="emptyIcon" />
+          <p>{{ emptyMessage }}</p>
+        </div>
       </template>
 
       <Column
@@ -397,9 +439,9 @@ onMounted(loadPage)
         :key="col.field"
         :field="col.field"
         :header="col.header"
-        :sortable="false"
+        :sortable="col.sortable !== false"
         :headerClass="headerClass(col)"
-        :style="{ minWidth: col.width || '10rem' }"
+        :style="{ minWidth: col.width || '140px' }"
       >
         <template #body="slotProps">
           <slot :name="`cell-${col.field}`" v-bind="slotProps">
@@ -456,26 +498,26 @@ onMounted(loadPage)
   width: 260px;
 }
 :deep(.cdt-search .p-inputtext) {
-  height: 40px;
+  height: 38px;
   font-size: 13px;
 }
 
-.cdt-sort-drop {
-  width: 150px;
-}
-
-/* Dark ink buttons (Filters, Apply) — matches the primary-button treatment. */
+/* Dark ink buttons (Filters, Apply) — 38px like every header/toolbar button. */
 :deep(.cdt-btn-dark.p-button) {
-  height: 40px;
+  height: 38px;
   font-size: 13px;
   font-weight: 600;
 }
 :deep(.cdt-btn-active.p-button) {
   box-shadow: 0 0 0 2px var(--yellow);
 }
+/* Unapplied draft changes — Apply carries the accent until clicked. */
+:deep(.cdt-btn-apply--dirty.p-button) {
+  box-shadow: 0 0 0 2px var(--yellow);
+}
 
 :deep(.cdt-btn-reset.p-button) {
-  height: 40px;
+  height: 38px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-color-muted);
@@ -486,7 +528,7 @@ onMounted(loadPage)
 }
 
 :deep(.cdt-btn-outline.p-button) {
-  height: 40px;
+  height: 38px;
   font-size: 13px;
   font-weight: 600;
   background: var(--surface-card);
@@ -500,30 +542,6 @@ onMounted(loadPage)
 }
 :deep(.cdt-btn-outline .p-button-icon) {
   color: var(--text-color-muted);
-}
-
-/* Sort direction toggle — dark square icon button. */
-:deep(.cdt-sort-toggle.p-togglebutton) {
-  height: 40px;
-  width: 44px;
-  padding: 0;
-  background: var(--button-primary-bg);
-  border: 1px solid var(--button-primary-bg);
-  color: #fff;
-  border-radius: 2px;
-}
-:deep(.cdt-sort-toggle.p-togglebutton.p-highlight),
-:deep(.cdt-sort-toggle.p-togglebutton:not(.p-disabled):hover) {
-  background: var(--button-primary-hover);
-  border-color: var(--button-primary-hover);
-  color: #fff;
-}
-:deep(.cdt-sort-toggle .p-button-icon) {
-  color: var(--yellow);
-  font-size: 14px;
-}
-:deep(.cdt-sort-toggle.p-disabled) {
-  opacity: 0.4;
 }
 
 /* ── Inline filter strip ───────────────────────────────────────────────────── */
@@ -556,7 +574,7 @@ onMounted(loadPage)
   width: 100%;
 }
 :deep(.cdt-filter-text.p-inputtext) {
-  height: 40px;
+  height: 38px;
   font-size: 13px;
 }
 .cdt-filter-actions {
@@ -598,48 +616,70 @@ onMounted(loadPage)
   font-size: 12px;
 }
 
+/* Empty state — first-class per design.md: dashed border, muted icon, one
+   sentence. Never a bare line of text in a void. */
 .cdt-empty {
-  padding: 32px 0;
+  margin: 16px;
+  padding: 28px 20px;
   text-align: center;
-  color: var(--text-color-muted-2);
+  color: var(--text-color-muted);
+  border: 1px dashed var(--surface-border-input);
+  border-radius: var(--radius-sm);
+}
+.cdt-empty i {
+  font-size: 22px;
+  display: block;
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+.cdt-empty p {
+  margin: 0;
   font-size: 13px;
 }
 
-/* ── Table chrome (header rule, dividers, hover) ───────────────────────────── */
-:deep(.cdt-table .p-datatable-thead > tr > th) {
-  background: var(--surface-card);
-  color: var(--text-color-muted);
-  font-weight: 700;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  border: 0;
-  border-bottom: 2px solid var(--ink);
+/* First-load skeleton — mirrors the table rhythm (header + rows). */
+.cdt-skeleton {
+  padding: 2px 0 6px;
+}
+.cdt-skeleton-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cdt-cols, 4), 1fr);
+  gap: 16px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--surface-border-row);
+}
+.cdt-skeleton-row--head {
+  border-bottom: 2px solid var(--surface-border);
   padding: 12px 16px;
 }
+.cdt-skeleton-row:last-child {
+  border-bottom: 0;
+}
+
+/* ── Card mode — self-contained paddings so callers wrap in a bare .panel ── */
+.cdt-wrap--card .cdt-header {
+  padding: 16px 20px 0;
+}
+.cdt-wrap--card :deep(.cdt-toolbar.p-toolbar) {
+  padding: 12px 16px 0;
+}
+.cdt-wrap--card .cdt-filter-strip {
+  margin: 12px 16px;
+  margin-bottom: 0;
+}
+.cdt-wrap--card .cdt-error {
+  margin: 12px 16px 0;
+}
+.cdt-wrap--card :deep(.cdt-table .p-paginator) {
+  padding: 10px 12px;
+}
+
+/* ── Table chrome comes from the global _brand.scss DataTable/paginator skin;
+      only the column-alignment helpers live here. ─────────────────────────── */
 :deep(.cdt-table .p-datatable-thead > tr > th.cdt-th--right .p-column-header-content) {
   justify-content: flex-end;
 }
 :deep(.cdt-table .p-datatable-thead > tr > th.cdt-th--center .p-column-header-content) {
   justify-content: center;
-}
-
-:deep(.cdt-table .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border-row);
-  padding: 11px 16px;
-}
-:deep(.cdt-table .p-datatable-tbody > tr:last-child > td) {
-  border-bottom: 0;
-}
-:deep(.cdt-table .p-datatable-tbody > tr:hover > td) {
-  background: var(--surface-hover);
-}
-
-:deep(.cdt-table .p-paginator) {
-  border: 0;
-  border-top: 1px solid var(--surface-border-row);
-  background: transparent;
-  padding-top: 12px;
 }
 </style>

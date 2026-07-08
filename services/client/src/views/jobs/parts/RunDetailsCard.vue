@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   rows:         { type: Array,   required: true },
@@ -15,6 +15,13 @@ const props = defineProps({
 })
 
 const isLive = (s) => s === 'running' || s === 'queued'
+
+// A finished successful run doesn't need a progress readout — the header
+// status already says it all. Keep it while live, and for failures (the red
+// fill + error box explain where it stopped).
+const showProgress = computed(
+  () => isLive(props.status) || props.status === 'failed' || !!props.errorMessage
+)
 
 // Start collapsed when the job is already done on mount; expand while live.
 const collapsed = ref(props.collapsible && !isLive(props.status))
@@ -37,7 +44,7 @@ watch(() => props.status, (s) => {
       </div>
     </div>
 
-    <div class="progress-block">
+    <div v-if="showProgress" class="progress-block">
       <div class="progress-head">
         <span class="progress-label">Progress</span>
         <span class="font-mono progress-pct">{{ progress }}%</span>
@@ -69,7 +76,7 @@ watch(() => props.status, (s) => {
         <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
       </div>
 
-      <div class="progress-block">
+      <div v-if="showProgress" class="progress-block">
         <div class="progress-head">
           <span class="progress-label">Progress</span>
           <span class="font-mono progress-pct">{{ progress }}%</span>

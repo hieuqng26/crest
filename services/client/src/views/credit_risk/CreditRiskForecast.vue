@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
+import { cssVar } from '@/utils/chartTheme'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 // apexcharts (~500KB) is code-split here instead of registered globally in
@@ -84,13 +85,17 @@ onMounted(async () => {
 })
 
 // ── chart styling ──────────────────────────────────────────────────────────────
-const HISTORY_COLOR = '#2E2E38'
-const SCENARIO_STYLE = {
-  Baseline: { color: '#E8C400', width: 2.8, dash: 0 },
-  Adverse: { color: '#9B9BA6', width: 1.8, dash: 0 },
-  'Severely Adverse': { color: '#9B9BA6', width: 1.8, dash: 6 },
+// History occupies the ink slot on this page, so both stress scenarios render
+// muted (solid vs dashed) — colors still come from the chart tokens.
+const historyColor = () => cssVar('--chart-2')
+const scenarioStyle = (name) => {
+  const styles = {
+    Baseline: { color: cssVar('--chart-1'), width: 2.8, dash: 0 },
+    Adverse: { color: cssVar('--chart-3'), width: 1.8, dash: 0 },
+    'Severely Adverse': { color: cssVar('--chart-3'), width: 1.8, dash: 6 },
+  }
+  return styles[name] ?? { color: cssVar('--chart-4'), width: 1.8, dash: 0 }
 }
-const scenarioStyle = (name) => SCENARIO_STYLE[name] ?? { color: '#2D6FD6', width: 1.8, dash: 0 }
 
 // Legend/scenario visibility is shared across every card: clicking a legend item
 // hides that scenario on all charts at once.
@@ -135,7 +140,7 @@ function buildCard(metric) {
     series.push({ name: 'History', data: hist.map((p) => ({ x: p.year, y: p.value })) })
     widths.push(1.8)
     dashes.push(0)
-    colors.push(HISTORY_COLOR)
+    colors.push(historyColor())
   }
 
   for (const [name, pts] of scenarioEntries) {
@@ -172,7 +177,7 @@ function buildCard(metric) {
     stroke: { curve: 'straight', width: widths, dashArray: dashes },
     legend: { show: false },
     grid: {
-      borderColor: '#F0F0F3',
+      borderColor: cssVar('--surface-border-row'),
       strokeDashArray: 0,
       xaxis: { lines: { show: false } },
       padding: { left: 8, right: 12, top: 0, bottom: 0 },
@@ -186,17 +191,17 @@ function buildCard(metric) {
       decimalsInFloat: 0,
       labels: {
         formatter: (v) => (v == null ? '' : String(Math.round(v))),
-        style: { colors: '#9B9BA6', fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
+        style: { colors: cssVar('--text-color-muted-2'), fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
-      crosshairs: { show: true, stroke: { color: '#D8D8DE', width: 1, dashArray: 3 } },
+      crosshairs: { show: true, stroke: { color: cssVar('--surface-border-input'), width: 1, dashArray: 3 } },
       tooltip: { enabled: false },
     },
     yaxis: {
       labels: {
         formatter: (v) => fmtNum(v),
-        style: { colors: '#9B9BA6', fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
+        style: { colors: cssVar('--text-color-muted-2'), fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
       },
     },
     tooltip: {
@@ -209,14 +214,14 @@ function buildCard(metric) {
       xaxis: [{
         x: splitYear,
         strokeDashArray: 4,
-        borderColor: '#D8D8DE',
+        borderColor: cssVar('--surface-border-input'),
         label: {
           text: 'Forecast →',
           orientation: 'horizontal',
           position: 'top',
           offsetY: -4,
           style: {
-            color: '#9B9BA6',
+            color: cssVar('--text-color-muted-2'),
             background: 'transparent',
             fontFamily: 'IBM Plex Mono, monospace',
             fontSize: '9px',
@@ -293,7 +298,7 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
 
     <template v-else>
       <div class="legend-row">
-        <span class="legend-item is-static"><span class="legend-swatch" style="background:#2E2E38;height:2px" />History</span>
+        <span class="legend-item is-static"><span class="legend-swatch" style="background:var(--chart-2);height:2px" />History</span>
         <span
           v-for="name in scenarioNames" :key="name"
           class="legend-item"
@@ -355,7 +360,7 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
 .legend-item.is-static { cursor: default; }
 .legend-item.is-off { opacity: 0.4; text-decoration: line-through; }
 .legend-swatch { width: 16px; height: 2px; display: inline-block; }
-.legend-dashed { border-top: 2px dashed #9B9BA6; height: 0; background: transparent !important; }
+.legend-dashed { border-top: 2px dashed var(--chart-3); height: 0; background: transparent !important; }
 
 .fin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .fin-grid--single { grid-template-columns: 1fr; }

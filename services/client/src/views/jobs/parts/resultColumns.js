@@ -1,21 +1,23 @@
 // Shared CommonDataTable column defs for forecast / credit-risk analysis
 // results, used by both JobDetail.vue (standalone runs) and
 // WorkflowDetail.vue (runs launched as part of a workflow).
+// Numeric columns are right-aligned tabular mono per design.md — magnitudes
+// must be scannable down a column. Widths are raw px (never rem).
 export const forecastResultColumns = [
-  { field: 'date', header: 'Date', width: '9rem' },
-  { field: 'predicted', header: 'Predicted', width: '9rem', formatter: (v) => (v != null ? v.toFixed(4) : '—') }
+  { field: 'date', header: 'Date', width: '128px', mono: true },
+  { field: 'predicted', header: 'Predicted', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toFixed(4) : '—') }
 ]
 
 export const analysisResultColumns = [
-  { field: 'client_id', header: 'Client ID', width: '9rem' },
-  { field: 'sector', header: 'Sector', width: '9rem' },
-  { field: 'segment_key', header: 'Segment', width: '11rem' },
-  { field: 'scenario', header: 'Scenario', width: '9rem' },
-  { field: 'year', header: 'Year', width: '6rem' },
-  { field: 'stage', header: 'Stage', width: '5rem' },
-  { field: 'pd', header: 'PD', width: '7rem', formatter: (v) => (v != null ? (v * 100).toFixed(3) + '%' : '—') },
-  { field: 'lgd', header: 'LGD', width: '7rem', formatter: (v) => (v != null ? (v * 100).toFixed(1) + '%' : '—') },
-  { field: 'ecl', header: 'ECL', width: '9rem', formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
+  { field: 'client_id', header: 'Client ID', width: '128px', mono: true },
+  { field: 'sector', header: 'Sector', width: '128px' },
+  { field: 'segment_key', header: 'Segment', width: '156px' },
+  { field: 'scenario', header: 'Scenario', width: '128px' },
+  { field: 'year', header: 'Year', width: '88px', align: 'right', mono: true },
+  { field: 'stage', header: 'Stage', width: '96px' },
+  { field: 'pd', header: 'PD', width: '100px', align: 'right', mono: true, formatter: (v) => (v != null ? (v * 100).toFixed(3) + '%' : '—') },
+  { field: 'lgd', header: 'LGD', width: '100px', align: 'right', mono: true, formatter: (v) => (v != null ? (v * 100).toFixed(1) + '%' : '—') },
+  { field: 'ecl', header: 'ECL', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
 ]
 
 // Forecast/backtest result schemas vary by dataset (sector/subsector/country/
@@ -28,9 +30,9 @@ const NUMERIC_FIELDS = new Set(['actual', 'predicted', 'residual'])
 
 export function columnsFromNames(names) {
   return names.map((f) => {
-    if (f === 'correct') return { field: f, header: 'CORRECT', width: '7rem', formatter: (v) => (v ? '✓' : '✗') }
+    if (f === 'correct') return { field: f, header: 'CORRECT', width: '100px', align: 'center', formatter: (v) => (v ? '✓' : '✗') }
     if (NUMERIC_FIELDS.has(f)) {
-      return { field: f, header: f.toUpperCase(), width: '9rem', formatter: (v) => (v != null ? Number(v).toFixed(4) : '—') }
+      return { field: f, header: f.toUpperCase(), width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? Number(v).toFixed(4) : '—') }
     }
     return { field: f, header: f.replace(/_/g, ' ').toUpperCase() }
   })

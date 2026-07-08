@@ -199,7 +199,10 @@ class CalibrationRunLog(db.Model):
 
     def to_dict(self):
         return dict(
-            t=self.logged_at.strftime("%H:%M:%S") if self.logged_at else None,
+            # Full UTC timestamp — the client renders it in the configured
+            # display timezone (see client utils/datetime.js), same as run
+            # started_at/finished_at, so log lines and run details agree.
+            t=self.logged_at.strftime("%Y-%m-%d %H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
         )

@@ -8,6 +8,7 @@ import jobsAPI, { KIND } from '@/api/jobs'
 import { fmtDate, duration } from '@/utils/datetime'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import RunDetailsCard from './parts/RunDetailsCard.vue'
+import StageTag from '@/components/ui/StageTag.vue'
 import LogsPanel from './parts/LogsPanel.vue'
 import SegmentModelsPanel from './parts/SegmentModelsPanel.vue'
 import { forecastResultColumns, analysisResultColumns } from './parts/resultColumns.js'
@@ -296,13 +297,15 @@ const confirmDelete = () => {
         <div v-else class="panel results-panel">
           <CommonDataTable
             :key="runId"
+            card
+            title="Results"
             :columns="resultColumns"
             :fetch-page="resultsFetchPage"
             :fetch-distinct="resultsFetchDistinct"
             empty-message="No results yet."
           >
             <template v-if="kind === KIND.ANALYSIS" #cell-stage="{ data }">
-              <span v-if="data.stage != null" class="stage-tag" :class="`stage-tag--${data.stage}`">STAGE {{ data.stage }}</span>
+              <StageTag v-if="data.stage != null" :stage="data.stage" />
               <span v-else>—</span>
             </template>
           </CommonDataTable>
@@ -424,26 +427,10 @@ const confirmDelete = () => {
   cursor: pointer;
 }
 .tab-btn:hover:not(.is-disabled) { color: var(--ink); }
+.tab-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--yellow); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 .tab-btn.is-disabled { opacity: 0.4; cursor: not-allowed; }
 
-.panel {
-  background: var(--surface-card);
-  border: 1px solid var(--surface-border);
-  border-radius: 2px;
-}
+/* .panel is global (_brand.scss). */
 .results-panel { overflow: hidden; }
-
-.stage-tag {
-  display: inline-block;
-  padding: 3px 8px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  border-radius: 2px;
-  font-family: 'IBM Plex Mono', monospace;
-}
-.stage-tag--1 { background: #FFFFFF; color: var(--text-color-secondary); border: 1px solid var(--surface-border-input); }
-.stage-tag--2 { background: var(--ink); color: var(--yellow); }
-.stage-tag--3 { background: var(--error-color); color: #fff; }
 </style>

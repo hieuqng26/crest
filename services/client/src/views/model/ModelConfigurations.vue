@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useConfirm } from 'primevue/useconfirm'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
@@ -10,7 +10,6 @@ import BaseTable from '@/views/composables/BaseTable.vue'
 import { fmtDate } from '@/utils/datetime'
 
 const route = useRoute()
-const router = useRouter()
 const toast = useToast()
 const confirm = useConfirm()
 

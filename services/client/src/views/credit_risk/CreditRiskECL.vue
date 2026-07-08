@@ -6,6 +6,7 @@ import { useToast } from 'primevue/usetoast'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { localFetchPage } from '@/utils/tableQuery'
+import { scenarioLineStyles, fallbackSeriesColors, axisDefaults } from '@/utils/chartTheme'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
@@ -58,14 +59,10 @@ function fmt(v) {
 }
 
 // ── chart data ────────────────────────────────────────────────────────────────
-const SCENARIO_STYLE = {
-  Baseline: { color: '#E8C400', width: 2.6, dash: [] },
-  Adverse: { color: '#2E2E38', width: 1.6, dash: [] },
-  'Severely Adverse': { color: '#9B9BA6', width: 1.6, dash: [5, 4] }
-}
-const FALLBACK_COLORS = ['#2D6FD6', '#7C5CD6', '#E0792A', '#0E9BB5', '#C4331D']
-
+// Scenario → line style comes from the shared token-driven chart theme.
 function buildEclChart(field) {
+  const scenarioStyle = scenarioLineStyles()
+  const fallbackColors = fallbackSeriesColors()
   const scenarios = [...new Set((eclRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
   const allYears  = [...new Set((eclRows.value || []).map(r => r.YEAR))].sort()
   let fallbackIdx = 0
@@ -74,7 +71,7 @@ function buildEclChart(field) {
     datasets: scenarios.map((scen) => {
       const rows   = eclRows.value.filter(r => r.SCENARIO === scen)
       const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
-      const style = SCENARIO_STYLE[scen] ?? { color: FALLBACK_COLORS[fallbackIdx++ % FALLBACK_COLORS.length], width: 2, dash: [] }
+      const style = scenarioStyle[scen] ?? { color: fallbackColors[fallbackIdx++ % fallbackColors.length], width: 2, dash: [] }
       return {
         label: scen,
         data: allYears.map(y => byYear[y]?.[field] ?? null),
@@ -97,10 +94,7 @@ const lineOptions = {
   maintainAspectRatio: false,
   plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
   interaction: { mode: 'nearest', axis: 'x', intersect: false },
-  scales: {
-    x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } },
-    y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(156,163,175,0.08)' }, border: { display: false } },
-  },
+  scales: axisDefaults(),
 }
 
 const legendItems = computed(() =>

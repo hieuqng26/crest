@@ -73,6 +73,7 @@
             <button
               class="sort-dir-btn"
               :title="selectedSortOrder ? 'Ascending' : 'Descending'"
+              :aria-label="selectedSortOrder ? 'Sort ascending' : 'Sort descending'"
               @click="selectedSortOrder = !selectedSortOrder"
             >
               <i :class="selectedSortOrder ? 'pi pi-sort-amount-up' : 'pi pi-sort-amount-down'" />
@@ -91,6 +92,7 @@
         <div class="bare-table">
           <DataTable
             ref="dt"
+            v-model:expandedRows="expandedRows"
             :value="filteredLogs"
             dataKey="log_id"
             :sortField="sortColumn ? null : 'timestamp'"
@@ -115,39 +117,37 @@
               </div>
             </template>
 
-            <Column field="timestamp"    header="Last Update"         :sortable="false" style="min-width: 14rem">
-              <template #body="{ data }">{{ formatDate(data.timestamp, true) }}</template>
+            <Column expander style="width: 40px" />
+            <Column field="timestamp"    header="Last Update"  :sortable="false" style="min-width: 168px">
+              <template #body="{ data }"><span class="font-mono cell-mono">{{ formatDate(data.timestamp, true) }}</span></template>
             </Column>
-            <Column field="user_email"   header="User ID"             :sortable="false" style="min-width: 12rem" />
-            <Column field="role"         header="Role"                :sortable="false" style="min-width: 7rem" />
-            <Column field="action"       header="Action"              :sortable="false" style="min-width: 8rem" />
-            <Column field="log_id"       header="Identifier"          :sortable="false" style="min-width: 13rem" />
-            <Column field="module"       header="Module"              :sortable="false" style="min-width: 7rem" />
-            <Column field="submodule"    header="Submodule"           :sortable="false" style="min-width: 8rem" />
-            <Column field="status"       header="Status"              :sortable="false" style="min-width: 7rem">
+            <Column field="user_email"   header="User ID"      :sortable="false" style="min-width: 140px" />
+            <Column field="role"         header="Role"         :sortable="false" style="min-width: 96px" />
+            <Column field="action"       header="Action"       :sortable="false" style="min-width: 100px" />
+            <Column field="module"       header="Module"       :sortable="false" style="min-width: 96px" />
+            <Column field="submodule"    header="Submodule"    :sortable="false" style="min-width: 104px" />
+            <Column field="status"       header="Status"       :sortable="false" style="min-width: 96px">
               <template #body="{ data }">
                 <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
               </template>
             </Column>
-            <Column field="ip_address"   header="IP Address"          :sortable="false" style="min-width: 8rem" />
-            <Column field="ip_address2"  header="IP Address 2"        :sortable="false" style="min-width: 8rem" />
-            <Column field="ip_address3"  header="IP Address 3"        :sortable="false" style="min-width: 8rem" />
-            <Column field="description"  header="Description"         :sortable="false" style="min-width: 18rem" />
-            <Column field="device_info"  header="Device Info"         :sortable="false" style="min-width: 16rem" />
-            <Column field="session_id"   header="Session ID"          :sortable="false" style="min-width: 16rem" />
-            <Column field="login_time"   header="Last Login"          :sortable="false" style="min-width: 14rem">
-              <template #body="{ data }">{{ formatDate(data.login_time, true) }}</template>
+            <Column field="log_id"       header="Identifier"   :sortable="false" style="min-width: 120px">
+              <template #body="{ data }">
+                <span class="font-mono cell-mono" :title="data.log_id">{{ shortId(data.log_id) }}</span>
+              </template>
             </Column>
-            <Column field="logout_time"  header="Last Logout"         :sortable="false" style="min-width: 14rem">
-              <template #body="{ data }">{{ formatDate(data.logout_time, true) }}</template>
-            </Column>
-            <Column field="login_type"          header="Login Type"          :sortable="false" style="min-width: 8rem" />
-            <Column field="api_endpoints"       header="API Endpoint"        :sortable="false" style="min-width: 18rem" />
-            <Column field="database_involved"   header="Database Involved"   :sortable="false" style="min-width: 11rem" />
-            <Column field="application_version" header="App Version"         :sortable="false" style="min-width: 8rem" />
-            <Column field="error_codes"         header="Error Code"          :sortable="false" style="min-width: 8rem" />
-            <Column field="job_id"              header="Job ID"              :sortable="false" style="min-width: 8rem" />
-            <Column field="job_judged_by"       header="Approver/Rejector"   :sortable="false" style="min-width: 10rem" />
+            <Column field="description"  header="Description"  :sortable="false" style="min-width: 220px" />
+
+            <!-- Everything else (IPs, device, session, login meta, API detail)
+                 lives in the expansion so the scan surface stays 9 columns. -->
+            <template #expansion="{ data }">
+              <div class="log-detail-grid">
+                <div v-for="f in DETAIL_FIELDS" :key="f.field" class="log-detail-item">
+                  <span class="log-detail-label">{{ f.label }}</span>
+                  <span class="font-mono log-detail-value">{{ f.fmt ? f.fmt(data[f.field]) : (data[f.field] ?? '—') || '—' }}</span>
+                </div>
+              </div>
+            </template>
           </DataTable>
         </div>
 
@@ -168,10 +168,7 @@
         </div>
       </template>
 
-      <div v-else-if="!loadingTable" class="flex flex-column align-items-center justify-content-center gap-2 py-6 text-color-secondary">
-        <i class="pi pi-list text-3xl opacity-40" />
-        <span class="text-sm">No logs found. Adjust filters and apply.</span>
-      </div>
+      <EmptyState v-else-if="!loadingTable" icon="pi pi-list">No logs found. Adjust filters and apply.</EmptyState>
     </div>
   </div>
 </template>
@@ -184,6 +181,7 @@ import { saveFile } from '@/views/composables/views.js'
 import { formatDate } from '@/utils'
 import Paginator from '@/components/Paginator.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const store = useStore()
 const toast = useToast()
@@ -217,6 +215,28 @@ const COLUMN_MAP = {
 
 // refs
 const dt = ref()
+const expandedRows = ref([])
+const shortId = (id) => (id && id.length > 12 ? id.slice(0, 8) + '…' : (id ?? '—'))
+
+// Long-tail fields shown only in the row expansion (export still includes all
+// of them via COLUMN_MAP).
+const DETAIL_FIELDS = [
+  { field: 'log_id', label: 'Identifier' },
+  { field: 'ip_address', label: 'IP Address' },
+  { field: 'ip_address2', label: 'IP Address 2' },
+  { field: 'ip_address3', label: 'IP Address 3' },
+  { field: 'session_id', label: 'Session ID' },
+  { field: 'device_info', label: 'Device Info' },
+  { field: 'login_time', label: 'Last Login', fmt: (v) => formatDate(v, true) },
+  { field: 'logout_time', label: 'Last Logout', fmt: (v) => formatDate(v, true) },
+  { field: 'login_type', label: 'Login Type' },
+  { field: 'api_endpoints', label: 'API Endpoint' },
+  { field: 'database_involved', label: 'Database Involved' },
+  { field: 'application_version', label: 'App Version' },
+  { field: 'error_codes', label: 'Error Code' },
+  { field: 'job_id', label: 'Job ID' },
+  { field: 'job_judged_by', label: 'Approver/Rejector' },
+]
 const exportMenu = ref()
 const logs = ref([])
 const filteredLogs = ref([])
@@ -494,13 +514,6 @@ const downloadOptions = [
   }
 ]
 
-const download = () => {
-  const data = preprocessDownloadData(
-    JSON.parse(JSON.stringify(dt.value.processedData))
-  )
-  saveFile(data, 'xlsx', 'auditlog')
-}
-
 const preprocessDownloadData = (data) => {
   const outputFields = Object.values(COLUMN_MAP)
   const outputFieldsDisplayed = Object.keys(COLUMN_MAP)
@@ -516,7 +529,7 @@ const preprocessDownloadData = (data) => {
     const arrangedObj = {}
     for (var i = 0; i < outputFields.length; i++) {
       const field = outputFields[i]
-      if (obj.hasOwnProperty(field)) {
+      if (Object.hasOwn(obj, field)) {
         const field_displayed = outputFieldsDisplayed[i]
         arrangedObj[field_displayed] = obj[field]
       }
@@ -576,30 +589,31 @@ const toDate = (date) => {
   border-color: var(--ink);
   color: var(--text-color);
 }
+.sort-dir-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--yellow); }
 
 .bare-table { margin: 0 -1.25rem; }
-:deep(.bare-table-inner .p-datatable-thead > tr > th) {
-  background: transparent;
-  color: var(--text-color-muted);
-  font-weight: 700;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border: 0;
-  border-bottom: 2px solid var(--ink);
-  padding: 0.6rem 1.25rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr > td) {
-  border: 0;
-  border-bottom: 1px solid var(--surface-border-row);
-  padding: 0.75rem 1.25rem;
-  font-size: 0.875rem;
-}
-:deep(.bare-table-inner .p-datatable-tbody > tr:hover > td) { background: var(--surface-hover); }
-:deep(.bare-table-inner .p-datatable-tbody > tr:last-child > td) { border-bottom: 0; }
+/* Table chrome comes from the global _brand.scss skin. */
 :deep(.bare-table-inner .p-datatable-header) {
   background: transparent;
   border: 0;
   padding: 0 1.25rem 0.75rem;
 }
+.cell-mono { font-size: 12px; }
+
+.log-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px 24px;
+  padding: 14px 20px;
+  background: var(--surface-inset);
+}
+.log-detail-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.log-detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-color-muted);
+}
+.log-detail-value { font-size: 12px; word-break: break-all; }
 </style>

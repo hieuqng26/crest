@@ -49,8 +49,8 @@
         <Column :exportable="false" style="width: 7rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
-              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" @click="onUpdateUser(data)" />
-              <Button icon="pi pi-trash"  text rounded size="small" severity="danger"    @click="onDeleteUser(data)" />
+              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary" v-tooltip.top="'Edit user'" aria-label="Edit user" @click="onUpdateUser(data)" />
+              <Button icon="pi pi-trash"  text rounded size="small" severity="danger"    v-tooltip.top="'Delete user'" aria-label="Delete user" @click="onDeleteUser(data)" />
             </div>
           </template>
         </Column>
@@ -468,7 +468,7 @@ const deleteUser = () => {
   // Delete user in db
   store
     .dispatch('deleteUser', user.value.email)
-    .then((res) => {
+    .then(() => {
       // Delete user in data table
       users.value = users.value.filter((val) => val.id !== user.value.id)
 
@@ -544,6 +544,7 @@ const downloadData = computed(() => {
 
     return data
   }
+  return []
 })
 </script>
 
