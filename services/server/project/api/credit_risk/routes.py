@@ -1194,6 +1194,10 @@ def get_analysis_forecast():
     requested_keys = (
         {t.strip() for t in requested.split(",") if t.strip()} if requested else None
     )
+    # Indexing (base year = 100) is opt-in — by default we return raw levels so the
+    # chart shows real magnitudes. The client toggles this on when it wants every
+    # series rebased to a common 100 for shape comparison.
+    indexed = request.args.get("indexed", "false").lower() in ("1", "true", "yes")
 
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
@@ -1226,26 +1230,29 @@ def get_analysis_forecast():
         base_year = min(hist) if hist else None
         base_val = hist.get(base_year) if base_year is not None else None
 
-        def to_index(levels: dict, base_val=base_val) -> list[dict]:
-            if not base_val:
+        def to_series(levels: dict, base_val=base_val) -> list[dict]:
+            if not indexed or not base_val:
                 return series_points(levels)
             return [
                 {"year": y, "value": round(levels[y] / base_val * 100, 2)}
                 for y in sorted(levels)
             ]
 
-        history_points = to_index(hist)
+        history_points = to_series(hist)
         scenarios_out = {}
         for scen in _all_scenarios(fr):
             levels = _variable_levels(rows_df, fr, scen, {})
-            scenarios_out[scen] = to_index(levels)
+            scenarios_out[scen] = to_series(levels)
 
         baseline_pts = scenarios_out.get("Baseline", [])
         metrics_out.append(
             {
                 "key": slot_key,
                 "title": title,
-                "unit": f"Indexed · {base_year} = 100" if base_year else "Indexed",
+                "unit": (
+                    f"Indexed · {base_year} = 100" if indexed and base_year else "Level"
+                ),
+                "indexed": bool(indexed and base_val),
                 "available": True,
                 "history": history_points,
                 "scenarios": scenarios_out,

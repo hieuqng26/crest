@@ -70,78 +70,154 @@ onMounted(async () => {
   if (selectedSector.value) await fetchForecast()
 })
 
-// ── SVG chart geometry — mirrors the design prototype's segPath/tick formulas ──
-const PLOT_X0 = 42, PLOT_W = 446, PLOT_TOP = 10, PLOT_BOTTOM = 186, PLOT_H = 162
-const SPLIT_FRAC = 0.55
-
-function segPath(points, lo, hi, x0, x1) {
-  return points.map((p, i) => {
-    const frac = points.length > 1 ? i / (points.length - 1) : 0
-    const x = PLOT_X0 + (x0 + frac * (x1 - x0)) * PLOT_W
-    const y = PLOT_BOTTOM - ((p.value - lo) / (hi - lo || 1)) * PLOT_H
-    return (i ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1)
-  }).join(' ')
-}
-
+// ── chart styling ──────────────────────────────────────────────────────────────
+const HISTORY_COLOR = '#2E2E38'
 const SCENARIO_STYLE = {
-  Baseline: { color: '#E8C400', width: 2.6, dash: null },
-  Adverse: { color: '#9B9BA6', width: 1.6, dash: null },
-  'Severely Adverse': { color: '#9B9BA6', width: 1.6, dash: '5 4' },
+  Baseline: { color: '#E8C400', width: 2.8, dash: 0 },
+  Adverse: { color: '#9B9BA6', width: 1.8, dash: 0 },
+  'Severely Adverse': { color: '#9B9BA6', width: 1.8, dash: 6 },
 }
+const scenarioStyle = (name) => SCENARIO_STYLE[name] ?? { color: '#2D6FD6', width: 1.8, dash: 0 }
+
+// Legend/scenario visibility is shared across every card: clicking a legend item
+// hides that scenario on all charts at once.
+const hiddenScenarios = ref(new Set())
+const toggleScenario = (name) => {
+  const s = new Set(hiddenScenarios.value)
+  if (s.has(name)) s.delete(name)
+  else s.add(name)
+  hiddenScenarios.value = s
+}
+const isHidden = (name) => hiddenScenarios.value.has(name)
+
+const compactFmt = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+const fmtNum = (v) => (v == null ? '—' : compactFmt.format(v))
+
+// Which scenario names appear anywhere in the current payload (for the legend).
+const scenarioNames = computed(() => {
+  const names = new Set()
+  for (const m of forecastData.value?.metrics || []) {
+    for (const n of Object.keys(m.scenarios || {})) names.add(n)
+  }
+  const order = { Baseline: 0, Adverse: 1, 'Severely Adverse': 2 }
+  return [...names].sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99))
+})
 
 function buildCard(metric) {
   if (!metric.available) return { ...metric, unavailable: true }
 
   const hist = metric.history || []
   const scenarioEntries = Object.entries(metric.scenarios || {})
-  const allVals = [
-    ...hist.map(p => p.value),
-    ...scenarioEntries.flatMap(([, pts]) => pts.map(p => p.value)),
+  if (!hist.length && !scenarioEntries.length) return { ...metric, unavailable: true }
+
+  const lastHist = hist.length ? hist[hist.length - 1] : null
+  const splitYear = lastHist ? lastHist.year : null
+
+  const series = []
+  const widths = []
+  const dashes = []
+  const colors = []
+
+  if (hist.length) {
+    series.push({ name: 'History', data: hist.map((p) => ({ x: p.year, y: p.value })) })
+    widths.push(1.8)
+    dashes.push(0)
+    colors.push(HISTORY_COLOR)
+  }
+
+  for (const [name, pts] of scenarioEntries) {
+    if (isHidden(name)) continue
+    const st = scenarioStyle(name)
+    // Prepend history's last point so the forecast path joins continuously
+    // (this is what removes the visual "jump" at the history→forecast boundary).
+    const data = (lastHist ? [{ x: lastHist.year, y: lastHist.value }] : []).concat(
+      pts.map((p) => ({ x: p.year, y: p.value }))
+    )
+    series.push({ name, data })
+    widths.push(st.width)
+    dashes.push(st.dash)
+    colors.push(st.color)
+  }
+
+  const allYears = [
+    ...hist.map((p) => p.year),
+    ...scenarioEntries.flatMap(([, pts]) => pts.map((p) => p.year)),
   ]
-  if (!allVals.length) return { ...metric, unavailable: true }
+  const minYear = allYears.length ? Math.min(...allYears) : 0
+  const maxYear = allYears.length ? Math.max(...allYears) : 0
 
-  const lo = Math.min(...allVals), hi = Math.max(...allVals)
-  const pad = (hi - lo) * 0.12 || 1
-  const l2 = lo - pad, h2 = hi + pad
-
-  const ticks = [0.15, 0.5, 0.85].map(t => ({
-    y: +(PLOT_BOTTOM - t * PLOT_H + 3).toFixed(1),
-    label: (l2 + (h2 - l2) * t).toFixed(0),
-  }))
-
-  const histD = hist.length ? segPath(hist, l2, h2, 0, SPLIT_FRAC) : null
-  const scenarioPaths = scenarioEntries.map(([name, pts]) => {
-    const style = SCENARIO_STYLE[name] ?? { color: '#2D6FD6', width: 1.6, dash: null }
-    return { name, style, d: segPath(pts, l2, h2, SPLIT_FRAC, 1) }
-  })
-  // Baseline drawn last (on top), matching design's path order
-  scenarioPaths.sort((a, b) => (a.name === 'Baseline' ? 1 : b.name === 'Baseline' ? -1 : 0))
-
-  const baseline = metric.scenarios?.Baseline || []
-  const splitX = (PLOT_X0 + SPLIT_FRAC * PLOT_W).toFixed(1)
-
-  const xLabels = []
-  if (hist.length) xLabels.push({ x: PLOT_X0, label: hist[0].year })
-  if (hist.length) xLabels.push({ x: +splitX, label: hist[hist.length - 1].year })
-  if (baseline.length > 2) {
-    const mid = baseline[Math.floor((baseline.length - 1) / 2)]
-    const frac = SPLIT_FRAC + ((baseline.length - 1) / 2 / (baseline.length - 1)) * (1 - SPLIT_FRAC)
-    xLabels.push({ x: (PLOT_X0 + frac * PLOT_W).toFixed(1), label: mid.year })
+  const options = {
+    chart: {
+      type: 'line',
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      animations: { enabled: false },
+      fontFamily: 'inherit',
+      parentHeightOffset: 0,
+    },
+    colors,
+    stroke: { curve: 'straight', width: widths, dashArray: dashes },
+    legend: { show: false },
+    grid: {
+      borderColor: '#F0F0F3',
+      strokeDashArray: 0,
+      xaxis: { lines: { show: false } },
+      padding: { left: 8, right: 12, top: 0, bottom: 0 },
+    },
+    markers: { size: 0, hover: { size: 4 } },
+    xaxis: {
+      type: 'numeric',
+      min: minYear,
+      max: maxYear,
+      tickAmount: Math.min(8, Math.max(1, maxYear - minYear)),
+      decimalsInFloat: 0,
+      labels: {
+        formatter: (v) => (v == null ? '' : String(Math.round(v))),
+        style: { colors: '#9B9BA6', fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
+      },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      crosshairs: { show: true, stroke: { color: '#D8D8DE', width: 1, dashArray: 3 } },
+      tooltip: { enabled: false },
+    },
+    yaxis: {
+      labels: {
+        formatter: (v) => fmtNum(v),
+        style: { colors: '#9B9BA6', fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
+      },
+    },
+    tooltip: {
+      shared: true,
+      intersect: false,
+      x: { formatter: (v) => String(Math.round(v)) },
+      y: { formatter: (v) => (v == null ? '—' : fmtNum(v)) },
+    },
+    annotations: splitYear != null ? {
+      xaxis: [{
+        x: splitYear,
+        strokeDashArray: 4,
+        borderColor: '#D8D8DE',
+        label: {
+          text: 'Forecast →',
+          orientation: 'horizontal',
+          position: 'top',
+          offsetY: -4,
+          style: {
+            color: '#9B9BA6',
+            background: 'transparent',
+            fontFamily: 'IBM Plex Mono, monospace',
+            fontSize: '9px',
+          },
+        },
+      }],
+    } : {},
   }
-  if (baseline.length) xLabels.push({ x: PLOT_X0 + PLOT_W, label: baseline[baseline.length - 1].year })
 
-  return {
-    ...metric,
-    unavailable: false,
-    ticks,
-    histD,
-    scenarioPaths,
-    splitX,
-    xLabels,
-  }
+  return { ...metric, unavailable: false, series, options }
 }
 
 const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
+const singleTarget = computed(() => selectedTargets.value.length === 1)
 </script>
 
 <template>
@@ -204,10 +280,22 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
 
     <template v-else>
       <div class="legend-row">
-        <span class="legend-item"><span class="legend-swatch" style="background:#2E2E38;height:2px" />History</span>
-        <span class="legend-item"><span class="legend-swatch" style="background:#E8C400;height:3px" />Baseline</span>
-        <span class="legend-item"><span class="legend-swatch" style="background:#9B9BA6;height:2px" />Adverse</span>
-        <span class="legend-item"><span class="legend-swatch legend-dashed" />Severely Adverse</span>
+        <span class="legend-item is-static"><span class="legend-swatch" style="background:#2E2E38;height:2px" />History</span>
+        <span
+          v-for="name in scenarioNames" :key="name"
+          class="legend-item"
+          :class="{ 'is-off': isHidden(name) }"
+          @click="toggleScenario(name)"
+        >
+          <span
+            class="legend-swatch"
+            :class="{ 'legend-dashed': scenarioStyle(name).dash }"
+            :style="scenarioStyle(name).dash
+              ? { borderTopColor: scenarioStyle(name).color }
+              : { background: scenarioStyle(name).color, height: (name === 'Baseline' ? '3px' : '2px') }"
+          />
+          {{ name }}
+        </span>
       </div>
 
       <div
@@ -220,41 +308,25 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
           {{ forecastTargets.length ? 'Select at least one target variable' : 'This analysis run has no forecast targets' }}
         </div>
       </div>
-      <div v-else class="fin-grid">
+      <div v-else class="fin-grid" :class="{ 'fin-grid--single': singleTarget }">
         <div v-for="fin in cards" :key="fin.key" class="panel">
           <div class="fin-head">
             <div>
               <div class="fin-title">{{ fin.title }}</div>
               <div class="fin-unit">{{ fin.unit }}</div>
             </div>
-            <div class="flex-1" />
-            <div v-if="!fin.unavailable" class="text-right">
-              <div class="font-mono fin-val">{{ fin.value }}</div>
-              <div class="font-mono fin-delta">{{ fin.delta_pct >= 0 ? '+' : '' }}{{ fin.delta_pct }}% vs {{ fin.base_year }} · baseline latest</div>
-            </div>
           </div>
 
           <div v-if="fin.unavailable" class="fin-empty">
             No forecast data available for <span class="font-medium">{{ fin.title }}</span> on the active analysis run.
           </div>
-          <svg v-else viewBox="0 0 500 210" class="fin-svg">
-            <template v-for="t in fin.ticks" :key="t.y">
-              <line x1="42" :y1="t.y" x2="492" :y2="t.y" stroke="#F0F0F3" stroke-width="1" />
-              <text x="34" :y="t.y" text-anchor="end" font-family="IBM Plex Mono" font-size="9" fill="#9B9BA6">{{ t.label }}</text>
-            </template>
-            <line :x1="fin.splitX" y1="10" :x2="fin.splitX" y2="192" stroke="#D8D8DE" stroke-width="1" stroke-dasharray="4 3" />
-            <text :x="+fin.splitX + 5" y="20" font-family="IBM Plex Mono" font-size="9" fill="#9B9BA6">FORECAST &rarr;</text>
-            <path v-if="fin.histD" :d="fin.histD" fill="none" stroke="#2E2E38" stroke-width="1.8" />
-            <path
-              v-for="sp in fin.scenarioPaths" :key="sp.name"
-              :d="sp.d" fill="none" :stroke="sp.style.color" :stroke-width="sp.style.width"
-              :stroke-dasharray="sp.style.dash"
-            />
-            <text
-              v-for="xl in fin.xLabels" :key="xl.label"
-              :x="xl.x" y="206" text-anchor="middle" font-family="IBM Plex Mono" font-size="9" fill="#9B9BA6"
-            >{{ xl.label }}</text>
-          </svg>
+          <apexchart
+            v-else
+            type="line"
+            :height="singleTarget ? 340 : 260"
+            :options="fin.options"
+            :series="fin.series"
+          />
         </div>
       </div>
     </template>
@@ -265,12 +337,15 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
 .field-col { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
 
-.legend-row { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
-.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-color-secondary); }
+.legend-row { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-color-secondary); cursor: pointer; user-select: none; transition: opacity 0.15s ease; }
+.legend-item.is-static { cursor: default; }
+.legend-item.is-off { opacity: 0.4; text-decoration: line-through; }
 .legend-swatch { width: 16px; height: 2px; display: inline-block; }
-.legend-dashed { border-top: 2px dashed #9B9BA6; height: 0; }
+.legend-dashed { border-top: 2px dashed #9B9BA6; height: 0; background: transparent !important; }
 
 .fin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.fin-grid--single { grid-template-columns: 1fr; }
 .panel {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
@@ -280,8 +355,5 @@ const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
 .fin-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
 .fin-title { font-size: 13.5px; font-weight: 700; }
 .fin-unit { font-size: 11.5px; color: var(--text-color-muted); margin-top: 2px; }
-.fin-val { font-size: 19px; font-weight: 600; }
-.fin-delta { font-size: 11px; color: var(--text-color-muted); }
-.fin-svg { width: 100%; height: auto; display: block; }
 .fin-empty { font-size: 12.5px; color: var(--text-color-muted); padding: 2rem 0; }
 </style>
