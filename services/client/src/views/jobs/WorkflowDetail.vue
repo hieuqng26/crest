@@ -13,7 +13,7 @@ import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
-import LogsPanel from './parts/LogsPanel.vue'
+import WorkflowLogsPanel from './parts/WorkflowLogsPanel.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
 const route = useRoute()
@@ -102,6 +102,12 @@ const isRetraining = computed(() =>
 
 const poll = usePolling(pollWorkflow, { interval: 5000 })
 const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status) || isRetraining.value
+// Reactive form for the log panel's live-refresh prop (isLive() is a plain fn).
+const isWorkflowLive = computed(() => isLive())
+
+// Overview "Run Details & Logs" panel: expanded while live, collapsed once done.
+const runLogCollapsed = ref(false)
+watch(isWorkflowLive, (live) => { runLogCollapsed.value = !live }, { immediate: true })
 
 onMounted(async () => {
   loading.value = true
@@ -158,12 +164,6 @@ const goToForecast = (fr) => router.push({ name: 'jobs_detail', params: { kind: 
 // ── Credit Results tab ────────────────────────────────────────────────────────
 const analysisResultsFetchPage = (params) => creditRiskAPI.getRunResults(wf.value.analysis.run_id, params)
 const analysisResultsFetchDistinct = (col) => creditRiskAPI.getRunResultsDistinct(wf.value.analysis.run_id, col)
-
-// Show live logs only while the analysis run is still in progress.
-const isAnalysisLive = computed(() => {
-  const s = wf.value?.analysis?.status
-  return s === 'running' || s === 'queued'
-})
 
 const TARGET_COLS = [
   { field: 'target', label: 'TARGET' },
@@ -272,14 +272,6 @@ const confirmDelete = () => {
 
       <!-- Overview -->
       <div v-if="activeTab === 'overview'" class="overview-tab">
-        <div class="card--emphasis run-details">
-          <div class="eyebrow">RUN DETAILS</div>
-          <div v-for="row in runDetailRows" :key="row.k" class="detail-row">
-            <div class="detail-key">{{ row.k }}</div>
-            <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
-          </div>
-        </div>
-
         <div class="panel target-panel">
           <div class="target-panel-header">
             <div>
@@ -318,13 +310,31 @@ const confirmDelete = () => {
             </template>
           </BaseTable>
         </div>
+
+        <!-- Run details + unified workflow logs (collapsible) -->
+        <div class="runlog-box" :class="{ 'is-collapsed': runLogCollapsed }">
+          <div class="runlog-bar" @click="runLogCollapsed = !runLogCollapsed">
+            <span class="eyebrow">RUN DETAILS &amp; LOGS</span>
+            <div class="spacer" />
+            <i class="pi toggle-icon" :class="runLogCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
+          </div>
+          <div v-if="!runLogCollapsed" class="runlog-body">
+            <div class="runlog-details">
+              <div v-for="row in runDetailRows" :key="row.k" class="detail-chip">
+                <span class="detail-chip-key">{{ row.k }}</span>
+                <span class="detail-chip-val" :class="{ 'font-mono': row.mono }">{{ row.v }}</span>
+              </div>
+            </div>
+            <WorkflowLogsPanel :run-id="runId" />
+          </div>
+        </div>
       </div>
 
       <!-- Diagnosis & Backtesting -->
       <DiagnosisBacktestingTab v-else-if="activeTab === 'diagnosis'" :targets="wf.targets" />
 
       <!-- Forecast -->
-      <ForecastResultsTab v-else-if="activeTab === 'forecast'" :targets="wf.targets" />
+      <ForecastResultsTab v-else-if="activeTab === 'forecast'" :run-id="runId" :targets="wf.targets" />
 
       <!-- Credit Results -->
       <div v-else-if="activeTab === 'credit'" class="credit-tab">
@@ -355,15 +365,6 @@ const confirmDelete = () => {
               </template>
             </CommonDataTable>
           </div>
-
-          <LogsPanel
-            v-if="isAnalysisLive"
-            :key="`log-${wf.analysis.run_id}`"
-            :kind="'analysis'"
-            :run-id="wf.analysis.run_id"
-            :status="wf.analysis.status"
-            collapsible
-          />
         </template>
       </div>
     </template>
@@ -403,12 +404,20 @@ const confirmDelete = () => {
 .tab-btn:hover { color: var(--ink); }
 .tab-btn.is-active { font-weight: 700; color: var(--ink); background: var(--yellow); }
 
-.overview-tab { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 900px) { .overview-tab { grid-template-columns: 1fr; } }
-.run-details { padding: 18px 20px 8px; }
-.detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid #F0F0F3; font-size: 13px; }
-.detail-key { flex: none; width: 200px; color: var(--text-color-muted); }
-.detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
+.overview-tab { display: flex; flex-direction: column; gap: 20px; }
+
+/* Collapsible Run details + unified logs box (below the full-width target table). */
+.runlog-box { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
+.runlog-bar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none; }
+.runlog-box:not(.is-collapsed) .runlog-bar { border-bottom: 1px solid var(--surface-border); }
+.runlog-bar:hover { background: var(--surface-hover); }
+.runlog-bar .spacer { flex: 1; }
+.runlog-bar .toggle-icon { font-size: 11px; color: var(--text-color-muted); }
+.runlog-body { padding: 16px; }
+.runlog-details { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 16px; }
+.detail-chip { display: flex; flex-direction: column; gap: 2px; }
+.detail-chip-key { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
+.detail-chip-val { font-size: 12.5px; color: var(--text-color); word-break: break-word; }
 
 .panel { background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; }
 .target-panel { padding: 18px 20px; min-width: 0; }

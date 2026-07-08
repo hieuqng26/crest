@@ -196,6 +196,10 @@ class CalibrationRunLog(db.Model):
         db.String(16), nullable=False, default="info"
     )  # info | warn | error
     message = db.Column(db.String(1024), nullable=False)
+    # Set only on segment-scoped lines (per-segment fit / retrain), so the unified
+    # workflow log view can filter by sector/segment. NULL on general lines.
+    sector = db.Column(db.String(128), nullable=True)
+    segment = db.Column(db.String(128), nullable=True)
 
     def to_dict(self):
         return dict(
@@ -203,6 +207,8 @@ class CalibrationRunLog(db.Model):
             t=self.logged_at.strftime("%H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
+            sector=self.sector,
+            segment=self.segment,
         )
 
 

@@ -137,6 +137,10 @@ const resultsDisabled = computed(() => job.value?.status !== 'success')
 // to a slim summary and the segment models table takes over. Non-segmented runs
 // have no follow-on table, so their box stays expanded.
 const trainingLive = computed(() => job.value?.status === 'running' || job.value?.status === 'queued')
+// A run opened from a workflow already has its logs in the workflow's Overview
+// (unified across all steps), so we drop the per-run log here and show run details
+// only. Standalone runs keep their logs — it's the only place they live.
+const isWorkflowChild = computed(() => !!job.value?.raw?.workflow_run_uuid)
 const runLogCollapsed = ref(false)
 watch(() => job.value?.status, (s) => {
   if (s === 'running' || s === 'queued') runLogCollapsed.value = false
@@ -252,7 +256,7 @@ const confirmDelete = () => {
 
         <div class="runlog-box" :class="{ 'is-collapsed': runLogCollapsed }">
           <div class="runlog-bar" @click="toggleRunLog">
-            <span class="eyebrow">RUN DETAILS &amp; LOGS</span>
+            <span class="eyebrow">{{ isWorkflowChild ? 'RUN DETAILS' : 'RUN DETAILS &amp; LOGS' }}</span>
             <span v-if="runLogCollapsed" class="runlog-summary">
               <span class="status-dot" :style="{ backgroundColor: statusMeta.dot }" />
               <span class="runlog-summary-label" :style="{ color: statusMeta.text }">{{ statusMeta.label }}</span>
@@ -261,7 +265,7 @@ const confirmDelete = () => {
             <div class="spacer" />
             <i class="pi toggle-icon" :class="runLogCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'" />
           </div>
-          <div v-if="!runLogCollapsed" class="runlog-grid">
+          <div v-if="!runLogCollapsed" class="runlog-grid" :class="{ 'runlog-grid--details-only': isWorkflowChild }">
             <RunDetailsCard
               class="runlog-details"
               bare
@@ -270,7 +274,7 @@ const confirmDelete = () => {
               :status="job.status"
               :error-message="job.raw.error_message"
             />
-            <LogsPanel class="runlog-logs" embedded :kind="kind" :run-id="runId" :status="job.status" />
+            <LogsPanel v-if="!isWorkflowChild" class="runlog-logs" embedded :kind="kind" :run-id="runId" :status="job.status" />
           </div>
         </div>
       </div>
@@ -387,6 +391,9 @@ const confirmDelete = () => {
   align-items: stretch;
   min-height: 340px;
 }
+/* Workflow children drop the log column → run details spans the full width. */
+.runlog-grid--details-only { grid-template-columns: 1fr; min-height: 0; }
+.runlog-grid--details-only .runlog-details { border-right: none; }
 .runlog-details { border-right: 1px solid var(--surface-border); min-width: 0; }
 .runlog-logs { min-width: 0; }
 @media (max-width: 900px) {

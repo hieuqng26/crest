@@ -66,8 +66,55 @@ def _get_scaler(name: str):
     }.get(name)
 
 
-def _write_progress(run_id: str, progress: int, message: str):
-    """Write progress + a log line to DB. Always silent-fails so calibration is never blocked."""
+def _split_segment_key(segment_key: str | None) -> tuple[str | None, str | None]:
+    """Split a "{sector}__{split_value}" segment key into (sector, segment)."""
+    if not segment_key or "__" not in segment_key:
+        return None, None
+    sector, split_value = segment_key.split("__", 1)
+    return sector, split_value
+
+
+def _cal_log(
+    run_id: str,
+    message: str,
+    level: str = "info",
+    sector: str | None = None,
+    segment: str | None = None,
+):
+    """Write a CalibrationRunLog line WITHOUT touching the run's progress.
+
+    Used for segment re-fits, which log against an already-complete parent run
+    (progress 100) that must not be rewound. Silent-fails like _write_progress."""
+    try:
+        from project import app_session
+        from project.db_models.calibration_models import CalibrationRunLog
+
+        with app_session() as s:
+            s.add(
+                CalibrationRunLog(
+                    run_id=run_id,
+                    logged_at=datetime.now(timezone.utc),
+                    level=level,
+                    message=message,
+                    sector=sector,
+                    segment=segment,
+                )
+            )
+    except Exception as _e:
+        logger.warning(f"_cal_log failed: {_e}")
+
+
+def _write_progress(
+    run_id: str,
+    progress: int,
+    message: str,
+    sector: str | None = None,
+    segment: str | None = None,
+):
+    """Write progress + a log line to DB. Always silent-fails so calibration is never blocked.
+
+    ``sector``/``segment`` tag a segment-scoped line so the unified workflow log
+    view can filter by them; leave them None for general lines."""
     try:
         from project import app_session
         from project.db_models.calibration_models import (
@@ -92,6 +139,8 @@ def _write_progress(run_id: str, progress: int, message: str):
                     logged_at=datetime.now(timezone.utc),
                     level=level,
                     message=message,
+                    sector=sector,
+                    segment=segment,
                 )
             )
     except Exception:
@@ -99,7 +148,14 @@ def _write_progress(run_id: str, progress: int, message: str):
 
 
 def _cv_search(
-    plugin_cls, base_params: dict, search_cfg: dict, X_train, y_train, run_id: str
+    plugin_cls,
+    base_params: dict,
+    search_cfg: dict,
+    X_train,
+    y_train,
+    run_id: str,
+    sector: str | None = None,
+    segment: str | None = None,
 ) -> dict:
     """
     Run grid or randomised cross-validated hyperparameter search.
@@ -192,6 +248,8 @@ def _cv_search(
             run_id,
             35 + int(15 * (idx + 1) / total),
             f"CV search {idx + 1}/{total} · best {scoring}={best_score:.4f}",
+            sector=sector,
+            segment=segment,
         )
 
     return {
@@ -279,8 +337,12 @@ def _fit_segment(
     model_family: str,
     artifact_key: str,
     run_id: str,
+    sector: str | None = None,
+    segment: str | None = None,
 ) -> tuple[dict, dict, str]:
-    """Fit one model on df_group, save artifact to MinIO, return (val_metrics, train_metrics, artifact_path)."""
+    """Fit one model on df_group, save artifact to MinIO, return (val_metrics, train_metrics, artifact_path).
+
+    ``sector``/``segment`` tag this segment's CV-search progress lines in the log."""
     candidate_cols = feature_cols_json or [
         c for c in df_group.columns if c != target_col
     ]
@@ -306,7 +368,14 @@ def _fit_segment(
 
     if search_cfg and search_cfg.get("param_grid"):
         search_result = _cv_search(
-            plugin_cls, raw_params, search_cfg, X_train, y_train, run_id
+            plugin_cls,
+            raw_params,
+            search_cfg,
+            X_train,
+            y_train,
+            run_id,
+            sector=sector,
+            segment=segment,
         )
         raw_params = search_result["best_params"]
 
@@ -536,6 +605,8 @@ def run_calibration(self, run_id: str):
                                     sector_cfg["model_family"],
                                     f"artifacts/{run_id}/segments/{seg_key}/model.pkl",
                                     run_id,
+                                    sector=sector,
+                                    segment=split_value,
                                 )
                             except Exception as seg_exc:
                                 seg_status = "failed"
@@ -574,6 +645,7 @@ def run_calibration(self, run_id: str):
                         run_id,
                         pct,
                         f"Trained sector '{sector}' ({processed}/{total_sectors})",
+                        sector=sector,
                     )
 
                 with app_session() as s:
@@ -835,6 +907,12 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 row.status = "running"
                 row.error_message = None
                 s.add(row)
+            _cal_log(
+                run_id,
+                f"Re-fitting segment '{sector} · {split_value}' with {algorithm}…",
+                sector=sector,
+                segment=split_value,
+            )
 
             ds = Dataset.query.get(dataset_id)
             if not ds.file_path:
@@ -883,6 +961,8 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 model_family,
                 f"artifacts/{run_id}/segments/{segment_key}/model.pkl",
                 run_id,
+                sector=sector,
+                segment=split_value,
             )
 
             with app_session() as s:
@@ -894,6 +974,13 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 row.error_message = None
                 s.add(row)
 
+            _cal_log(
+                run_id,
+                f"Segment '{sector} · {split_value}' re-fit complete",
+                sector=sector,
+                segment=split_value,
+            )
+
             # Re-fitting this segment invalidated its downstream forecast + credit
             # results. Recompute them for THIS segment only (dispatch after the
             # commit above so the worker reads the fresh artifact + success status).
@@ -902,6 +989,13 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
         except Exception as exc:
             logger.error(
                 f"Segment re-run {run_id}/{segment_key} failed: {exc}", exc_info=True
+            )
+            _cal_log(
+                run_id,
+                f"Segment '{sector} · {split_value}' re-fit failed: {exc}",
+                level="error",
+                sector=sector,
+                segment=split_value,
             )
             with app_session() as s:
                 row = CalibrationRunSegment.query.get(seg_id)
@@ -1013,9 +1107,16 @@ def recompute_forecast_run_segment(
 
 
 def _write_forecast_progress(
-    run_id: str, progress: int, message: str, level: str = "info"
+    run_id: str,
+    progress: int,
+    message: str,
+    level: str = "info",
+    sector: str | None = None,
+    segment: str | None = None,
 ):
-    """Write progress + a log line for a forecast run. Silent-fails so the task is never blocked."""
+    """Write progress + a log line for a forecast run. Silent-fails so the task is never blocked.
+
+    ``sector``/``segment`` tag a segment-scoped line for the unified workflow log."""
     try:
         from project import app_session
         from project.db_models.forecast_models import ForecastRun, ForecastRunLog
@@ -1026,7 +1127,16 @@ def _write_forecast_progress(
             if r:
                 r.progress = max(0, progress)
                 s.add(r)
-            s.add(ForecastRunLog(run_id=run_id, t=now, level=level, message=message))
+            s.add(
+                ForecastRunLog(
+                    run_id=run_id,
+                    t=now,
+                    level=level,
+                    message=message,
+                    sector=sector,
+                    segment=segment,
+                )
+            )
     except Exception:
         pass
 
@@ -1112,8 +1222,13 @@ def run_forecast(self, run_id: str):
                 # Score one named segment against the whole forecast dataset.
                 from project.db_models.calibration_models import CalibrationRunSegment
 
+                seg_sector, seg_split = _split_segment_key(segment_key)
                 _write_forecast_progress(
-                    run_id, 30, f"Loading segment artifact for '{segment_key}'…"
+                    run_id,
+                    30,
+                    f"Loading segment artifact for '{segment_key}'…",
+                    sector=seg_sector,
+                    segment=seg_split,
                 )
                 seg = CalibrationRunSegment.query.filter_by(
                     calibration_run_id=cal_run_id_int,
@@ -1127,11 +1242,23 @@ def run_forecast(self, run_id: str):
                 # Extract the scalar now — _write_forecast_progress() closes db.session,
                 # which would expire/detach this ORM object before we read its attribute.
                 seg_artifact_path = seg.artifact_path
-                _write_forecast_progress(run_id, 45, "Preparing features…")
+                _write_forecast_progress(
+                    run_id,
+                    45,
+                    "Preparing features…",
+                    sector=seg_sector,
+                    segment=seg_split,
+                )
                 predicted_list, meta_rows = _score_segment(
                     seg_artifact_path, segment_key
                 )
-                _write_forecast_progress(run_id, 60, "Applied segment model")
+                _write_forecast_progress(
+                    run_id,
+                    60,
+                    "Applied segment model",
+                    sector=seg_sector,
+                    segment=seg_split,
+                )
 
             elif is_segmented:
                 # Score every trained segment against the whole (MEV-only,
@@ -1166,10 +1293,13 @@ def run_forecast(self, run_id: str):
                     )
                     predicted_list.extend(seg_preds)
                     meta_rows.extend(seg_meta_rows)
+                    seg_sector, seg_split = _split_segment_key(seg_key)
                     _write_forecast_progress(
                         run_id,
                         35 + round(55 * (i + 1) / len(segment_refs)),
                         f"Scored segment '{seg_key}' ({i + 1}/{len(segment_refs)})",
+                        sector=seg_sector,
+                        segment=seg_split,
                     )
 
             else:
@@ -1268,9 +1398,16 @@ def run_forecast(self, run_id: str):
 
 
 def _cr_log(
-    cr_run_id: str, message: str, level: str = "info", progress: int | None = None
+    cr_run_id: str,
+    message: str,
+    level: str = "info",
+    progress: int | None = None,
+    sector: str | None = None,
+    segment: str | None = None,
 ):
-    """Write a log line for a credit risk run. Silent-fails so the task is never blocked."""
+    """Write a log line for a credit risk run. Silent-fails so the task is never blocked.
+
+    ``sector``/``segment`` tag a segment-scoped line for the unified workflow log."""
     try:
         from project import app_session
         from project.db_models.credit_models import CreditRiskRun, CreditRiskRunLog
@@ -1278,7 +1415,14 @@ def _cr_log(
         now = datetime.now(timezone.utc).strftime("%H:%M:%S")
         with app_session() as s:
             s.add(
-                CreditRiskRunLog(run_id=cr_run_id, t=now, level=level, message=message)
+                CreditRiskRunLog(
+                    run_id=cr_run_id,
+                    t=now,
+                    level=level,
+                    message=message,
+                    sector=sector,
+                    segment=segment,
+                )
             )
             if progress is not None:
                 r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
@@ -1357,6 +1501,10 @@ def _compute_credit_for_clients(
             if canonical_seg.get("split_by")
             else None
         )
+        # Tags for this client's log lines (sector always known; segment only on
+        # segmented runs).
+        client_sector = sector or None
+        client_segment = _split_segment_key(client_segment_key)[1]
 
         # Build forecast DataFrame from the 3 calibrated variable indices, routing
         # this client to its own segment's trajectory (segmented) or the single
@@ -1396,6 +1544,8 @@ def _compute_credit_for_clients(
                 cr_run_id,
                 f"Client {client_id}: no overlapping forecast years across all 3 variables — skipping",
                 level="warn",
+                sector=client_sector,
+                segment=client_segment,
             )
             continue
         forecast = pd.DataFrame(rows_fc)
@@ -1427,6 +1577,8 @@ def _compute_credit_for_clients(
                 cr_run_id,
                 f"Client {client_id} failed: {client_err}",
                 level="warn",
+                sector=client_sector,
+                segment=client_segment,
             )
 
         # Flush batch and update progress every `flush_every` clients or at the end.
@@ -1782,6 +1934,9 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
         from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
         from project.db_models.forecast_models import ForecastRun, ForecastRunLog
 
+        # Sector/segment tags for the unified workflow log lines below.
+        seg_sector, seg_split = _split_segment_key(segment_key)
+
         cal = CalibrationRun.query.filter_by(run_id=run_id).first()
         if not cal:
             logger.error(f"recompute_segment_downstream: cal run {run_id} not found")
@@ -1829,6 +1984,8 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                         t=now,
                         level="info",
                         message=f"Recomputing segment '{segment_key}'…",
+                        sector=seg_sector,
+                        segment=seg_split,
                     )
                 )
             try:
@@ -1859,6 +2016,16 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                         f"Segment '{segment_key}' recompute failed: {exc}"
                     )
                     s.add(fr)
+                    s.add(
+                        ForecastRunLog(
+                            run_id=fr_run_uuid,
+                            t=datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                            level="error",
+                            message=f"Segment '{segment_key}' recompute failed: {exc}",
+                            sector=seg_sector,
+                            segment=seg_split,
+                        )
+                    )
                 # Credit needs all forecast inputs current — abort before it.
                 raise
 
@@ -1919,6 +2086,8 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
             _cr_log(
                 cr_run_id,
                 f"Segment '{segment_key}' recompute: no matching credit clients — skipped",
+                sector=seg_sector,
+                segment=seg_split,
             )
             return
 
@@ -1932,6 +2101,8 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
         _cr_log(
             cr_run_id,
             f"Recomputing credit for segment '{segment_key}' ({len(client_ids)} clients)…",
+            sector=seg_sector,
+            segment=seg_split,
         )
 
         try:
@@ -1995,13 +2166,21 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                 cr_run_id,
                 f"Segment '{segment_key}' credit recompute complete",
                 progress=100,
+                sector=seg_sector,
+                segment=seg_split,
             )
         except Exception as exc:
             logger.error(
                 f"Segment credit recompute failed for {cr_run_id}: {exc}",
                 exc_info=True,
             )
-            _cr_log(cr_run_id, f"Segment recompute failed: {exc}", level="error")
+            _cr_log(
+                cr_run_id,
+                f"Segment recompute failed: {exc}",
+                level="error",
+                sector=seg_sector,
+                segment=seg_split,
+            )
             with app_session() as s:
                 r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
                 if r:

@@ -121,6 +121,10 @@ class ForecastRunLog(db.Model):
     t = db.Column(db.String(32), nullable=True)
     level = db.Column(db.String(16), nullable=False, default="info")
     message = db.Column(db.Text, nullable=False)
+    # Set only on segment-scoped lines (segment re-score), so the unified workflow
+    # log view can filter by sector/segment. NULL on general lines.
+    sector = db.Column(db.String(128), nullable=True)
+    segment = db.Column(db.String(128), nullable=True)
 
     def to_dict(self):
         return dict(
@@ -129,4 +133,6 @@ class ForecastRunLog(db.Model):
             t=self.t,
             level=self.level,
             message=self.message,
+            sector=self.sector,
+            segment=self.segment,
         )
