@@ -1928,6 +1928,7 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                 from project import cache
 
                 cache.delete(f"cr_run_results:{cr_run_id}")
+                cache.delete(f"cr_transitions:{cr_run_id}")
             except Exception:
                 pass
             _cr_log(
