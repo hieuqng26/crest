@@ -123,6 +123,66 @@ class TestRecalibrateSegment:
         assert resp.status_code == 202
         assert resp.get_json()["hyperparams"] is None
 
+    def test_persists_model_config_and_feature_overrides(
+        self, client, login, segmented_run, mock_segment_task
+    ):
+        from project import db
+        from project.db_models.calibration_models import (
+            CalibrationRunSegment,
+            ModelConfig,
+        )
+
+        d = segmented_run
+        # A second saved config to switch the segment to.
+        other = ModelConfig(
+            name="ridge-alt",
+            family="regression",
+            algorithm="Ridge",
+            hyperparams_json=json.dumps({"alpha": 2.0}),
+            train_split=0.8,
+            created_by=d["user"].email,
+        )
+        db.session.add(other)
+        db.session.commit()
+        other_id = other.id
+
+        login(d["user"].email)
+        resp = client.post(
+            self._url("seg-run-1", "Financials__Banks"),
+            json={"model_config_id": other_id, "feature_cols": ["inflation_rate"]},
+        )
+        assert resp.status_code == 202
+        body = resp.get_json()
+        assert body["model_config_id"] == other_id
+        assert body["feature_cols"] == ["inflation_rate"]
+        assert body["algorithm"] == "Ridge"
+
+        refreshed = CalibrationRunSegment.query.filter_by(
+            segment_key="Financials__Banks"
+        ).first()
+        assert refreshed.model_config_id == other_id
+        assert json.loads(refreshed.feature_cols_json) == ["inflation_rate"]
+
+    def test_400_when_model_config_missing(
+        self, client, login, segmented_run, mock_segment_task
+    ):
+        login(segmented_run["user"].email)
+        resp = client.post(
+            self._url("seg-run-1", "Financials__Banks"),
+            json={"model_config_id": 999999},
+        )
+        assert resp.status_code == 400
+
+    def test_400_when_feature_cols_not_list(
+        self, client, login, segmented_run, mock_segment_task
+    ):
+        login(segmented_run["user"].email)
+        resp = client.post(
+            self._url("seg-run-1", "Financials__Banks"),
+            json={"feature_cols": "inflation_rate"},
+        )
+        assert resp.status_code == 400
+
     def test_404_when_run_missing(
         self, client, login, segmented_run, mock_segment_task
     ):

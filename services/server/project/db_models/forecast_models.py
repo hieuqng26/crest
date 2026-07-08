@@ -97,6 +97,17 @@ class ForecastRunResult(db.Model):
     date = db.Column(db.String(32), nullable=True)
     predicted = db.Column(db.Float, nullable=True)
     meta_json = db.Column(db.Text, nullable=True)
+    # Denormalised copy of meta_json["segment_key"] so a single segment's rows can
+    # be deleted/re-scored in place via an indexed WHERE (see recompute_forecast_run_segment).
+    segment_key = db.Column(db.String(256), nullable=True)
+
+    __table_args__ = (
+        db.Index(
+            "ix_forecast_run_results_run_segment",
+            "forecast_run_id",
+            "segment_key",
+        ),
+    )
 
 
 class ForecastRunLog(db.Model):

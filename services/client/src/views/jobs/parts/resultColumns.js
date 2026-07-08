@@ -8,6 +8,8 @@ export const forecastResultColumns = [
 
 export const analysisResultColumns = [
   { field: 'client_id', header: 'Client ID', width: '9rem' },
+  { field: 'sector', header: 'Sector', width: '9rem' },
+  { field: 'segment_key', header: 'Segment', width: '11rem' },
   { field: 'scenario', header: 'Scenario', width: '9rem' },
   { field: 'year', header: 'Year', width: '6rem' },
   { field: 'stage', header: 'Stage', width: '5rem' },

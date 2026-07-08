@@ -23,6 +23,7 @@ from project.db_models.calibration_models import (
     ForecastResult,
 )
 from project.db_models.credit_models import (
+    CreditRiskAnalysisSeries,
     CreditRiskForecastInput,
     CreditRiskResult,
     CreditRiskRun,
@@ -70,6 +71,11 @@ def purge_workflow(wf_id: int) -> None:
         # --- Level 1: leaf result / log / join tables (child-most first) ---
         _bulk_delete(CreditRiskResult, CreditRiskResult.run_id, cr_uuids)
         _bulk_delete(CreditRiskRunLog, CreditRiskRunLog.run_id, cr_uuids)
+        _bulk_delete(
+            CreditRiskAnalysisSeries,
+            CreditRiskAnalysisSeries.credit_risk_run_id,
+            cr_ids,
+        )
         _bulk_delete(
             CreditRiskForecastInput,
             CreditRiskForecastInput.credit_risk_run_id,

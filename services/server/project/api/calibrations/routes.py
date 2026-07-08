@@ -173,19 +173,44 @@ def get_segments(run_id):
         d = s.to_dict()
         d["algorithm"] = configs.get(s.model_config_id)
         result.append(d)
-    return jsonify({"segments": result}), 200
+    # Defaults the per-segment customize panel offers as its baseline: the run's
+    # configuration and feature set. A segment override may pick a different saved
+    # config and/or a subset of these features.
+    default_feature_cols = json.loads(run.feature_cols_json or "[]")
+    return jsonify(
+        {
+            "segments": result,
+            "default_model_config_id": run.model_config_id,
+            "default_feature_cols": default_feature_cols,
+            "feature_options": default_feature_cols,
+        }
+    ), 200
 
 
 @calibrations.post("/<run_id>/segments/<segment_key>/recalibrate")
 @require_perm("calibration:execute")
 def recalibrate_segment(run_id, segment_key):
-    """Re-fit a single segment of a segmented run with an optional hyperparameter
-    override. Only this segment is retrained — the parent run and every other
-    segment are untouched."""
+    """Re-fit a single segment of a segmented run with an optional configuration,
+    feature-column and/or hyperparameter override. Only this segment is retrained
+    — the parent run and every other segment are untouched."""
     body = request.get_json(silent=True) or {}
     hyperparams = body.get("hyperparams")
     if hyperparams is not None and not isinstance(hyperparams, dict):
         return jsonify({"error": "hyperparams must be an object"}), 400
+
+    model_config_id = body.get("model_config_id")
+    if model_config_id is not None:
+        try:
+            model_config_id = int(model_config_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "model_config_id must be an integer"}), 400
+
+    feature_cols = body.get("feature_cols")
+    if feature_cols is not None:
+        if not isinstance(feature_cols, list) or not all(
+            isinstance(c, str) for c in feature_cols
+        ):
+            return jsonify({"error": "feature_cols must be a list of strings"}), 400
 
     with app_session() as s:
         run = CalibrationRun.query.filter_by(run_id=run_id).first()
@@ -203,9 +228,22 @@ def recalibrate_segment(run_id, segment_key):
         if seg.status in ("queued", "running"):
             return jsonify({"error": "Segment is already re-training"}), 409
 
+        if model_config_id is not None:
+            cfg = ModelConfig.query.get(model_config_id)
+            if not cfg:
+                return jsonify(
+                    {"error": f"ModelConfig {model_config_id} not found"}
+                ), 400
+            seg.model_config_id = model_config_id
+
         seg.status = "queued"
         seg.error_message = None
         seg.hyperparams_json = json.dumps(hyperparams) if hyperparams else None
+        # An explicit empty list is a meaningful "no features" choice; only a
+        # missing key falls back to the run defaults (NULL).
+        seg.feature_cols_json = (
+            json.dumps(feature_cols) if feature_cols is not None else None
+        )
         s.add(seg)
         s.flush()
         result = seg.to_dict()

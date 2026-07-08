@@ -798,6 +798,12 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
         scaler_name = run.scaler
         target_col = run.target_col or ""
         default_feature_cols = json.loads(run.feature_cols_json or "[]")
+        # Per-segment feature override, if the customize panel set one; NULL falls
+        # back to the run defaults.
+        seg_feature_cols = json.loads(seg.feature_cols_json or "null")
+        feature_cols = (
+            seg_feature_cols if seg_feature_cols is not None else default_feature_cols
+        )
         sector_overrides = json.loads(run.seg_sector_overrides_json or "{}")
 
         sector = seg.sector
@@ -871,7 +877,7 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 train_split_ratio,
                 scaler_name,
                 target_col,
-                default_feature_cols,
+                feature_cols,
                 model_family,
                 f"artifacts/{run_id}/segments/{segment_key}/model.pkl",
                 run_id,
@@ -886,6 +892,11 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 row.error_message = None
                 s.add(row)
 
+            # Re-fitting this segment invalidated its downstream forecast + credit
+            # results. Recompute them for THIS segment only (dispatch after the
+            # commit above so the worker reads the fresh artifact + success status).
+            recompute_segment_downstream.delay(run_id, segment_key)
+
         except Exception as exc:
             logger.error(
                 f"Segment re-run {run_id}/{segment_key} failed: {exc}", exc_info=True
@@ -897,6 +908,106 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                     row.error_message = str(exc)
                     s.add(row)
             raise
+
+
+def _score_segment_against_df(
+    df: "pd.DataFrame", seg_artifact_path: str, seg_key: str
+) -> tuple[list, list]:
+    """Score one segment's pickled model against every row of `df`.
+
+    Returns (predicted_list, meta_rows) where meta_rows are per-row dicts of
+    non-feature columns, each tagged with `segment_key` so credit-risk analysis can
+    later route each client to the matching segment. Pure: reads the artifact from
+    MinIO, writes nothing. Shared by run_forecast (full-run scoring) and
+    recompute_forecast_run_segment (per-segment re-score).
+    """
+    seg_bytes = storage.download_bytes(seg_artifact_path.split("/", 1)[-1])
+    seg_artifact = pickle.loads(seg_bytes)  # noqa: S301
+    feature_cols = seg_artifact["feature_cols"]
+    missing_cols = [c for c in feature_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Forecast dataset missing required feature columns for "
+            f"segment '{seg_key}': {missing_cols}"
+        )
+    X_df = df[feature_cols].select_dtypes(include=[np.number])
+    actual_feature_cols = list(X_df.columns)
+    non_numeric = [c for c in feature_cols if c not in actual_feature_cols]
+    if non_numeric:
+        raise ValueError(
+            f"Feature columns are not numeric in forecast dataset: {non_numeric}"
+        )
+    X = X_df.values
+    if seg_artifact["scaler"]:
+        X = seg_artifact["scaler"].transform(X)
+    preds = seg_artifact["model"].predict(X)
+
+    meta_cols = [c for c in df.columns if c not in set(actual_feature_cols)]
+    meta_rows = df[meta_cols].to_dict("records")
+    for r in meta_rows:
+        r["segment_key"] = seg_key
+
+    predicted = [float(v) if v is not None else None for v in preds.tolist()]
+    return predicted, meta_rows
+
+
+def _forecast_result_mappings(fr_id: int, predicted_list, meta_rows, segment_key):
+    """Build ForecastRunResult insert-mappings from a parallel predicted/meta pair.
+
+    Mirrors the full-run bulk-insert shape (date/predicted/meta_json) and adds the
+    denormalised `segment_key` column. `_coerce` normalises numpy scalars to plain
+    Python so json.dumps and the ORM accept them.
+    """
+
+    def _coerce(v):
+        if v is None or isinstance(v, (str, bool)):
+            return v
+        if isinstance(v, (float, np.floating)):
+            return float(v)
+        if isinstance(v, (int, np.integer)):
+            return int(v)
+        return str(v)
+
+    dates_list = [r.get("date") for r in meta_rows]
+    other_keys_set: set[str] = set()
+    for r in meta_rows:
+        other_keys_set.update(k for k in r if k != "date")
+    other_keys = sorted(other_keys_set)
+    meta_dict = {k: [_coerce(r.get(k)) for r in meta_rows] for k in other_keys}
+    return [
+        {
+            "forecast_run_id": fr_id,
+            "date": str(dates_list[i]) if dates_list[i] is not None else None,
+            "predicted": predicted_list[i],
+            "meta_json": json.dumps({k: meta_dict[k][i] for k in other_keys})
+            if other_keys
+            else None,
+            "segment_key": segment_key,
+        }
+        for i in range(len(predicted_list))
+    ]
+
+
+def recompute_forecast_run_segment(
+    s, fr, df: "pd.DataFrame", seg_artifact_path: str, segment_key: str
+) -> int:
+    """Delete THIS run's ForecastRunResult rows for `segment_key`, re-score just that
+    segment against `df`, and bulk-insert fresh rows into the SAME run. Returns the
+    number of rows written. Caller owns the session/transaction, so the delete +
+    insert is one atomic swap — readers never see the segment mid-swap.
+    """
+    from project.db_models.forecast_models import ForecastRunResult
+
+    ForecastRunResult.query.filter_by(
+        forecast_run_id=fr.id, segment_key=segment_key
+    ).delete(synchronize_session=False)
+    predicted_list, meta_rows = _score_segment_against_df(
+        df, seg_artifact_path, segment_key
+    )
+    mappings = _forecast_result_mappings(fr.id, predicted_list, meta_rows, segment_key)
+    if mappings:
+        s.bulk_insert_mappings(ForecastRunResult, mappings)
+    return len(mappings)
 
 
 def _write_forecast_progress(
@@ -992,42 +1103,8 @@ def run_forecast(self, run_id: str):
             def _score_segment(
                 seg_artifact_path: str, seg_key: str
             ) -> tuple[list, list]:
-                """Score one segment's model against every row of df.
-
-                Returns (predicted_list, meta_rows) where meta_rows are per-row dicts
-                of non-feature columns, each tagged with segment_key so credit risk
-                analysis can later route each client to the matching segment.
-                """
-                seg_bytes = storage.download_bytes(seg_artifact_path.split("/", 1)[-1])
-                seg_artifact = pickle.loads(seg_bytes)  # noqa: S301
-                feature_cols = seg_artifact["feature_cols"]
-                missing_cols = [c for c in feature_cols if c not in df.columns]
-                if missing_cols:
-                    raise ValueError(
-                        f"Forecast dataset missing required feature columns for "
-                        f"segment '{seg_key}': {missing_cols}"
-                    )
-                X_df = df[feature_cols].select_dtypes(include=[np.number])
-                actual_feature_cols = list(X_df.columns)
-                non_numeric = [c for c in feature_cols if c not in actual_feature_cols]
-                if non_numeric:
-                    raise ValueError(
-                        f"Feature columns are not numeric in forecast dataset: {non_numeric}"
-                    )
-                X = X_df.values
-                if seg_artifact["scaler"]:
-                    X = seg_artifact["scaler"].transform(X)
-                preds = seg_artifact["model"].predict(X)
-
-                meta_cols = [c for c in df.columns if c not in set(actual_feature_cols)]
-                meta_rows = df[meta_cols].to_dict("records")
-                for r in meta_rows:
-                    r["segment_key"] = seg_key
-
-                predicted = [
-                    float(v) if v is not None else None for v in preds.tolist()
-                ]
-                return predicted, meta_rows
+                # Thin wrapper over the module-level scorer, bound to this run's df.
+                return _score_segment_against_df(df, seg_artifact_path, seg_key)
 
             if segment_key:
                 # Score one named segment against the whole forecast dataset.
@@ -1145,6 +1222,8 @@ def run_forecast(self, run_id: str):
 
             with app_session() as s:
                 r = ForecastRun.query.filter_by(run_id=run_id).first()
+                # segment_key is present in meta only for segmented runs; NULL otherwise.
+                seg_key_col = meta_dict.get("segment_key")
                 result_rows = [
                     {
                         "forecast_run_id": r.id,
@@ -1157,6 +1236,7 @@ def run_forecast(self, run_id: str):
                         )
                         if other_keys
                         else None,
+                        "segment_key": seg_key_col[i] if seg_key_col else None,
                     }
                     for i in range(len(predicted_list))
                 ]
@@ -1207,16 +1287,170 @@ def _cr_log(
         logger.warning(f"_cr_log failed: {_e}")
 
 
+def _compute_credit_for_clients(
+    cr_run_id: str,
+    clients_list: list,
+    forecast_segmentation: dict,
+    forecast_by_var: dict,
+    pd_rating_df,
+    exposure: float,
+    discount_rate: float,
+    lifetime_horizon: int,
+    *,
+    flush_every: int = 10,
+    progress_base: int = 0,
+    progress_span: int = 100,
+) -> tuple[int, int]:
+    """Run KMV + ECL for each client in `clients_list`, persisting a CreditRiskResult
+    per client (with denormalised sector/subsector/country/segment_key so a single
+    segment's rows can later be recomputed via an indexed WHERE). Returns
+    (n_succeeded, n_failed).
+
+    Shared by run_credit_analysis (whole portfolio) and recompute_segment_downstream
+    (only the clients in one segment). `flush_every` batches the session commits; the
+    per-segment recompute passes a large value so its small subset lands in one txn.
+    Client→segment routing uses total_assets' seg_info as the canonical key source —
+    the 3 required slots share one segmentation policy within a workflow submission.
+    """
+    from project import app_session
+    from project.core.credit_risk.ecl import compute_ecl
+    from project.core.credit_risk.forecast_lookup import (
+        lookup_forecast,
+        resolve_segment_key,
+    )
+    from project.core.credit_risk.kmv import run_kmv
+    from project.db_models.credit_models import CreditRiskResult
+
+    canonical_seg = forecast_segmentation.get("total_assets", {"split_by": {}})
+
+    def _lookup(key: str, sector: str, subsector: str, country: str) -> dict:
+        return lookup_forecast(
+            forecast_segmentation[key],
+            forecast_by_var[key],
+            sector,
+            subsector,
+            country,
+        )
+
+    n_clients = len(clients_list)
+    result_batch: list[CreditRiskResult] = []
+    failed_clients = 0
+
+    for idx, row in enumerate(clients_list):
+        client_id = str(row["client_id"])
+        com_info = {
+            "E0": float(row["market_cap"]),
+            "volE": float(row["vol_equity"]),
+            "r": float(row["risk_free_rate"]),
+            "rating": str(row["rating"]),
+        }
+
+        sector = str(row.get("sector") or "")
+        subsector = str(row.get("subsector") or "")
+        country = str(row.get("country") or "")
+        # Canonical segment this client routes to — persisted for per-segment
+        # recompute + Sector/Segment result filters. None for non-segmented runs.
+        client_segment_key = (
+            resolve_segment_key(canonical_seg, sector, subsector, country)
+            if canonical_seg.get("split_by")
+            else None
+        )
+
+        # Build forecast DataFrame from the 3 calibrated variable indices, routing
+        # this client to its own segment's trajectory (segmented) or the single
+        # portfolio-wide trajectory. Multi-scenario data is used directly; fall back
+        # to a single "Baseline" when the data has no scenario dimension.
+        ta_by_scen = _lookup("total_assets", sector, subsector, country)
+        cl_by_scen = _lookup("short_term_debts", sector, subsector, country)
+        nc_by_scen = _lookup("long_term_debts", sector, subsector, country)
+
+        all_scens = sorted(set(ta_by_scen) & set(cl_by_scen) & set(nc_by_scen))
+        if not all_scens:
+            all_scens = ["Baseline"]
+            ta_by_scen = {"Baseline": next(iter(ta_by_scen.values()), {})}
+            cl_by_scen = {"Baseline": next(iter(cl_by_scen.values()), {})}
+            nc_by_scen = {"Baseline": next(iter(nc_by_scen.values()), {})}
+
+        rows_fc = []
+        for scen in all_scens:
+            ta_yr = ta_by_scen.get(scen, {})
+            cl_yr = cl_by_scen.get(scen, {})
+            nc_yr = nc_by_scen.get(scen, {})
+            years = sorted(set(ta_yr) & set(cl_yr) & set(nc_yr))
+            for yr in years:
+                rows_fc.append(
+                    {
+                        "YEAR": yr,
+                        "SCENARIO": scen,
+                        "Total_Asset": ta_yr[yr],
+                        "CL": cl_yr[yr],
+                        "NonCL": nc_yr[yr],
+                    }
+                )
+
+        if not rows_fc:
+            failed_clients += 1
+            _cr_log(
+                cr_run_id,
+                f"Client {client_id}: no overlapping forecast years across all 3 variables — skipping",
+                level="warn",
+            )
+            continue
+        forecast = pd.DataFrame(rows_fc)
+
+        try:
+            kmv_df = run_kmv(com_info, forecast, pd_rating_df)
+            ecl_df = compute_ecl(kmv_df, exposure, discount_rate, lifetime_horizon)
+            kmv_records = kmv_df.where(pd.notnull(kmv_df), None).to_dict(
+                orient="records"
+            )
+            ecl_records = ecl_df.where(pd.notnull(ecl_df), None).to_dict(
+                orient="records"
+            )
+            result_batch.append(
+                CreditRiskResult(
+                    run_id=cr_run_id,
+                    client_id=client_id,
+                    kmv_json=json.dumps(kmv_records),
+                    ecl_json=json.dumps(ecl_records),
+                    sector=sector or None,
+                    subsector=subsector or None,
+                    country=country or None,
+                    segment_key=client_segment_key,
+                )
+            )
+        except Exception as client_err:
+            failed_clients += 1
+            _cr_log(
+                cr_run_id,
+                f"Client {client_id} failed: {client_err}",
+                level="warn",
+            )
+
+        # Flush batch and update progress every `flush_every` clients or at the end.
+        if (idx + 1) % flush_every == 0 or idx == n_clients - 1:
+            with app_session() as s:
+                for res in result_batch:
+                    s.add(res)
+                result_batch = []
+            progress = progress_base + round((idx + 1) / n_clients * progress_span)
+            _cr_log(
+                cr_run_id,
+                f"Processed {idx + 1}/{n_clients} clients",
+                progress=progress,
+            )
+
+    return n_clients - failed_clients, failed_clients
+
+
 @celery_app.task(bind=True, name="run_credit_analysis")
 def run_credit_analysis(self, cr_run_id: str):
     app = _make_flask_app()
     with app.app_context():
         from project import app_session
         from project.api.credit_risk.routes import _pd_rating_df
-        from project.core.credit_risk.ecl import compute_ecl
-        from project.core.credit_risk.kmv import run_kmv
         from project.db_models.calibration_models import Dataset
-        from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
+        from project.db_models.credit_models import CreditRiskRun
         from project.db_models.forecast_models import ForecastRun
 
         cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
@@ -1325,7 +1559,6 @@ def run_credit_analysis(self, cr_run_id: str):
             #      - None (single portfolio-wide trajectory, non-segmented calibration)
             from project.core.credit_risk.forecast_lookup import (
                 build_variable_index,
-                lookup_forecast,
             )
 
             REQUIRED_INPUTS = ("total_assets", "short_term_debts", "long_term_debts")
@@ -1364,17 +1597,6 @@ def run_credit_analysis(self, cr_run_id: str):
                     f"Loaded '{key}' forecast from run {fr_run_uuid[:8]}… ({ctx_desc})",
                 )
 
-            def _lookup_forecast(
-                key: str, sector: str, subsector: str, country: str
-            ) -> dict:
-                return lookup_forecast(
-                    forecast_segmentation[key],
-                    forecast_by_var[key],
-                    sector,
-                    subsector,
-                    country,
-                )
-
             # 4. Load PD ratings
             pd_rating_df = _pd_rating_df(curve)
             if pd_rating_df.empty:
@@ -1385,121 +1607,22 @@ def run_credit_analysis(self, cr_run_id: str):
                 progress=5,
             )
 
-            # 5. Process each client
+            # 5. Process each client (KMV + ECL) and persist results.
             clients_list = portfolio_df.to_dict(orient="records")
             n_clients = len(clients_list)
-            result_batch: list[CreditRiskResult] = []
-            failed_clients = 0
-
-            for idx, row in enumerate(clients_list):
-                client_id = str(row["client_id"])
-                com_info = {
-                    "E0": float(row["market_cap"]),
-                    "volE": float(row["vol_equity"]),
-                    "r": float(row["risk_free_rate"]),
-                    "rating": str(row["rating"]),
-                }
-
-                sector = str(row.get("sector") or "")
-                subsector = str(row.get("subsector") or "")
-                country = str(row.get("country") or "")
-
-                # Build forecast DataFrame from the 3 calibrated variable indices.
-                # If the calibration was segmented, route this client to its own
-                # segment's trajectory (by sector + subsector/country); otherwise use
-                # the single portfolio-wide trajectory.
-                # If forecast data contains multiple scenarios (e.g. Baseline / Adverse /
-                # Severely Adverse), use them directly; fall back to a single "Baseline"
-                # with artificial growth multipliers when the data has no scenario dimension.
-                ta_by_scen = _lookup_forecast(
-                    "total_assets", sector, subsector, country
-                )
-                cl_by_scen = _lookup_forecast(
-                    "short_term_debts", sector, subsector, country
-                )
-                nc_by_scen = _lookup_forecast(
-                    "long_term_debts", sector, subsector, country
-                )
-
-                all_scens = sorted(set(ta_by_scen) & set(cl_by_scen) & set(nc_by_scen))
-                if not all_scens:
-                    # Flatten any single-scenario data for the fallback path
-                    all_scens = ["Baseline"]
-                    ta_by_scen = {"Baseline": next(iter(ta_by_scen.values()), {})}
-                    cl_by_scen = {"Baseline": next(iter(cl_by_scen.values()), {})}
-                    nc_by_scen = {"Baseline": next(iter(nc_by_scen.values()), {})}
-
-                rows_fc = []
-                for scen in all_scens:
-                    ta_yr = ta_by_scen.get(scen, {})
-                    cl_yr = cl_by_scen.get(scen, {})
-                    nc_yr = nc_by_scen.get(scen, {})
-                    years = sorted(set(ta_yr) & set(cl_yr) & set(nc_yr))
-                    for yr in years:
-                        rows_fc.append(
-                            {
-                                "YEAR": yr,
-                                "SCENARIO": scen,
-                                "Total_Asset": ta_yr[yr],
-                                "CL": cl_yr[yr],
-                                "NonCL": nc_yr[yr],
-                            }
-                        )
-
-                if not rows_fc:
-                    failed_clients += 1
-                    _cr_log(
-                        cr_run_id,
-                        f"Client {client_id}: no overlapping forecast years across all 3 variables — skipping",
-                        level="warn",
-                    )
-                    continue
-                forecast = pd.DataFrame(rows_fc)
-
-                try:
-                    kmv_df = run_kmv(com_info, forecast, pd_rating_df)
-                    ecl_df = compute_ecl(
-                        kmv_df, exposure, discount_rate, lifetime_horizon
-                    )
-                    kmv_records = kmv_df.where(pd.notnull(kmv_df), None).to_dict(
-                        orient="records"
-                    )
-                    ecl_records = ecl_df.where(pd.notnull(ecl_df), None).to_dict(
-                        orient="records"
-                    )
-                    result_batch.append(
-                        CreditRiskResult(
-                            run_id=cr_run_id,
-                            client_id=client_id,
-                            kmv_json=json.dumps(kmv_records),
-                            ecl_json=json.dumps(ecl_records),
-                        )
-                    )
-                except Exception as client_err:
-                    failed_clients += 1
-                    _cr_log(
-                        cr_run_id,
-                        f"Client {client_id} failed: {client_err}",
-                        level="warn",
-                    )
-
-                # Flush batch and update progress every 10 clients or at end
-                if (idx + 1) % 10 == 0 or idx == n_clients - 1:
-                    with app_session() as s:
-                        for res in result_batch:
-                            s.add(res)
-                        result_batch = []
-                    progress = round((idx + 1) / n_clients * 100)
-                    _cr_log(
-                        cr_run_id,
-                        f"Processed {idx + 1}/{n_clients} clients",
-                        progress=progress,
-                    )
+            succeeded, failed_clients = _compute_credit_for_clients(
+                cr_run_id,
+                clients_list,
+                forecast_segmentation,
+                forecast_by_var,
+                pd_rating_df,
+                exposure,
+                discount_rate,
+                lifetime_horizon,
+            )
 
             # 6. Mark success
-            summary = (
-                f"Completed: {n_clients - failed_clients}/{n_clients} clients succeeded"
-            )
+            summary = f"Completed: {succeeded}/{n_clients} clients succeeded"
             if failed_clients:
                 summary += f" ({failed_clients} failed)"
             _cr_log(cr_run_id, summary, progress=100)
@@ -1509,6 +1632,37 @@ def run_credit_analysis(self, cr_run_id: str):
                 r.finished_at = datetime.now(timezone.utc)
                 r.progress = 100
                 s.add(r)
+
+            # 7. Materialise the Heatmap / Financial Forecast level series so those
+            # pages load from cheap indexed SELECTs instead of recomputing from
+            # MinIO + pandas on every request. Best-effort: a failure here must not
+            # fail the analysis run (the pages fall back to lazy on-demand compute).
+            try:
+                from project.api.credit_risk.routes import (
+                    _analysis_portfolio_df,
+                    _slot_forecast_runs,
+                )
+                from project.core.credit_risk.analysis_series import (
+                    materialize_analysis_series,
+                )
+
+                with app_session():
+                    cr_obj = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                    portfolio_df = _analysis_portfolio_df(cr_obj)
+                    slots = _slot_forecast_runs(cr_obj)
+                    n_series = materialize_analysis_series(cr_obj, portfolio_df, slots)
+                _cr_log(cr_run_id, f"Materialised {n_series} analysis series rows")
+            except Exception as mat_err:
+                logger.error(
+                    f"Analysis-series materialisation failed for {cr_run_id}: {mat_err}",
+                    exc_info=True,
+                )
+                _cr_log(
+                    cr_run_id,
+                    f"Analysis series not materialised: {mat_err}",
+                    level="warn",
+                )
+
             if workflow_run_id:
                 advance_workflow.delay(workflow_run_id)
 
@@ -1524,6 +1678,276 @@ def run_credit_analysis(self, cr_run_id: str):
                     s.add(r)
             if workflow_run_id:
                 advance_workflow.delay(workflow_run_id)
+            raise
+
+
+def _load_df_by_dataset_id(ds_id: int) -> "pd.DataFrame":
+    """Download a dataset by PK and return its DataFrame (csv/xlsx/parquet)."""
+    from project.db_models.calibration_models import Dataset
+
+    ds = Dataset.query.get(ds_id)
+    if not ds or not ds.file_path:
+        raise ValueError(f"Dataset {ds_id} not found or has no file")
+    file_bytes = storage.download_bytes(ds.file_path.split("/", 1)[-1])
+    ext = ds.file_path.rsplit(".", 1)[-1].lower()
+    buf = io.BytesIO(file_bytes)
+    if ext == "csv":
+        return pd.read_csv(buf)
+    if ext == "xlsx":
+        return pd.read_excel(buf)
+    if ext == "parquet":
+        return pd.read_parquet(buf)
+    raise ValueError(f"Unsupported file type: {ext}")
+
+
+def _build_credit_portfolio_df(
+    credit_dataset_id: int, financial_dataset_id: int | None
+) -> "pd.DataFrame":
+    """Rebuild the same credit+financial merged portfolio the full credit run uses
+    (mirrors run_credit_analysis' load/merge), so per-segment recompute routes
+    clients identically."""
+    credit_df = _load_df_by_dataset_id(credit_dataset_id)
+    if not financial_dataset_id:
+        return credit_df
+    fin_df = _load_df_by_dataset_id(financial_dataset_id)
+    fin_meta = fin_df[["client_id", "country", "sector", "subsector"]].drop_duplicates(
+        subset=["client_id"]
+    )
+    new_fin_cols = ["client_id"] + [
+        c for c in fin_meta.columns if c != "client_id" and c not in credit_df.columns
+    ]
+    return credit_df.merge(fin_meta[new_fin_cols], on="client_id", how="left")
+
+
+@celery_app.task(bind=True, name="recompute_segment_downstream")
+def recompute_segment_downstream(self, run_id: str, segment_key: str):
+    """After a single segment is re-fit, recompute its downstream forecast + credit
+    results IN PLACE — for that segment only — so the workflow's Forecast and Credit
+    tabs stop showing numbers produced by the old segment model.
+
+    Never calls advance_workflow: that machine is one-shot and would spawn duplicate
+    runs. This is an out-of-band correction that flips the affected ForecastRun(s) +
+    CreditRiskRun to running while recomputing, then back to success. Each per-segment
+    delete+insert is one atomic transaction, gated behind status='running', so the
+    frontend never renders a success run missing a segment's rows.
+    """
+    app = _make_flask_app()
+    with app.app_context():
+        from project import app_session
+        from project.api.credit_risk.routes import _pd_rating_df
+        from project.core.credit_risk.forecast_lookup import build_variable_index
+        from project.db_models.calibration_models import (
+            CalibrationRun,
+            CalibrationRunSegment,
+        )
+        from project.db_models.credit_models import CreditRiskResult, CreditRiskRun
+        from project.db_models.forecast_models import ForecastRun, ForecastRunLog
+
+        cal = CalibrationRun.query.filter_by(run_id=run_id).first()
+        if not cal:
+            logger.error(f"recompute_segment_downstream: cal run {run_id} not found")
+            return
+        if cal.seg_sectors_json is None:
+            # Non-segmented run has no per-segment downstream to recompute.
+            return
+        cal_id = cal.id
+        workflow_run_id = cal.workflow_run_id
+        target_col = cal.target_col
+
+        # Affected forecast runs: every forecast run built from this calibration.
+        # (Segmented cals produce one forecast run per target, each scoring all
+        # segments; a failed/incomplete run is left alone.)
+        affected = ForecastRun.query.filter_by(
+            calibration_run_id=cal_id, status="success"
+        ).all()
+        if not affected:
+            return
+
+        seg = CalibrationRunSegment.query.filter_by(
+            calibration_run_id=cal_id, segment_key=segment_key, status="success"
+        ).first()
+        if not seg:
+            logger.error(
+                f"recompute_segment_downstream: segment '{segment_key}' not found/"
+                f"successful for run {run_id}"
+            )
+            return
+        seg_artifact_path = seg.artifact_path
+        affected_ids = [(fr.id, fr.run_id, fr.dataset_id) for fr in affected]
+
+        # ── Forecast stage: re-score this segment into each affected run ──────────
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        for fr_id, fr_run_uuid, fr_dataset_id in affected_ids:
+            # Txn 1: gate the tab OFF before any delete.
+            with app_session() as s:
+                fr = ForecastRun.query.get(fr_id)
+                fr.status = "running"
+                fr.progress = 0
+                s.add(fr)
+                s.add(
+                    ForecastRunLog(
+                        run_id=fr_run_uuid,
+                        t=now,
+                        level="info",
+                        message=f"Recomputing segment '{segment_key}'…",
+                    )
+                )
+            try:
+                df = _load_df_by_dataset_id(fr_dataset_id)
+                # Txn 2: atomic delete-this-segment + re-score + insert.
+                with app_session() as s:
+                    fr = ForecastRun.query.get(fr_id)
+                    recompute_forecast_run_segment(
+                        s, fr, df, seg_artifact_path, segment_key
+                    )
+                # Txn 3: back to success.
+                with app_session() as s:
+                    fr = ForecastRun.query.get(fr_id)
+                    fr.status = "success"
+                    fr.progress = 100
+                    fr.finished_at = datetime.now(timezone.utc)
+                    s.add(fr)
+            except Exception as exc:
+                logger.error(
+                    f"Segment forecast recompute failed for {fr_run_uuid}: {exc}",
+                    exc_info=True,
+                )
+                with app_session() as s:
+                    fr = ForecastRun.query.get(fr_id)
+                    fr.status = "failed"
+                    fr.finished_at = datetime.now(timezone.utc)
+                    fr.error_message = (
+                        f"Segment '{segment_key}' recompute failed: {exc}"
+                    )
+                    s.add(fr)
+                # Credit needs all forecast inputs current — abort before it.
+                raise
+
+        # ── Credit stage: recompute only this segment's clients ──────────────────
+        # Only when the retrained variable actually feeds KMV (revenue/cogs don't).
+        if SLOT_BY_TARGET.get(target_col) not in REQUIRED_SLOTS:
+            return
+        if not workflow_run_id:
+            return
+        cr = CreditRiskRun.query.filter_by(workflow_run_id=workflow_run_id).first()
+        if not cr or cr.status != "success":
+            return
+
+        cr_run_id = cr.run_id
+        cr_dataset_id = cr.dataset_id
+        cr_financial_id = cr.financial_portfolio_dataset_id
+        exposure = cr.exposure
+        discount_rate = cr.discount_rate
+        lifetime_horizon = cr.lifetime_horizon
+        curve = cr.curve
+        forecast_inputs = {
+            inp.slot: inp.forecast_run_uuid for inp in cr.forecast_inputs_rel
+        }
+
+        # Membership is stable (re-fitting a model doesn't change routing), so read
+        # the affected clients straight off the persisted segment_key column.
+        client_ids = {
+            r.client_id
+            for r in CreditRiskResult.query.filter_by(
+                run_id=cr_run_id, segment_key=segment_key
+            ).all()
+        }
+        if not client_ids:
+            # Nothing routes to this segment (or rows predate the column) — don't
+            # flip a good run to running to do nothing.
+            _cr_log(
+                cr_run_id,
+                f"Segment '{segment_key}' recompute: no matching credit clients — skipped",
+            )
+            return
+
+        # Txn A: gate credit tabs OFF.
+        with app_session() as s:
+            r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+            r.status = "running"
+            r.progress = 0
+            r.started_at = datetime.now(timezone.utc)
+            s.add(r)
+        _cr_log(
+            cr_run_id,
+            f"Recomputing credit for segment '{segment_key}' ({len(client_ids)} clients)…",
+        )
+
+        try:
+            # Rebuild forecast indices from the (now-updated) required forecast runs.
+            REQUIRED_INPUTS = ("total_assets", "short_term_debts", "long_term_debts")
+            missing_inputs = [k for k in REQUIRED_INPUTS if not forecast_inputs.get(k)]
+            if missing_inputs:
+                raise ValueError(f"Missing required forecast inputs: {missing_inputs}")
+            forecast_by_var: dict = {}
+            forecast_segmentation: dict = {}
+            for key in REQUIRED_INPUTS:
+                fr = ForecastRun.query.filter_by(run_id=forecast_inputs[key]).first()
+                if not fr or fr.status != "success":
+                    raise ValueError(
+                        f"Forecast run for '{key}' not found or not successful"
+                    )
+                seg_info, idx_map = build_variable_index(fr)
+                forecast_segmentation[key] = seg_info
+                forecast_by_var[key] = idx_map
+
+            pd_rating_df = _pd_rating_df(curve)
+            if pd_rating_df.empty:
+                raise ValueError("No PD ratings found — run flask db upgrade first")
+
+            portfolio_df = _build_credit_portfolio_df(cr_dataset_id, cr_financial_id)
+            subset_df = portfolio_df[
+                portfolio_df["client_id"].astype(str).isin(client_ids)
+            ]
+
+            # Txn B: atomic delete-this-segment + recompute (one flush for the subset).
+            with app_session() as s:
+                CreditRiskResult.query.filter_by(
+                    run_id=cr_run_id, segment_key=segment_key
+                ).delete(synchronize_session=False)
+            _compute_credit_for_clients(
+                cr_run_id,
+                subset_df.to_dict(orient="records"),
+                forecast_segmentation,
+                forecast_by_var,
+                pd_rating_df,
+                exposure,
+                discount_rate,
+                lifetime_horizon,
+                flush_every=max(1, len(subset_df)),
+            )
+
+            # Txn C: back to success + invalidate the cached results df.
+            with app_session() as s:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                r.status = "success"
+                r.progress = 100
+                r.finished_at = datetime.now(timezone.utc)
+                s.add(r)
+            try:
+                from project import cache
+
+                cache.delete(f"cr_run_results:{cr_run_id}")
+            except Exception:
+                pass
+            _cr_log(
+                cr_run_id,
+                f"Segment '{segment_key}' credit recompute complete",
+                progress=100,
+            )
+        except Exception as exc:
+            logger.error(
+                f"Segment credit recompute failed for {cr_run_id}: {exc}",
+                exc_info=True,
+            )
+            _cr_log(cr_run_id, f"Segment recompute failed: {exc}", level="error")
+            with app_session() as s:
+                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                if r:
+                    r.status = "failed"
+                    r.finished_at = datetime.now(timezone.utc)
+                    r.error_message = f"Segment '{segment_key}' recompute failed: {exc}"
+                    s.add(r)
             raise
 
 

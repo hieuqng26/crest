@@ -12,6 +12,7 @@ from project.api.auth.decorators import require_perm
 from project.core import table_query
 from project.db_models.calibration_models import Dataset
 from project.db_models.credit_models import (
+    CreditRiskAnalysisSeries,
     CreditRiskForecastInput,
     CreditRiskResult,
     CreditRiskRun,
@@ -402,6 +403,9 @@ def rerun_run(cr_run_id: str):
     with app_session() as s:
         CreditRiskResult.query.filter_by(run_id=cr_run_id).delete()
         r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        # Drop the materialised analysis series — it'll be rebuilt when the rerun
+        # completes (and would otherwise show stale numbers in the meantime).
+        CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=r.id).delete()
         r.status = "queued"
         r.progress = 0
         r.started_at = None
@@ -529,6 +533,8 @@ def _run_results_df(cr: CreditRiskRun) -> pd.DataFrame:
         rows.append(
             {
                 "client_id": r.client_id,
+                "sector": r.sector,
+                "segment_key": r.segment_key,
                 "stage": _client_stage(
                     latest_kmv, first_kmv, rating_to_category, n_categories
                 ),
@@ -594,6 +600,7 @@ def delete_run(cr_run_id: str):
     with app_session() as s:
         CreditRiskRunLog.query.filter_by(run_id=cr_run_id).delete()
         r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+        CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=r.id).delete()
         s.delete(r)
 
     return jsonify({"ok": True}), 200
@@ -1041,6 +1048,48 @@ def _all_scenarios(fr: ForecastRun) -> list[str]:
     return sorted(scens, key=lambda s: (order.get(s, 99), s))
 
 
+_SERIES_HISTORY = "History"
+
+
+def _load_analysis_series(cr):
+    """Return the materialised level series for a run as a nested dict:
+
+        series[scope_type][scope_key][slot][scenario] = {year: value}
+
+    plus ``sector_of`` mapping each client scope_key → its sector. Reads from
+    ``credit_risk_analysis_series``; if a successful run has no rows yet (predates
+    materialisation, or the worker's best-effort step failed), it computes and
+    persists them once now (lazy backfill) so subsequent loads are fast.
+    """
+    from project.db_models.credit_models import CreditRiskAnalysisSeries
+
+    rows = CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=cr.id).all()
+    if not rows:
+        from project.core.credit_risk.analysis_series import (
+            materialize_analysis_series,
+        )
+
+        portfolio_df = _analysis_portfolio_df(cr)
+        slots = _slot_forecast_runs(cr)
+        materialize_analysis_series(cr, portfolio_df, slots)
+        rows = CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=cr.id).all()
+
+    series: dict = {}
+    sector_of: dict[str, str] = {}
+    for r in rows:
+        series.setdefault(r.scope_type, {}).setdefault(r.scope_key, {}).setdefault(
+            r.slot, {}
+        ).setdefault(r.scenario, {})[r.year] = r.value
+        if r.scope_type == "client" and r.sector is not None:
+            sector_of[r.scope_key] = r.sector
+    return series, sector_of
+
+
+def _series_levels(series, scope_type, scope_key, slot, scenario) -> dict:
+    """One {year: value} level series from the loaded materialised structure."""
+    return series.get(scope_type, {}).get(scope_key, {}).get(slot, {}).get(scenario, {})
+
+
 @credit_risk.get("/analysis/meta")
 @require_perm("credit_risk:read")
 def get_analysis_meta():
@@ -1101,7 +1150,7 @@ def get_analysis_heatmap():
 
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
-        portfolio_df = _analysis_portfolio_df(cr)
+        series, sector_of = _load_analysis_series(cr)
         slots = _slot_forecast_runs(cr)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
@@ -1114,60 +1163,50 @@ def get_analysis_heatmap():
                 "Link them on the active analysis run."
             }
         ), 422
-    if "sector" not in portfolio_df.columns:
-        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
-
-    rev_fr, cogs_fr = slots.get("total_revenue"), slots.get("total_cogs")
-    st_fr, lt_fr = slots.get("short_term_debts"), slots.get("long_term_debts")
 
     # The forecast run itself (not the historical dataset) defines which years are
     # "forecast" columns — using an arbitrary year cutoff would misalign whenever a
     # forecast doesn't happen to start the year right after the training data ends.
-    anchor_fr = rev_fr or cogs_fr or st_fr or lt_fr
+    anchor_fr = (
+        slots.get("total_revenue")
+        or slots.get("total_cogs")
+        or slots.get("short_term_debts")
+        or slots.get("long_term_debts")
+    )
     _, anchor_idx = _cached_variable_index(anchor_fr)
     forecast_years = sorted(
         {yr for ctx_map in anchor_idx.values() for yr in ctx_map.get("Baseline", {})}
     )
 
-    def levels_for(rows_df, sector_for_hist, client_for_hist, fr, scenario="Baseline"):
-        hist = _historical_series(fr, sector_for_hist, client_for_hist)
-        return _variable_levels(rows_df, fr, scenario, hist)
+    def combined_levels(scope_type, scope_key, slot) -> dict:
+        """History merged with the Baseline forecast for one slot/scope — the same
+        {year: value} that _variable_levels(rows_df, fr, 'Baseline', hist) produced,
+        now read straight from the materialised table."""
+        levels = dict(
+            _series_levels(series, scope_type, scope_key, slot, _SERIES_HISTORY)
+        )
+        levels.update(_series_levels(series, scope_type, scope_key, slot, "Baseline"))
+        return levels
 
-    def metric_series(rows_df, sector_for_hist, client_for_hist) -> dict:
-        rev = (
-            levels_for(rows_df, sector_for_hist, client_for_hist, rev_fr)
-            if rev_fr
-            else {}
-        )
-        cogs = (
-            levels_for(rows_df, sector_for_hist, client_for_hist, cogs_fr)
-            if cogs_fr
-            else {}
-        )
-        st = (
-            levels_for(rows_df, sector_for_hist, client_for_hist, st_fr)
-            if st_fr
-            else {}
-        )
-        lt = (
-            levels_for(rows_df, sector_for_hist, client_for_hist, lt_fr)
-            if lt_fr
-            else {}
-        )
+    def metric_series(scope_type, scope_key) -> dict:
+        rev = combined_levels(scope_type, scope_key, "total_revenue")
+        cogs = combined_levels(scope_type, scope_key, "total_cogs")
+        st = combined_levels(scope_type, scope_key, "short_term_debts")
+        lt = combined_levels(scope_type, scope_key, "long_term_debts")
 
         if metric == "revenue_growth":
-            series = rev
+            series_out = rev
         elif metric == "cogs_margin":
             years = sorted(set(rev) & set(cogs))
-            series = {y: (cogs[y] / rev[y] * 100) for y in years if rev[y]}
+            series_out = {y: (cogs[y] / rev[y] * 100) for y in years if rev[y]}
         else:  # leverage
             years = sorted(set(rev) & set(cogs) & set(st) & set(lt))
-            series = {}
+            series_out = {}
             for y in years:
                 ebitda = rev[y] - cogs[y]
                 if ebitda:
-                    series[y] = (st[y] + lt[y]) / ebitda
-        return series
+                    series_out[y] = (st[y] + lt[y]) / ebitda
+        return series_out
 
     def yoy_deltas(series: dict, target_years: list[int]) -> list[float | None]:
         all_years = sorted(series.keys())
@@ -1188,32 +1227,28 @@ def get_analysis_heatmap():
         return out
 
     if sector_filter:
-        sector_rows = portfolio_df[portfolio_df["sector"] == sector_filter]
-        if sector_rows.empty:
+        # Clients belonging to the drilled sector (from the materialised rows).
+        sector_clients = sorted(
+            cid for cid, sec in sector_of.items() if sec == sector_filter
+        )
+        if not sector_clients:
             return jsonify({"error": f"Sector '{sector_filter}' not found"}), 404
-        # Only compute the companies the caller asked for — the per-client series
-        # is the expensive part, so restricting to a selected subset is what keeps
-        # the drill-down fast for large sectors.
+        # Only return the companies the caller asked for.
         if client_filter is not None:
-            sector_rows = sector_rows[
-                sector_rows["client_id"].astype(str).isin(client_filter)
-            ]
-            if sector_rows.empty:
+            sector_clients = [c for c in sector_clients if c in client_filter]
+            if not sector_clients:
                 return jsonify(
                     {"error": "None of the selected companies are in this sector"}
                 ), 404
         rows_out = []
-        # Group once by client_id instead of re-filtering sector_rows per client
-        # (which was an O(C_sec^2) rescan inside the loop).
-        for client_key, client_df in sector_rows.groupby("client_id", sort=False):
-            client_id = str(client_key)
-            series = metric_series(client_df, None, client_id)
+        for client_id in sector_clients:
+            series_c = metric_series("client", client_id)
             rows_out.append(
                 {
                     "key": client_id,
                     "label": client_id,
                     "drillable": False,
-                    "values": yoy_deltas(series, forecast_years),
+                    "values": yoy_deltas(series_c, forecast_years),
                 }
             )
         return jsonify(
@@ -1229,17 +1264,16 @@ def get_analysis_heatmap():
             }
         ), 200
 
-    sectors = sorted(portfolio_df["sector"].dropna().unique().tolist())
+    sectors = sorted(series.get("sector", {}).keys())
     rows_out = []
     for sector in sectors:
-        sector_rows = portfolio_df[portfolio_df["sector"] == sector]
-        series = metric_series(sector_rows, sector, None)
+        series_s = metric_series("sector", sector)
         rows_out.append(
             {
                 "key": sector,
                 "label": sector,
                 "drillable": True,
-                "values": yoy_deltas(series, forecast_years),
+                "values": yoy_deltas(series_s, forecast_years),
             }
         )
 
@@ -1276,22 +1310,31 @@ def get_analysis_forecast():
 
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
-        portfolio_df = _analysis_portfolio_df(cr)
+        series, _ = _load_analysis_series(cr)
         slots = _slot_forecast_runs(cr)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
-    if "sector" not in portfolio_df.columns:
-        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
-
-    rows_df = portfolio_df[portfolio_df["sector"] == sector]
+    # Scope: a single company if client_id given, else the whole sector.
     if client_id:
-        rows_df = rows_df[rows_df["client_id"].astype(str) == client_id]
-    if rows_df.empty:
-        return jsonify({"error": "No matching clients found"}), 404
+        scope_type, scope_key = "client", client_id
+        if scope_key not in series.get("client", {}):
+            return jsonify({"error": "No matching clients found"}), 404
+    else:
+        scope_type, scope_key = "sector", sector
+        if scope_key not in series.get("sector", {}):
+            return jsonify({"error": "No matching clients found"}), 404
 
     def series_points(levels: dict) -> list[dict]:
         return [{"year": y, "value": round(levels[y], 4)} for y in sorted(levels)]
+
+    def _scenarios_for(slot_key: str) -> list[str]:
+        present = set(
+            series.get(scope_type, {}).get(scope_key, {}).get(slot_key, {}).keys()
+        )
+        present.discard(_SERIES_HISTORY)
+        order = {"Baseline": 0, "Adverse": 1, "Severely Adverse": 2}
+        return sorted(present, key=lambda s: (order.get(s, 99), s))
 
     metrics_out = []
     for slot_key, title in _FORECAST_TARGET_SLOTS:
@@ -1301,7 +1344,7 @@ def get_analysis_forecast():
         if requested_keys is not None and slot_key not in requested_keys:
             continue
 
-        hist = _historical_series(fr, sector, client_id)
+        hist = _series_levels(series, scope_type, scope_key, slot_key, _SERIES_HISTORY)
         base_year = min(hist) if hist else None
         base_val = hist.get(base_year) if base_year is not None else None
 
@@ -1315,8 +1358,8 @@ def get_analysis_forecast():
 
         history_points = to_series(hist)
         scenarios_out = {}
-        for scen in _all_scenarios(fr):
-            levels = _variable_levels(rows_df, fr, scen, {})
+        for scen in _scenarios_for(slot_key):
+            levels = _series_levels(series, scope_type, scope_key, slot_key, scen)
             scenarios_out[scen] = to_series(levels)
 
         baseline_pts = scenarios_out.get("Baseline", [])

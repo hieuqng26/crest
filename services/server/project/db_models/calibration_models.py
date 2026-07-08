@@ -234,6 +234,9 @@ class CalibrationRunSegment(db.Model):
     hyperparams_json = db.Column(
         db.Text, nullable=True
     )  # per-segment override, if customized
+    feature_cols_json = db.Column(
+        db.Text, nullable=True
+    )  # per-segment feature-column override; NULL = inherit run defaults
 
     def to_dict(self):
         return dict(
@@ -257,6 +260,9 @@ class CalibrationRunSegment(db.Model):
             error_message=self.error_message,
             hyperparams=json.loads(self.hyperparams_json)
             if self.hyperparams_json
+            else None,
+            feature_cols=json.loads(self.feature_cols_json)
+            if self.feature_cols_json
             else None,
         )
 

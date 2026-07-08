@@ -47,6 +47,12 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
   (total_assets, short_term_debts, long_term_debts) to forecast runs.
 - **`credit_risk_results`** — `run_id`→credit_risk_runs.run_id. Per-client PD/LGD/ECL.
 - **`credit_risk_run_logs`** — `run_id`→credit_risk_runs.run_id.
+- **`credit_risk_analysis_series`** — `credit_risk_run_id`→credit_risk_runs.id
+  **ON DELETE CASCADE**. Materialised level series for the Sector Heatmap & Financial
+  Forecast pages (one row per run/scope/slot/scenario/year; `scope_type` sector|client,
+  `is_history` flags the actuals series). Written once at analysis-job completion
+  (`materialize_analysis_series`) so those pages read cheap indexed SELECTs instead of
+  recomputing from MinIO + pandas. Lazy-backfilled on first read for older runs.
 
 ### `workflow_models.py`
 - **`workflow_runs`** — groups a multi-target train → forecast → credit-analysis
@@ -73,6 +79,7 @@ SQLAlchemy ORM in `services/server/project/db_models/`. All models subclass
 datasets ──< calibration_runs ──< forecast_runs ──< credit_risk_run_forecast_inputs >── credit_risk_runs
               (model_configs)        │                                                       │
                                      └──< forecast_run_results (CASCADE)                     └──< credit_risk_results / logs
+                                                                                             └──< credit_risk_analysis_series (CASCADE)
 ```
 
 **FK delete constraints (caused real 500s — see `.claude/bugs/fk-constraint-on-delete.md`):**

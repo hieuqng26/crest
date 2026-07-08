@@ -6,7 +6,8 @@ services:
       dockerfile: Dockerfile
     image: deval/frontend:latest
     ports:
-      - 2000:9000
+      - "80:9000"
+      - "443:9000"
     environment:
       - SERVER_URL=http://backend:5000
       - DOMAIN=localhost
@@ -41,6 +42,25 @@ services:
       - app-network
     restart: always
 
+  # Celery worker service
+  worker:
+    build:
+      context: services/server
+      dockerfile: Dockerfile.prod
+    image: deval/backend:latest
+    volumes:
+      - backend_data_prod:/home/app/var/lib/app_data
+    depends_on:
+      - redis
+      - backend
+    env_file:
+      - env/.env.prod
+    environment:
+      - SERVICE_NAME=worker
+    networks:
+      - app-network
+    restart: always
+
   # Redis service
   redis:
     image: 'redis:alpine'
@@ -59,6 +79,7 @@ services:
       - ACCEPT_EULA=Y
       - SA_PASSWORD=Supersecret@123!
       - MSSQL_PID=Developer
+      - MSSQL_MEMORY_LIMIT_MB=2048
     ports:
       - "1433:1433"  # Expose MSSQL default port
     volumes:
@@ -66,6 +87,7 @@ services:
     networks:
       - app-network
     restart: always
+    mem_limit: 3g
 
 volumes:
   mssql_data_prod:

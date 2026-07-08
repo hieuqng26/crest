@@ -17,8 +17,10 @@ const props = defineProps({
   dataKey: { type: String, default: null },
   /** Per-row class — string | object | (row) => string|object. */
   rowClass: { type: [Function, String, Object], default: null },
-  /** Expanded rows (v-model) for the inline `#expansion` panel. */
-  expandedRows: { type: Array, default: null },
+  /** Expanded rows (v-model) for the inline `#expansion` panel. When a
+   *  `dataKey` is set, PrimeVue expects a keyed map ({ [key]: true }); without
+   *  one it expects an array of row objects. */
+  expandedRows: { type: [Array, Object], default: null },
   /** Whether rows respond to clicks (adds pointer cursor + emits row-click). */
   rowHover: { type: Boolean, default: true },
   /** Horizontal bleed in px to cancel out the parent panel's padding (default 16px). */

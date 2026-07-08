@@ -113,6 +113,67 @@ class CreditRiskResult(db.Model):
     client_id = db.Column(db.String(64), nullable=False, index=True)
     kmv_json = db.Column(db.Text, nullable=True)
     ecl_json = db.Column(db.Text, nullable=True)
+    # Denormalised client segmentation, resolved at compute time. Lets a single
+    # segment's client rows be deleted/recomputed in place via an indexed WHERE
+    # (see recompute_segment_downstream) and powers the Sector/Segment result filters.
+    sector = db.Column(db.String(128), nullable=True)
+    subsector = db.Column(db.String(128), nullable=True)
+    country = db.Column(db.String(128), nullable=True)
+    segment_key = db.Column(db.String(256), nullable=True)
+
+    __table_args__ = (
+        db.Index(
+            "ix_credit_risk_results_run_segment",
+            "run_id",
+            "segment_key",
+        ),
+    )
+
+
+class CreditRiskAnalysisSeries(db.Model):
+    """Materialised level series for the Sector Heatmap & Financial Forecast pages.
+
+    Both pages otherwise recompute the same aggregate on every request by
+    downloading the portfolio from MinIO, parsing it with pandas, rebuilding the
+    forecast index, and summing per sector/client. That work is done ONCE when the
+    credit-analysis job finishes and stored here as plain rows, so page loads become
+    cheap indexed SELECTs. Rows are immutable for a successful run and are deleted
+    when the run is deleted or re-run (cascade via credit_risk_run_id).
+
+    One row per (run, scope, slot, scenario, year). `is_history=True` rows carry the
+    historical actuals series (scenario is stored as 'History'); forecast rows carry
+    one of the run's scenarios (Baseline / Adverse / …).
+    """
+
+    __tablename__ = "credit_risk_analysis_series"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    credit_risk_run_id = db.Column(
+        db.Integer,
+        db.ForeignKey("credit_risk_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # 'sector' → aggregate across a whole sector; 'client' → a single company.
+    scope_type = db.Column(db.String(16), nullable=False)
+    scope_key = db.Column(db.String(128), nullable=False)  # sector name or client_id
+    # For client-scope rows, the owning sector (lets the heatmap drill-down filter
+    # by sector without a join back to the portfolio).
+    sector = db.Column(db.String(128), nullable=True)
+    slot = db.Column(db.String(32), nullable=False)  # total_assets / total_revenue / …
+    scenario = db.Column(db.String(32), nullable=False)  # 'History' or a scenario name
+    is_history = db.Column(db.Boolean, nullable=False, default=False)
+    year = db.Column(db.Integer, nullable=False)
+    value = db.Column(db.Float, nullable=True)
+
+    __table_args__ = (
+        db.Index(
+            "ix_cr_analysis_series_lookup",
+            "credit_risk_run_id",
+            "scope_type",
+            "scope_key",
+        ),
+    )
 
 
 class CreditRiskRunLog(db.Model):

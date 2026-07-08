@@ -4,6 +4,7 @@ import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
 import modelConfigsAPI from '@/api/modelConfigsAPI'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import EySelect from '@/components/ui/EySelect.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
 const props = defineProps({ runId: { type: String, required: true } })
@@ -13,10 +14,18 @@ const segments = ref([])
 const loading = ref(true)
 const search = ref('')
 
+// Run-level defaults + feature universe the customize panel offers as a baseline.
+const defaultConfigId = ref(null)
+const defaultFeatureCols = ref([])
+const featureOptions = ref([])
+
 const fetchSegments = async () => {
   try {
     const { data } = await calibrationsAPI.segments(props.runId)
     segments.value = data.segments ?? []
+    defaultConfigId.value = data.default_model_config_id ?? null
+    defaultFeatureCols.value = data.default_feature_cols ?? []
+    featureOptions.value = data.feature_options ?? []
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Failed to load segments', detail: e?.response?.data?.error ?? e.message, life: 4000 })
   }
@@ -55,21 +64,21 @@ const SEG_COLS = [
 ]
 
 // ── customize panel ─────────────────────────────────────────────────────────
+// Mirrors New Model's per-sector override: pick a saved configuration and a
+// subset of feature columns. `overrideDraft` holds { model_config_id, feature_cols }.
 const customizingKey = ref(null)
-const registry = ref([])
-const hyperparamForm = ref({})
+const configs = ref([])
+const overrideDraft = ref({ model_config_id: null, feature_cols: [] })
 const submitting = ref(false)
 
 onMounted(async () => {
   try {
-    const { data } = await modelConfigsAPI.registry()
-    registry.value = data
+    const { data } = await modelConfigsAPI.list()
+    configs.value = data ?? []
   } catch {
-    registry.value = []
+    configs.value = []
   }
 })
-
-const algoMeta = (algorithm) => registry.value.find((a) => a.algorithm === algorithm) || null
 
 const toggleCustomize = (seg) => {
   if (customizingKey.value === seg.segment_key) {
@@ -77,25 +86,36 @@ const toggleCustomize = (seg) => {
     return
   }
   customizingKey.value = seg.segment_key
-  const meta = algoMeta(seg.algorithm)
-  const defaults = Object.fromEntries((meta?.params ?? []).map((p) => [p.name, p.default]))
-  hyperparamForm.value = { ...defaults, ...(seg.hyperparams ?? {}) }
+  overrideDraft.value = {
+    // Fall back to this segment's own config, then the run default.
+    model_config_id: seg.model_config_id ?? defaultConfigId.value,
+    // A persisted override wins; otherwise start from the run's default feature set.
+    feature_cols: seg.feature_cols ? [...seg.feature_cols] : [...defaultFeatureCols.value]
+  }
 }
 
 const cancelCustomize = () => { customizingKey.value = null }
 
-// PrimeVue DataTable expects the expanded *row objects*; derive them from the
-// single open segment key (only one customize panel is open at a time).
-const expandedRows = computed(() => {
-  const seg = filtered.value.find((s) => s.segment_key === customizingKey.value)
-  return seg ? [seg] : []
+const overrideFeatsLabel = computed(() => {
+  const n = overrideDraft.value.feature_cols?.length ?? 0
+  return n === featureOptions.value.length
+    ? `All features (${featureOptions.value.length})`
+    : `${n} of ${featureOptions.value.length} features`
 })
+
+// With a `dataKey` set, PrimeVue 3 keys `expandedRows` by that value as a map
+// ({ [segment_key]: true }), NOT an array of row objects. Only one customize
+// panel is open at a time.
+const expandedRows = computed(() =>
+  customizingKey.value ? { [customizingKey.value]: true } : {}
+)
 
 const rerunSegment = async (seg) => {
   submitting.value = true
   try {
     const { data } = await calibrationsAPI.rerunSegment(props.runId, seg.segment_key, {
-      hyperparams: hyperparamForm.value
+      model_config_id: overrideDraft.value.model_config_id,
+      feature_cols: overrideDraft.value.feature_cols
     })
     const idx = segments.value.findIndex((s) => s.segment_key === seg.segment_key)
     if (idx >= 0) segments.value[idx] = { ...segments.value[idx], ...data }
@@ -161,34 +181,45 @@ const rerunSegment = async (seg) => {
 
       <template #expansion="{ row: seg }">
         <div class="customize-panel">
-          <div class="eyebrow customize-title">
-            CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
+          <div class="customize-head">
+            <div class="eyebrow customize-title">
+              CUSTOMIZE SEGMENT — <span class="font-mono">{{ seg.sector }} · {{ seg.split_value }}</span>
+            </div>
+            <div class="spacer" />
+            <span class="text-link" @click="router.push({ name: 'model_configurations' })">Manage configurations &rarr;</span>
           </div>
           <div class="customize-fields">
             <div class="field">
-              <div class="font-mono field-label">algorithm</div>
-              <div class="field-static">{{ seg.algorithm ?? '—' }}</div>
+              <div class="font-mono field-label">configuration</div>
+              <EySelect v-model="overrideDraft.model_config_id" :options="configs" optionValue="id" placeholder="Select a configuration" class="w-full" :filter="true">
+                <template #value="{ option }">
+                  <span v-if="option" class="cfg-value">
+                    <span class="font-mono">{{ option.name }}</span>
+                    <span class="tag-outline">{{ option.algorithm }}</span>
+                  </span>
+                </template>
+                <template #option="{ option }">
+                  <span class="cfg-option">
+                    <span class="font-mono cfg-option-name">{{ option.name }}</span>
+                    <span class="tag-outline">{{ option.algorithm }}</span>
+                  </span>
+                </template>
+              </EySelect>
             </div>
-            <div v-for="p in algoMeta(seg.algorithm)?.params ?? []" :key="p.name" class="field">
-              <div class="font-mono field-label">{{ p.name }}</div>
-              <InputText v-if="p.type === 'string'" v-model="hyperparamForm[p.name]" class="w-full field-input" />
-              <InputNumber
-                v-else-if="p.type === 'float' || p.type === 'int'"
-                v-model="hyperparamForm[p.name]"
-                :useGrouping="false"
-                :minFractionDigits="p.type === 'float' ? 1 : 0"
-                :maxFractionDigits="p.type === 'float' ? 6 : 0"
-                class="w-full field-input"
-                fluid
+            <div class="field">
+              <div class="font-mono field-label">feature columns</div>
+              <EySelect
+                v-model="overrideDraft.feature_cols" :options="featureOptions"
+                :multiple="true" :showToggleAll="true" class="w-full font-mono"
+                :placeholder="overrideFeatsLabel" :triggerLabel="overrideFeatsLabel" filter
               />
-              <InputSwitch v-else-if="p.type === 'bool'" v-model="hyperparamForm[p.name]" />
             </div>
           </div>
           <div class="customize-footer">
-            <span class="customize-note">Only this segment is retrained — all other segment models are kept</span>
+            <span class="customize-note">Only this segment is retrained — configuration, features and hyperparameters come from the chosen configuration. All other segment models are kept</span>
             <div class="spacer" />
             <Button label="Cancel" outlined class="btn-cancel-seg" @click="cancelCustomize" />
-            <Button class="btn-rerun-seg btn-cta" :loading="submitting" @click="rerunSegment(seg)">
+            <Button class="btn-rerun-seg btn-cta" :loading="submitting" :disabled="!overrideDraft.model_config_id" @click="rerunSegment(seg)">
               <span class="btn-play">▶</span>
               <span>Re-run segment</span>
             </Button>
@@ -246,28 +277,30 @@ const rerunSegment = async (seg) => {
   border-bottom: 1px solid var(--surface-border-row);
   padding: 16px 20px;
 }
-.customize-title { margin-bottom: 12px; }
+.customize-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.customize-title { margin-bottom: 0; }
 .customize-fields {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
   margin-bottom: 14px;
 }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field-label { font-size: 11px; color: var(--text-color-muted); }
-.field-static {
-  display: flex;
-  align-items: center;
-  height: 38px;
-  background: var(--surface-200);
-  border: 1px solid var(--surface-border-input);
-  border-radius: 2px;
-  padding: 0 12px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-color-secondary);
+
+.cfg-value, .cfg-option { display: flex; align-items: center; gap: 10px; }
+.cfg-option-name { flex: 1; }
+.tag-outline {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--surface-border-input); color: var(--text-color-secondary);
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 2px;
 }
-:deep(.field-input) { height: 38px; font-size: 12.5px; }
+.text-link {
+  font-size: 12px; font-weight: 600; color: var(--text-color-secondary);
+  cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px;
+}
+.text-link:hover { color: var(--text-color); }
 
 .customize-footer { display: flex; align-items: center; gap: 12px; }
 .customize-note { font-size: 12px; color: var(--text-color-muted); }
