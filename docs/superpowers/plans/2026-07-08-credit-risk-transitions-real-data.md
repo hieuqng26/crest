@@ -158,17 +158,13 @@ def test_destination_only_rating_appears_with_zero_row():
 
 
 def test_scenarios_separated_and_ordered():
-    clients = [
-        _client("Severely Adverse", [(2024, "Baa1"), (2025, "Ba1")])
-        + _client("Baseline", [(2024, "Baa1"), (2025, "Baa2")])[0:2],
+    # One client carrying two scenarios; each scenario is tallied independently.
+    mixed = [
+        {"YEAR": 2024, "SCENARIO": "Baseline", "Rating": "Baa1"},
+        {"YEAR": 2025, "SCENARIO": "Baseline", "Rating": "Baa2"},
+        {"YEAR": 2024, "SCENARIO": "Adverse", "Rating": "Baa1"},
+        {"YEAR": 2025, "SCENARIO": "Adverse", "Rating": "Ba1"},
     ]
-    # Build a client carrying two scenarios explicitly:
-    mixed = (
-        [{"YEAR": 2024, "SCENARIO": "Baseline", "Rating": "Baa1"},
-         {"YEAR": 2025, "SCENARIO": "Baseline", "Rating": "Baa2"},
-         {"YEAR": 2024, "SCENARIO": "Adverse", "Rating": "Baa1"},
-         {"YEAR": 2025, "SCENARIO": "Adverse", "Rating": "Ba1"}]
-    )
     out = build_transition_matrices([mixed], _CATEGORY)
     # Canonical order: Baseline, Adverse, (Severely Adverse) ...
     assert out["scenarios"] == ["Baseline", "Adverse"]
