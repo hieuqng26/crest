@@ -99,7 +99,7 @@ class CalibrationRun(db.Model):
         db.String(64), db.ForeignKey("users.email"), nullable=False
     )
     artifact_path = db.Column(db.String(1024), nullable=True)
-    started_at = db.Column(db.DateTime, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=True, index=True)
     finished_at = db.Column(db.DateTime, nullable=True)
     train_metrics_json = db.Column(db.Text, nullable=True)
     val_metrics_json = db.Column(db.Text, nullable=True)
@@ -196,17 +196,25 @@ class CalibrationRunLog(db.Model):
         db.String(16), nullable=False, default="info"
     )  # info | warn | error
     message = db.Column(db.String(1024), nullable=False)
+    # Set only on segment-scoped lines (per-segment fit / retrain), so the unified
+    # workflow log view can filter by sector/segment. NULL on general lines.
+    sector = db.Column(db.String(128), nullable=True)
+    segment = db.Column(db.String(128), nullable=True)
 
     def to_dict(self):
         return dict(
+            id=self.id,
             t=self.logged_at.strftime("%H:%M:%S") if self.logged_at else None,
             level=self.level,
             message=self.message,
+            sector=self.sector,
+            segment=self.segment,
         )
 
 
 class CalibrationRunSegment(db.Model):
     __tablename__ = "calibration_run_segments"
+    __table_args__ = (db.Index("ix_crs_run_sector", "calibration_run_id", "sector"),)
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     calibration_run_id = db.Column(
@@ -272,7 +280,7 @@ class Forecast(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     calibration_run_id = db.Column(
-        db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False
+        db.Integer, db.ForeignKey("calibration_runs.id"), nullable=False, index=True
     )
     forecast_horizon = db.Column(db.Integer, nullable=True)
     forecast_json = db.Column(db.Text, nullable=True)  # legacy; NULL for new rows

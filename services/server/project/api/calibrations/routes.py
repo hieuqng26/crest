@@ -7,8 +7,9 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy.orm import selectinload
 
-from project import app_session
+from project import app_session, cache, db
 from project.api.auth.decorators import require_perm
+from project.api.utils import paginate_logs
 from project.core import table_query
 from project.core.calibration_launch import (
     build_search_config_json,
@@ -158,17 +159,56 @@ def get_run(run_id):
     return jsonify(d), 200
 
 
+# The per-observation validation arrays are what make the segment metrics blobs
+# huge. The segment LIST never needs them — the actual-vs-predicted scatter fetches
+# them for the ONE selected segment via GET /<run_id>/diagnostics?segment_key=.
+# `residuals`/`fitted` are kept: they're single arrays the aggregate residual
+# histogram sums across segments, and dropping them would break that view.
+_HEAVY_METRIC_KEYS = ("val_obs", "train_obs")
+
+
+def _slim_metrics(m):
+    """Drop the big per-observation arrays from a metrics dict, keeping the rest."""
+    if not isinstance(m, dict):
+        return m
+    return {k: v for k, v in m.items() if k not in _HEAVY_METRIC_KEYS}
+
+
+def _serialize_segment(s, algorithm, full):
+    d = s.to_dict()
+    d["algorithm"] = algorithm
+    if not full:
+        d["val_metrics"] = _slim_metrics(d.get("val_metrics"))
+        d["train_metrics"] = _slim_metrics(d.get("train_metrics"))
+    return d
+
+
 @calibrations.get("/<run_id>/segments")
 @require_perm("calibration:read")
 def get_segments(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    segs = (
-        CalibrationRunSegment.query.filter_by(calibration_run_id=run.id)
-        .order_by(CalibrationRunSegment.sector, CalibrationRunSegment.split_value)
-        .all()
+
+    # ?include=full|val_obs returns the heavy prediction arrays (back-compat); by
+    # default the list is slim so it doesn't ship multi-MB val_obs per segment.
+    full = request.args.get("include") in ("full", "val_obs")
+    # ?sectors=a,b restricts to specific sectors so the UI only loads the sector(s)
+    # the user picked instead of every segment in the run.
+    sectors_arg = request.args.get("sectors")
+    sectors = (
+        [s.strip() for s in sectors_arg.split(",") if s.strip()]
+        if sectors_arg
+        else None
     )
+
+    q = CalibrationRunSegment.query.filter_by(calibration_run_id=run.id)
+    if sectors:
+        q = q.filter(CalibrationRunSegment.sector.in_(sectors))
+    segs = q.order_by(
+        CalibrationRunSegment.sector, CalibrationRunSegment.split_value
+    ).all()
+
     config_ids = {s.model_config_id for s in segs if s.model_config_id}
     configs = (
         {
@@ -178,11 +218,7 @@ def get_segments(run_id):
         if config_ids
         else {}
     )
-    result = []
-    for s in segs:
-        d = s.to_dict()
-        d["algorithm"] = configs.get(s.model_config_id)
-        result.append(d)
+    result = [_serialize_segment(s, configs.get(s.model_config_id), full) for s in segs]
     # Defaults the per-segment customize panel offers as its baseline: the run's
     # configuration and feature set. A segment override may pick a different saved
     # config and/or a subset of these features.
@@ -195,6 +231,24 @@ def get_segments(run_id):
             "feature_options": default_feature_cols,
         }
     ), 200
+
+
+@calibrations.get("/<run_id>/segments/sectors")
+@require_perm("calibration:read")
+def get_segment_sectors(run_id):
+    """Distinct sector list for a run's segments — backs the Sector filter so it can
+    populate without pulling the (slim but still per-segment) full segment list."""
+    run = CalibrationRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({"error": "Not found"}), 404
+    rows = (
+        db.session.query(CalibrationRunSegment.sector)
+        .filter(CalibrationRunSegment.calibration_run_id == run.id)
+        .distinct()
+        .order_by(CalibrationRunSegment.sector)
+        .all()
+    )
+    return jsonify({"sectors": [r[0] for r in rows]}), 200
 
 
 @calibrations.post("/<run_id>/segments/<segment_key>/recalibrate")
@@ -262,6 +316,9 @@ def recalibrate_segment(run_id, segment_key):
         )
         result["algorithm"] = cfg.algorithm if cfg else None
 
+    # The segment's cached backtest predictions are now stale — its model is being
+    # re-fit. Drop them so the next read rebuilds from the fresh val_obs.
+    _invalidate_segment_predictions(run_id, segment_key)
     run_segment_calibration.delay(run_id, segment_key)
     return jsonify(result), 202
 
@@ -350,8 +407,20 @@ def _predictions_df(
 
 
 def _run_predictions_df(run: CalibrationRun) -> pd.DataFrame:
-    """Predictions for a non-segmented run, from Forecast/ForecastResult rows."""
+    """Predictions for a non-segmented run, from Forecast/ForecastResult rows.
+
+    Cached per immutable run_id for successful, non-segmented runs (their results
+    never change), so paging/sorting/filtering the backtest table doesn't reload and
+    re-parse every ForecastResult row on each request. Segmented runs are excluded —
+    a segment re-run can change their downstream forecast."""
     from project.workers.tasks import _load_forecast_data
+
+    cacheable = run.status == "success" and not run.is_segmented
+    cache_key = f"calib_run_preds:{run.run_id}"
+    if cacheable:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     forecast = (
         Forecast.query.filter_by(calibration_run_id=run.id)
@@ -362,9 +431,12 @@ def _run_predictions_df(run: CalibrationRun) -> pd.DataFrame:
         return pd.DataFrame()
     data = _load_forecast_data(forecast)
     family = run.model_config.family if run.model_config else None
-    return _predictions_df(
+    df = _predictions_df(
         data.get("actual", []), data.get("predicted", []), data.get("meta", {}), family
     )
+    if cacheable:
+        cache.set(cache_key, df, timeout=3600)
+    return df
 
 
 def _segment_predictions_df(
@@ -379,9 +451,37 @@ def _segment_predictions_df(
     ).first()
     if not seg:
         return None
+
+    # Cache per (run, segment) while the segment is successful — its val_obs only
+    # changes when the segment is re-fit (which deletes this key, see
+    # _invalidate_segment_predictions). Avoids re-parsing the whole val_obs blob on
+    # every page/sort/filter of the backtest table.
+    cacheable = seg.status == "success"
+    cache_key = _segment_predictions_cache_key(run.run_id, segment_key)
+    if cacheable:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     diag = json.loads(seg.val_metrics_json or "{}")
     family = run.model_config.family if run.model_config else None
 
+    df = _build_segment_predictions_df(diag, family)
+    if cacheable:
+        cache.set(cache_key, df, timeout=3600)
+    return df
+
+
+def _segment_predictions_cache_key(run_id: str, segment_key: str) -> str:
+    return f"calib_seg_preds:{run_id}:{segment_key}"
+
+
+def _invalidate_segment_predictions(run_id: str, segment_key: str):
+    """Drop the cached backtest DataFrame for a segment (call when it is re-fit)."""
+    cache.delete(_segment_predictions_cache_key(run_id, segment_key))
+
+
+def _build_segment_predictions_df(diag: dict, family: str | None) -> pd.DataFrame:
     val_obs = diag.get("val_obs")
     if val_obs:
         return _predictions_df(
@@ -500,10 +600,8 @@ def get_logs(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    logs = (
-        CalibrationRunLog.query.filter_by(run_id=run_id)
-        .order_by(CalibrationRunLog.logged_at)
-        .all()
+    logs = paginate_logs(
+        CalibrationRunLog.query.filter_by(run_id=run_id), CalibrationRunLog.id
     )
     return jsonify([log.to_dict() for log in logs]), 200
 

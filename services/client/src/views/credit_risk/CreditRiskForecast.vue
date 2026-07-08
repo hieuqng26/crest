@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
@@ -14,6 +14,25 @@ const router = useRouter()
 const loading      = ref(false)
 const noActiveRun  = ref(false)
 const errorMessage = ref(null)
+
+// When a run's analysis series hasn't been materialised, the API returns 202
+// {status:'materializing'} and kicks off a background job. We show a "preparing"
+// state and retry on a bounded schedule until the data is ready.
+const materializing = ref(false)
+let materializeTimer = null
+let materializeAttempts = 0
+const MAX_MATERIALIZE_ATTEMPTS = 45 // ~3 min at 4s
+const isMaterializing = (data) => data?.status === 'materializing'
+function scheduleMaterializeRetry(fn) {
+  if (materializeAttempts >= MAX_MATERIALIZE_ATTEMPTS) {
+    materializing.value = false
+    errorMessage.value = 'Preparing analysis data is taking longer than expected. Please refresh the page.'
+    return
+  }
+  materializeAttempts += 1
+  materializeTimer = setTimeout(fn, 4000)
+}
+onUnmounted(() => clearTimeout(materializeTimer))
 
 const sectors           = ref([])
 const companiesBySector = ref({})
@@ -31,6 +50,13 @@ async function fetchMeta() {
   loading.value = true
   try {
     const { data } = await creditRiskAPI.analysisMeta()
+    if (isMaterializing(data)) {
+      materializing.value = true
+      scheduleMaterializeRetry(fetchMeta)
+      return
+    }
+    materializing.value = false
+    materializeAttempts = 0
     sectors.value = data.sectors ?? []
     companiesBySector.value = data.companies_by_sector ?? {}
     forecastTargets.value = data.forecast_targets ?? []
@@ -56,6 +82,12 @@ async function fetchForecast() {
       client_id: selectedCompany.value || undefined,
       targets: selectedTargets.value.join(','),
     })
+    if (isMaterializing(data)) {
+      materializing.value = true
+      scheduleMaterializeRetry(fetchForecast)
+      return
+    }
+    materializing.value = false
     forecastData.value = data
   } catch (e) {
     forecastData.value = null
@@ -284,6 +316,15 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
         <div class="text-xs text-color-secondary">Set an active run in Job History to view the Financial Forecast.</div>
       </div>
       <Button label="Job History" icon="pi pi-list" size="small" @click="router.push({ name: 'jobs_history' })" />
+    </div>
+
+    <!-- Preparing analysis data (backend is materialising the series) -->
+    <div v-else-if="materializing" class="panel flex flex-column align-items-center justify-content-center gap-3" style="height: 22rem">
+      <i class="pi pi-spin pi-spinner text-3xl text-color-secondary" />
+      <div class="text-center">
+        <div class="text-sm font-medium mb-1">Preparing analysis data…</div>
+        <div class="text-xs text-color-secondary">Computing this run's forecast series. This page will refresh automatically.</div>
+      </div>
     </div>
 
     <!-- Loading -->

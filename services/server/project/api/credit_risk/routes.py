@@ -7,8 +7,9 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy.orm import selectinload
 
-from project import cache
+from project import cache, db
 from project.api.auth.decorators import require_perm
+from project.api.utils import paginate_logs
 from project.core import table_query
 from project.db_models.calibration_models import Dataset
 from project.db_models.credit_models import (
@@ -547,7 +548,10 @@ def _run_results_df(cr: CreditRiskRun) -> pd.DataFrame:
         )
 
     df = pd.DataFrame.from_records(rows)
-    cache.set(cache_key, df, timeout=60)
+    # A run's results are immutable except via segment recompute, which explicitly
+    # deletes this key (recompute_segment_downstream), so a long TTL is safe and
+    # avoids rebuilding the frame from every CreditRiskResult row each minute.
+    cache.set(cache_key, df, timeout=3600)
     return df
 
 
@@ -633,10 +637,8 @@ def get_run(cr_run_id: str):
 @credit_risk.get("/runs/<cr_run_id>/logs")
 @require_perm("credit_risk:read")
 def get_run_logs(cr_run_id: str):
-    logs = (
-        CreditRiskRunLog.query.filter_by(run_id=cr_run_id)
-        .order_by(CreditRiskRunLog.id)
-        .all()
+    logs = paginate_logs(
+        CreditRiskRunLog.query.filter_by(run_id=cr_run_id), CreditRiskRunLog.id
     )
     return jsonify([log.to_dict() for log in logs]), 200
 
@@ -1051,38 +1053,106 @@ def _all_scenarios(fr: ForecastRun) -> list[str]:
 _SERIES_HISTORY = "History"
 
 
-def _load_analysis_series(cr):
+class AnalysisSeriesPending(Exception):
+    """Raised when a run's Heatmap / Forecast level series isn't materialised yet.
+
+    The caller dispatches the Celery backfill and returns 202 so the request never
+    blocks on the heavy pandas job (which is what made these pages slow / stall).
+    """
+
+
+def _dispatch_series_backfill(cr):
+    """Enqueue the analysis-series backfill once, deduped across concurrent pollers.
+
+    ``cache.add`` sets the lock only if absent, so overlapping heatmap/forecast/meta
+    requests (and repeated poll ticks) enqueue the task a single time. The lock TTL
+    doubles as a cooldown: if the backfill fails, we won't re-enqueue for 10 min.
+    On success the run has rows, so this path isn't reached again regardless.
+    """
+    from project.workers.tasks import backfill_analysis_series
+
+    if cache.add(f"cr_series_backfill:{cr.run_id}", 1, timeout=600):
+        backfill_analysis_series.delay(cr.run_id)
+
+
+def _series_pending_response(cr):
+    _dispatch_series_backfill(cr)
+    return jsonify(
+        {
+            "status": "materializing",
+            "message": "Preparing analysis data — this run's series is being computed. "
+            "This page will refresh automatically.",
+        }
+    ), 202
+
+
+def _analysis_series_materialised(cr) -> bool:
+    """Cheap existence probe (one indexed row) — distinguishes an un-materialised
+    run from a legitimately-empty scope so callers can return 202 vs 404 correctly."""
+    from project.db_models.credit_models import CreditRiskAnalysisSeries
+
+    return (
+        db.session.query(CreditRiskAnalysisSeries.id)
+        .filter(CreditRiskAnalysisSeries.credit_risk_run_id == cr.id)
+        .first()
+        is not None
+    )
+
+
+def _load_analysis_series(
+    cr, *, scope_type=None, scope_key=None, scope_keys=None, sector=None
+):
     """Return the materialised level series for a run as a nested dict:
 
         series[scope_type][scope_key][slot][scenario] = {year: value}
 
-    plus ``sector_of`` mapping each client scope_key → its sector. Reads from
-    ``credit_risk_analysis_series``; if a successful run has no rows yet (predates
-    materialisation, or the worker's best-effort step failed), it computes and
-    persists them once now (lazy backfill) so subsequent loads are fast.
+    plus ``sector_of`` mapping each client scope_key → its sector. Reads exclusively
+    from ``credit_risk_analysis_series`` with a lightweight column SELECT — never the
+    whole ORM row — and only the scope the caller needs (the heatmap overview wants
+    just ``scope_type='sector'``; the forecast wants a single scope_key). Loading the
+    entire run's rows was the cost that made these pages slow. If the run isn't
+    materialised yet, raises ``AnalysisSeriesPending`` so the endpoint returns 202.
     """
     from project.db_models.credit_models import CreditRiskAnalysisSeries
 
-    rows = CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=cr.id).all()
-    if not rows:
-        from project.core.credit_risk.analysis_series import (
-            materialize_analysis_series,
-        )
+    if not _analysis_series_materialised(cr):
+        raise AnalysisSeriesPending()
 
-        portfolio_df = _analysis_portfolio_df(cr)
-        slots = _slot_forecast_runs(cr)
-        materialize_analysis_series(cr, portfolio_df, slots)
-        rows = CreditRiskAnalysisSeries.query.filter_by(credit_risk_run_id=cr.id).all()
+    m = CreditRiskAnalysisSeries
+    q = db.session.query(
+        m.scope_type, m.scope_key, m.sector, m.slot, m.scenario, m.year, m.value
+    ).filter(m.credit_risk_run_id == cr.id)
+    if scope_type is not None:
+        q = q.filter(m.scope_type == scope_type)
+    if scope_key is not None:
+        q = q.filter(m.scope_key == scope_key)
+    if scope_keys is not None:
+        q = q.filter(m.scope_key.in_(list(scope_keys)))
+    if sector is not None:
+        q = q.filter(m.sector == sector)
 
     series: dict = {}
     sector_of: dict[str, str] = {}
-    for r in rows:
-        series.setdefault(r.scope_type, {}).setdefault(r.scope_key, {}).setdefault(
-            r.slot, {}
-        ).setdefault(r.scenario, {})[r.year] = r.value
-        if r.scope_type == "client" and r.sector is not None:
-            sector_of[r.scope_key] = r.sector
+    for st, sk, sec, slot, scen, year, value in q.all():
+        series.setdefault(st, {}).setdefault(sk, {}).setdefault(slot, {}).setdefault(
+            scen, {}
+        )[year] = value
+        if st == "client" and sec is not None:
+            sector_of[sk] = sec
     return series, sector_of
+
+
+def _forecast_years(series: dict) -> list[int]:
+    """Baseline forecast years present anywhere in a loaded series (scope-agnostic)."""
+    return sorted(
+        {
+            yr
+            for scope_map in series.values()
+            for key_map in scope_map.values()
+            for slot_map in key_map.values()
+            for yr in slot_map.get("Baseline", {})
+        }
+    )
 
 
 def _series_levels(series, scope_type, scope_key, slot, scenario) -> dict:
@@ -1093,44 +1163,69 @@ def _series_levels(series, scope_type, scope_key, slot, scenario) -> dict:
 @credit_risk.get("/analysis/meta")
 @require_perm("credit_risk:read")
 def get_analysis_meta():
+    from project.db_models.credit_models import CreditRiskAnalysisSeries
+
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
-        portfolio_df = _analysis_portfolio_df(cr)
-        slots = _slot_forecast_runs(cr)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
-    if "sector" not in portfolio_df.columns:
-        return jsonify({"error": "This run's portfolio has no 'sector' column"}), 422
+    # Sectors, companies and linked forecast targets are fixed for a run (a segment
+    # re-fit changes values, not membership), so cache the whole payload per run —
+    # only the first hit pays the distinct scan over the client-scope rows.
+    cache_key = f"cr_analysis_meta:{cr.run_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached), 200
+
+    slots = _slot_forecast_runs(cr)
+
+    # Sectors and their companies come straight from the materialised series
+    # (distinct client scope_keys + their sector) — an indexed SELECT, instead of
+    # downloading and parsing the portfolio from MinIO on every page load.
+    pairs = (
+        db.session.query(
+            CreditRiskAnalysisSeries.scope_key, CreditRiskAnalysisSeries.sector
+        )
+        .filter(
+            CreditRiskAnalysisSeries.credit_risk_run_id == cr.id,
+            CreditRiskAnalysisSeries.scope_type == "client",
+            CreditRiskAnalysisSeries.sector.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    if not pairs:
+        return _series_pending_response(cr)
 
     companies_by_sector: dict[str, list[str]] = {}
-    for sector, grp in portfolio_df.groupby("sector"):
-        companies_by_sector[str(sector)] = sorted(
-            grp["client_id"].astype(str).unique().tolist()
-        )
+    for client_id, sector in pairs:
+        companies_by_sector.setdefault(str(sector), []).append(str(client_id))
+    for sector in companies_by_sector:
+        companies_by_sector[sector] = sorted(set(companies_by_sector[sector]))
 
-    return jsonify(
-        {
-            "run_id": cr.run_id,
-            "sectors": sorted(companies_by_sector.keys()),
-            "companies_by_sector": companies_by_sector,
-            "forecast_targets": [
-                {"key": key, "title": title}
-                for key, title in _FORECAST_TARGET_SLOTS
-                if key in slots
-            ],
-            "available_metrics": {
-                k: k in slots
-                for k in (
-                    "total_assets",
-                    "short_term_debts",
-                    "long_term_debts",
-                    "total_revenue",
-                    "total_cogs",
-                )
-            },
-        }
-    ), 200
+    payload = {
+        "run_id": cr.run_id,
+        "sectors": sorted(companies_by_sector.keys()),
+        "companies_by_sector": companies_by_sector,
+        "forecast_targets": [
+            {"key": key, "title": title}
+            for key, title in _FORECAST_TARGET_SLOTS
+            if key in slots
+        ],
+        "available_metrics": {
+            k: k in slots
+            for k in (
+                "total_assets",
+                "short_term_debts",
+                "long_term_debts",
+                "total_revenue",
+                "total_cogs",
+            )
+        },
+    }
+    cache.set(cache_key, payload, timeout=3600)
+    return jsonify(payload), 200
 
 
 @credit_risk.get("/analysis/heatmap")
@@ -1150,8 +1245,21 @@ def get_analysis_heatmap():
 
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
-        series, sector_of = _load_analysis_series(cr)
+        # Load only the scope this view needs: the sector overview reads sector-scope
+        # rows; a drilldown reads just the selected companies' client-scope rows.
+        # (Loading the whole run's rows is what made this endpoint slow.)
+        if sector_filter:
+            series, sector_of = _load_analysis_series(
+                cr,
+                scope_type="client",
+                scope_keys=client_filter,
+                sector=None if client_filter else sector_filter,
+            )
+        else:
+            series, sector_of = _load_analysis_series(cr, scope_type="sector")
         slots = _slot_forecast_runs(cr)
+    except AnalysisSeriesPending:
+        return _series_pending_response(cr)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
@@ -1164,19 +1272,9 @@ def get_analysis_heatmap():
             }
         ), 422
 
-    # The forecast run itself (not the historical dataset) defines which years are
-    # "forecast" columns — using an arbitrary year cutoff would misalign whenever a
-    # forecast doesn't happen to start the year right after the training data ends.
-    anchor_fr = (
-        slots.get("total_revenue")
-        or slots.get("total_cogs")
-        or slots.get("short_term_debts")
-        or slots.get("long_term_debts")
-    )
-    _, anchor_idx = _cached_variable_index(anchor_fr)
-    forecast_years = sorted(
-        {yr for ctx_map in anchor_idx.values() for yr in ctx_map.get("Baseline", {})}
-    )
+    # Forecast columns are the Baseline years present in the materialised series
+    # (the forecast run defines them). Read straight from the loaded rows.
+    forecast_years = _forecast_years(series)
 
     def combined_levels(scope_type, scope_key, slot) -> dict:
         """History merged with the Baseline forecast for one slot/scope — the same
@@ -1308,22 +1406,23 @@ def get_analysis_forecast():
     # series rebased to a common 100 for shape comparison.
     indexed = request.args.get("indexed", "false").lower() in ("1", "true", "yes")
 
+    # Scope: a single company if client_id given, else the whole sector — load only
+    # that scope's rows rather than the entire run's.
+    scope_type, scope_key = ("client", client_id) if client_id else ("sector", sector)
+
     try:
         cr = _get_analysis_run(request.args.get("run_id"))
-        series, _ = _load_analysis_series(cr)
+        series, _ = _load_analysis_series(
+            cr, scope_type=scope_type, scope_key=scope_key
+        )
         slots = _slot_forecast_runs(cr)
+    except AnalysisSeriesPending:
+        return _series_pending_response(cr)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
-    # Scope: a single company if client_id given, else the whole sector.
-    if client_id:
-        scope_type, scope_key = "client", client_id
-        if scope_key not in series.get("client", {}):
-            return jsonify({"error": "No matching clients found"}), 404
-    else:
-        scope_type, scope_key = "sector", sector
-        if scope_key not in series.get("sector", {}):
-            return jsonify({"error": "No matching clients found"}), 404
+    if scope_key not in series.get(scope_type, {}):
+        return jsonify({"error": "No matching clients found"}), 404
 
     def series_points(levels: dict) -> list[dict]:
         return [{"year": y, "value": round(levels[y], 4)} for y in sorted(levels)]

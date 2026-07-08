@@ -75,10 +75,10 @@ async function getJob(kind, runId) {
   return normalizeCreditRisk(data)
 }
 
-const getJobLogs = (kind, runId) => {
-  if (kind === KIND.TRAINING) return calibrationsAPI.logs(runId)
-  if (kind === KIND.FORECAST) return forecastRunsAPI.logs(runId)
-  return creditRiskAPI.getRunLogs(runId)
+const getJobLogs = (kind, runId, params = {}) => {
+  if (kind === KIND.TRAINING) return calibrationsAPI.logs(runId, params)
+  if (kind === KIND.FORECAST) return forecastRunsAPI.logs(runId, params)
+  return creditRiskAPI.getRunLogs(runId, params)
 }
 
 const cancelJob = (kind, runId) => {
