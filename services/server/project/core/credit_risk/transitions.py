@@ -52,7 +52,12 @@ def build_transition_matrices(
             contributed = False
             for a, b in zip(ordered, ordered[1:]):
                 fr, to = a.get("Rating"), b.get("Rating")
-                if fr is None or to is None:
+                ya, yb = a.get("YEAR"), b.get("YEAR")
+                if fr is None or to is None or ya is None or yb is None:
+                    continue
+                if int(yb) - int(ya) != 1:
+                    # Non-adjacent years (a client missing from some forecast time
+                    # steps — see kmv.py) are not genuine 1-year transitions.
                     continue
                 counts[scen][(str(fr), str(to))] += 1
                 contributed = True

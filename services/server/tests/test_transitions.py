@@ -68,6 +68,21 @@ def test_single_year_client_is_skipped():
     assert data["n_clients"] == 1
 
 
+def test_non_adjacent_years_are_not_counted():
+    # kmv.py allows a client to be missing from some forecast years, producing a
+    # non-contiguous year sequence. Only genuine 1-year (adjacent) steps count.
+    clients = [
+        _client("Baseline", [(2024, "Baa1"), (2025, "Baa2"), (2027, "Baa3")]),
+    ]
+    out = build_transition_matrices(clients, _CATEGORY)
+    data = out["by_scenario"]["Baseline"]
+    # Only Baa1->Baa2 (2024->2025) is a 1-year transition; 2025->2027 is dropped.
+    assert data["ratings"] == ["Baa1", "Baa2"]
+    assert data["n_transitions"] == 1
+    assert data["counts"][0] == [0, 1]  # Baa1 -> Baa2
+    assert data["years"] == [2024, 2025]
+
+
 def test_destination_only_rating_appears_with_zero_row():
     # Ba1 only ever appears as a destination (terminal year) -> zero source row.
     clients = [_client("Baseline", [(2024, "Baa3"), (2025, "Ba1")])]
