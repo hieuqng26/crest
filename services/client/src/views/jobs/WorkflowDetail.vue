@@ -41,8 +41,17 @@ const fetchWorkflow = async () => {
   }
 }
 
+// A segment re-run leaves every run status at "success" — the only signal is the
+// per-target retraining_segment_count, plus the forecast/analysis runs briefly
+// flipping to "running" while their results are swapped in place afterwards.
+const isRetraining = computed(() =>
+  (wf.value?.targets ?? []).some((t) => (t.calibration?.retraining_segment_count ?? 0) > 0) ||
+  (wf.value?.targets ?? []).some((t) => wf.value?.status === 'success' && t.forecast?.status === 'running') ||
+  (wf.value?.status === 'success' && wf.value?.analysis?.status === 'running')
+)
+
 let pollTimer = null
-const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status)
+const isLive = () => ['running', 'queued', 'deleting'].includes(wf.value?.status) || isRetraining.value
 const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchWorkflow, 5000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
@@ -53,16 +62,20 @@ onMounted(async () => {
   if (isLive()) startPolling()
 })
 onUnmounted(stopPolling)
-watch(() => wf.value?.status, (s) => { if (['running', 'queued', 'deleting'].includes(s)) startPolling(); else stopPolling() })
+watch([() => wf.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
 
 const STATUS_META = {
   success: { dot: 'var(--success-color)', text: 'var(--success-text-color)', label: 'SUCCESS' },
   failed: { dot: 'var(--error-color)', text: 'var(--error-text-color)', label: 'FAILED' },
   running: { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'RUNNING' },
   queued: { dot: 'var(--queued-color)', text: 'var(--queued-text-color)', label: 'QUEUED' },
-  deleting: { dot: 'var(--deleting-color)', text: 'var(--deleting-text-color)', label: 'DELETING…' }
+  deleting: { dot: 'var(--deleting-color)', text: 'var(--deleting-text-color)', label: 'DELETING…' },
+  retraining: { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'RETRAINING' }
 }
-const statusMeta = computed(() => STATUS_META[wf.value?.status] || STATUS_META.queued)
+const statusMeta = computed(() => {
+  if (wf.value?.status === 'success' && isRetraining.value) return STATUS_META.retraining
+  return STATUS_META[wf.value?.status] || STATUS_META.queued
+})
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 const TABS = [
@@ -237,10 +250,20 @@ const confirmDelete = () => {
             </template>
             <template #cell-segmentation="{ row }">{{ targetSegmentSummary(row.calibration) }}</template>
             <template #cell-training="{ row }">
-              <StatusDot :status="row.calibration.status" />
+              <StatusDot
+                v-if="row.calibration.status === 'success' && row.calibration.retraining_segment_count > 0"
+                status="running" label="Retraining"
+              />
+              <StatusDot v-else :status="row.calibration.status" />
             </template>
             <template #cell-forecast="{ row }">
-              <span v-if="row.forecast" class="target-forecast-link" @click="goToForecast(row.forecast)"><StatusDot :status="row.forecast.status" /></span>
+              <span v-if="row.forecast" class="target-forecast-link" @click="goToForecast(row.forecast)">
+                <StatusDot
+                  v-if="row.forecast.status === 'success' && row.calibration.retraining_segment_count > 0"
+                  status="running" label="Pending refresh"
+                />
+                <StatusDot v-else :status="row.forecast.status" />
+              </span>
               <span v-else class="grid-caption">Pending</span>
             </template>
             <template #cell-finished="{ row }">
@@ -267,9 +290,13 @@ const confirmDelete = () => {
           <p>Credit analysis will start automatically once all forecasts finish.</p>
         </div>
         <template v-else>
+          <div v-if="isRetraining" class="retraining-banner">
+            <i class="pi pi-sync" />
+            <span>A segment model is re-training — credit results for its clients still reflect the previous model and will refresh automatically.</span>
+          </div>
           <div class="panel results-panel">
             <CommonDataTable
-              :key="wf.analysis.run_id"
+              :key="`${wf.analysis.run_id}:${wf.analysis.finished_at ?? ''}`"
               :columns="analysisResultColumns"
               :fetch-page="analysisResultsFetchPage"
               :fetch-distinct="analysisResultsFetchDistinct"
@@ -302,6 +329,15 @@ const confirmDelete = () => {
 .back-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-color-muted); cursor: pointer; margin-bottom: 16px; transition: color 0.15s ease; }
 .back-link:hover { color: var(--ink); }
 .back-link i { font-size: 11px; }
+
+.retraining-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 14px;
+  font-size: 12.5px; color: var(--text-color-secondary);
+  background: var(--surface-inset); border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--running-color); border-radius: 2px;
+}
+.retraining-banner i { color: var(--running-color); font-size: 13px; }
 
 .job-header { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; min-width: 0; }
 .job-header-text { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }

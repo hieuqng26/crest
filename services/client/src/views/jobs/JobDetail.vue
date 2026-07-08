@@ -32,8 +32,14 @@ const fetchJob = async () => {
   }
 }
 
+// A segment re-run leaves this training run at "success" — the in-flight
+// segment count from the API is the only signal it's effectively still working.
+const isRetraining = computed(
+  () => job.value?.status === 'success' && (job.value?.raw?.retraining_segment_count ?? 0) > 0
+)
+
 let pollTimer = null
-const isLive = () => job.value?.status === 'running' || job.value?.status === 'queued'
+const isLive = () => job.value?.status === 'running' || job.value?.status === 'queued' || isRetraining.value
 const startPolling = () => { if (!pollTimer) pollTimer = setInterval(fetchJob, 5000) }
 const stopPolling = () => { clearInterval(pollTimer); pollTimer = null }
 
@@ -45,7 +51,7 @@ onMounted(async () => {
 })
 onUnmounted(stopPolling)
 
-watch(() => job.value?.status, (s) => { if (s === 'running' || s === 'queued') startPolling(); else stopPolling() })
+watch([() => job.value?.status, isRetraining], () => { if (isLive()) startPolling(); else stopPolling() })
 watch([kind, runId], async () => { stopPolling(); job.value = null; loading.value = true; await fetchJob(); loading.value = false; if (isLive()) startPolling() })
 
 const typeLabel = computed(() => ({ [KIND.TRAINING]: 'TRAINING', [KIND.FORECAST]: 'FORECAST', [KIND.ANALYSIS]: 'ANALYSIS' }[kind.value]))
@@ -54,9 +60,13 @@ const STATUS_META = {
   success: { dot: 'var(--success-color)', text: 'var(--success-text-color)', label: 'SUCCESS' },
   failed: { dot: 'var(--error-color)', text: 'var(--error-text-color)', label: 'FAILED' },
   running: { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'RUNNING' },
-  queued: { dot: 'var(--queued-color)', text: 'var(--queued-text-color)', label: 'QUEUED' }
+  queued: { dot: 'var(--queued-color)', text: 'var(--queued-text-color)', label: 'QUEUED' },
+  retraining: { dot: 'var(--running-color)', text: 'var(--running-text-color)', label: 'RETRAINING' }
 }
-const statusMeta = computed(() => STATUS_META[job.value?.status] || STATUS_META.queued)
+const statusMeta = computed(() => {
+  if (isRetraining.value) return STATUS_META.retraining
+  return STATUS_META[job.value?.status] || STATUS_META.queued
+})
 
 const runDetailRows = computed(() => {
   if (!job.value) return []

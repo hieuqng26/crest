@@ -14,7 +14,12 @@ from project.core.calibration_launch import (
     build_search_config_json,
     validate_segmentation,
 )
-from project.db_models.calibration_models import CalibrationRun, Dataset, ModelConfig
+from project.db_models.calibration_models import (
+    CalibrationRun,
+    CalibrationRunSegment,
+    Dataset,
+    ModelConfig,
+)
 from project.db_models.credit_models import (
     CreditRiskForecastInput,
     CreditRiskRun,
@@ -222,9 +227,29 @@ def get_workflow(run_id):
         else {}
     )
 
+    # Segments being re-trained (queued/running) per calibration, in one grouped
+    # query. A segment re-run leaves the parent run's status at "success", so this
+    # count is what lets the UI surface a "Retraining" state per target.
+    retraining_by_cal: dict[int, int] = {}
+    if cals:
+        rows = (
+            db.session.query(
+                CalibrationRunSegment.calibration_run_id,
+                db.func.count(CalibrationRunSegment.id),
+            )
+            .filter(
+                CalibrationRunSegment.calibration_run_id.in_([c.id for c in cals]),
+                CalibrationRunSegment.status.in_(("queued", "running")),
+            )
+            .group_by(CalibrationRunSegment.calibration_run_id)
+            .all()
+        )
+        retraining_by_cal = dict(rows)
+
     targets = []
     for cal in cals:
         cal_d = cal.to_dict()
+        cal_d["retraining_segment_count"] = retraining_by_cal.get(cal.id, 0)
         cal_d["config_name"] = cal.model_config.name if cal.model_config else None
         cal_d["algorithm"] = cal.model_config.algorithm if cal.model_config else None
         fr = fcs_by_cal.get(cal.id)
@@ -581,6 +606,22 @@ def delete_workflow(run_id):
         return jsonify(
             {"error": "Cannot delete a workflow with an active run — cancel it first"}
         ), 409
+
+    # A segment re-run keeps its parent run at "success", so it doesn't show up
+    # in the check above — but its worker is still writing to this workflow's
+    # rows and artifacts, so deletion must wait for it too.
+    if cals:
+        retraining = CalibrationRunSegment.query.filter(
+            CalibrationRunSegment.calibration_run_id.in_([c.id for c in cals]),
+            CalibrationRunSegment.status.in_(("queued", "running")),
+        ).first()
+        if retraining:
+            return jsonify(
+                {
+                    "error": "Cannot delete a workflow while a segment model is "
+                    "re-training — wait for it to finish"
+                }
+            ), 409
 
     fr_ids = [fr.id for fr in fcs]
     outside_refs = (

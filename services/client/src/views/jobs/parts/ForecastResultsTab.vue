@@ -11,7 +11,12 @@ const props = defineProps({
 
 const targetsWithForecast = computed(() => props.targets.filter((t) => t.forecast))
 const selectedTargetCol = ref(targetsWithForecast.value[0]?.target_col ?? null)
-const selectedForecast = computed(() => targetsWithForecast.value.find((t) => t.target_col === selectedTargetCol.value)?.forecast ?? null)
+const selectedTarget = computed(() => targetsWithForecast.value.find((t) => t.target_col === selectedTargetCol.value) ?? null)
+const selectedForecast = computed(() => selectedTarget.value?.forecast ?? null)
+
+// A segment re-run keeps this forecast run at "success" while its rows for that
+// segment still come from the previous model; the count is the only stale signal.
+const retrainingCount = computed(() => selectedTarget.value?.calibration?.retraining_segment_count ?? 0)
 
 const columns = ref([])
 const fetchPage = (params) => forecastRunsAPI.results(selectedForecast.value.run_id, params)
@@ -45,10 +50,15 @@ watch(selectedForecast, async (fr) => {
         </div>
       </div>
 
+      <div v-if="retrainingCount > 0" class="retraining-banner">
+        <i class="pi pi-sync" />
+        <span>{{ retrainingCount }} segment{{ retrainingCount > 1 ? 's are' : ' is' }} re-training — forecast rows for {{ retrainingCount > 1 ? 'those segments' : 'that segment' }} still reflect the previous model and will refresh automatically.</span>
+      </div>
+
       <div class="panel results-panel">
         <CommonDataTable
           v-if="columns.length"
-          :key="selectedForecast.run_id"
+          :key="`${selectedForecast.run_id}:${selectedForecast.finished_at ?? ''}`"
           :columns="columns"
           :fetch-page="fetchPage"
           :fetch-distinct="fetchDistinct"
@@ -70,6 +80,15 @@ watch(selectedForecast, async (fr) => {
 
 <style scoped>
 .forecast-tab { display: flex; flex-direction: column; gap: 16px; }
+
+.retraining-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  font-size: 12.5px; color: var(--text-color-secondary);
+  background: var(--surface-inset); border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--running-color); border-radius: 2px;
+}
+.retraining-banner i { color: var(--running-color); font-size: 13px; }
 
 .filter-bar { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; background: var(--surface-inset); border-radius: 2px; padding: 14px 16px; }
 .filter-col { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }

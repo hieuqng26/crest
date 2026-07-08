@@ -53,6 +53,13 @@ const loadSegmentsForTarget = async () => {
 watch(selectedTargetCol, loadSegmentsForTarget)
 onMounted(loadSegmentsForTarget)
 
+// A segment re-run keeps the parent run at "success"; the count is the only
+// signal that the metrics below still reflect the previous model. When the
+// retrain lands (count returns to 0) reload the segments to pick up the fresh
+// metrics — the parent WorkflowDetail poll keeps `targets` (and the count) live.
+const retrainingCount = computed(() => cal.value?.retraining_segment_count ?? 0)
+watch(retrainingCount, (now, was) => { if (was > 0 && now === 0) loadSegmentsForTarget() })
+
 watch(selectedSector, (sector) => {
   selectedSegmentKey.value = sector ? (segmentOptions.value[0]?.value ?? null) : null
 })
@@ -207,6 +214,11 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
       </div>
     </div>
 
+    <div v-if="retrainingCount > 0" class="retraining-banner">
+      <i class="pi pi-sync" />
+      <span>{{ retrainingCount }} segment{{ retrainingCount > 1 ? 's are' : ' is' }} re-training — the diagnosis below reflects the previous model{{ retrainingCount > 1 ? 's' : '' }} and will refresh when it completes.</span>
+    </div>
+
     <div v-if="loadingSegments" class="loading-line"><i class="pi pi-spin pi-spinner" /> Loading segments…</div>
 
     <template v-else-if="diag">
@@ -281,6 +293,15 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 .metric-card { padding: 14px 16px; }
 .metric-value { font-size: 24px; font-weight: 600; }
 .metric-label { margin-top: 6px; }
+
+.retraining-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  font-size: 12.5px; color: var(--text-color-secondary);
+  background: var(--surface-inset); border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--running-color); border-radius: 2px;
+}
+.retraining-banner i { color: var(--running-color); font-size: 13px; }
 
 .chart-card { padding: 18px 20px; }
 .chart-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }

@@ -50,29 +50,73 @@ def test_table_in_metadata(app):
 def test_load_and_read_series(app):
     with app.app_context():
         cr = _make_run()
-        _add(cr, "sector", "Tech", None, "total_revenue", "History", True, {2020: 100.0})
-        _add(cr, "sector", "Tech", None, "total_revenue", "Baseline", False, {2021: 110.0, 2022: 121.0})
+        _add(
+            cr, "sector", "Tech", None, "total_revenue", "History", True, {2020: 100.0}
+        )
+        _add(
+            cr,
+            "sector",
+            "Tech",
+            None,
+            "total_revenue",
+            "Baseline",
+            False,
+            {2021: 110.0, 2022: 121.0},
+        )
         _add(cr, "client", "C1", "Tech", "total_revenue", "History", True, {2020: 40.0})
-        _add(cr, "client", "C1", "Tech", "total_revenue", "Baseline", False, {2021: 44.0})
+        _add(
+            cr, "client", "C1", "Tech", "total_revenue", "Baseline", False, {2021: 44.0}
+        )
         db.session.commit()
 
         series, sector_of = R._load_analysis_series(cr)
         assert sector_of == {"C1": "Tech"}
-        assert R._series_levels(series, "sector", "Tech", "total_revenue", "Baseline") == {2021: 110.0, 2022: 121.0}
-        assert R._series_levels(series, "sector", "Tech", "total_revenue", R._SERIES_HISTORY) == {2020: 100.0}
+        assert R._series_levels(
+            series, "sector", "Tech", "total_revenue", "Baseline"
+        ) == {2021: 110.0, 2022: 121.0}
+        assert R._series_levels(
+            series, "sector", "Tech", "total_revenue", R._SERIES_HISTORY
+        ) == {2020: 100.0}
         # missing scope returns empty dict, not error
-        assert R._series_levels(series, "client", "NOPE", "total_revenue", "Baseline") == {}
+        assert (
+            R._series_levels(series, "client", "NOPE", "total_revenue", "Baseline")
+            == {}
+        )
 
 
 def test_combined_history_plus_baseline(app):
     """The heatmap merges history then overlays baseline (baseline wins on overlap)."""
     with app.app_context():
         cr = _make_run()
-        _add(cr, "sector", "Ind", None, "total_revenue", "History", True, {2019: 90.0, 2020: 100.0})
-        _add(cr, "sector", "Ind", None, "total_revenue", "Baseline", False, {2020: 105.0, 2021: 115.0})
+        _add(
+            cr,
+            "sector",
+            "Ind",
+            None,
+            "total_revenue",
+            "History",
+            True,
+            {2019: 90.0, 2020: 100.0},
+        )
+        _add(
+            cr,
+            "sector",
+            "Ind",
+            None,
+            "total_revenue",
+            "Baseline",
+            False,
+            {2020: 105.0, 2021: 115.0},
+        )
         db.session.commit()
 
         series, _ = R._load_analysis_series(cr)
-        combined = dict(R._series_levels(series, "sector", "Ind", "total_revenue", R._SERIES_HISTORY))
-        combined.update(R._series_levels(series, "sector", "Ind", "total_revenue", "Baseline"))
+        combined = dict(
+            R._series_levels(
+                series, "sector", "Ind", "total_revenue", R._SERIES_HISTORY
+            )
+        )
+        combined.update(
+            R._series_levels(series, "sector", "Ind", "total_revenue", "Baseline")
+        )
         assert combined == {2019: 90.0, 2020: 105.0, 2021: 115.0}

@@ -230,3 +230,85 @@ class TestRecalibrateSegment:
             json={"hyperparams": "not-an-object"},
         )
         assert resp.status_code == 400
+
+
+@pytest.fixture()
+def segmented_workflow(segmented_run):
+    """Wrap the segmented run in a workflow so the status-sync surface
+    (workflow GET / workflow delete) can be exercised."""
+    from datetime import datetime, timezone
+
+    from project import db
+    from project.db_models.workflow_models import WorkflowRun
+
+    d = segmented_run
+    wf = WorkflowRun(
+        run_id="seg-wf-1",
+        name="seg-wf",
+        status="success",
+        current_stage="done",
+        triggered_by=d["user"].email,
+        created_at=datetime.now(timezone.utc),
+        calibration_dataset_id=d["run"].dataset_id,
+        forecast_dataset_id=d["run"].dataset_id,
+    )
+    db.session.add(wf)
+    db.session.commit()
+    d["run"].workflow_run_id = wf.id
+    db.session.commit()
+    return {**d, "wf": wf}
+
+
+class TestRetrainingStatusSync:
+    """A segment re-run leaves every run status at "success" — the API must
+    expose the in-flight segment count so the UI can show a retraining state."""
+
+    def _queue_segment(self, client, login, d):
+        login(d["user"].email)
+        resp = client.post(
+            "/api/calibrations/seg-run-1/segments/Financials__Banks/recalibrate",
+            json={},
+        )
+        assert resp.status_code == 202
+
+    def test_workflow_get_reports_retraining_segment_count(
+        self, client, login, segmented_workflow, mock_segment_task
+    ):
+        d = segmented_workflow
+        login(d["user"].email)
+        resp = client.get("/api/workflows/seg-wf-1")
+        assert resp.status_code == 200
+        target = resp.get_json()["targets"][0]
+        assert target["calibration"]["retraining_segment_count"] == 0
+
+        self._queue_segment(client, login, d)
+        resp = client.get("/api/workflows/seg-wf-1")
+        target = resp.get_json()["targets"][0]
+        assert target["calibration"]["retraining_segment_count"] == 1
+
+    def test_calibration_get_reports_retraining_segment_count(
+        self, client, login, segmented_run, mock_segment_task
+    ):
+        d = segmented_run
+        login(d["user"].email)
+        resp = client.get("/api/calibrations/seg-run-1")
+        assert resp.status_code == 200
+        assert resp.get_json()["retraining_segment_count"] == 0
+
+        self._queue_segment(client, login, d)
+        resp = client.get("/api/calibrations/seg-run-1")
+        assert resp.get_json()["retraining_segment_count"] == 1
+
+    def test_workflow_delete_blocked_while_segment_retraining(
+        self, client, login, segmented_workflow, mock_segment_task
+    ):
+        d = segmented_workflow
+        self._queue_segment(client, login, d)
+        resp = client.delete("/api/workflows/seg-wf-1")
+        assert resp.status_code == 409
+        assert "re-training" in resp.get_json()["error"]
+
+        from project.db_models.workflow_models import WorkflowRun
+
+        wf = WorkflowRun.query.filter_by(run_id="seg-wf-1").first()
+        assert wf.status == "success"  # not flipped to deleting

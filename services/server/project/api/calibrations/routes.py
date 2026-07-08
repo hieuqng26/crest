@@ -140,6 +140,16 @@ def get_run(run_id):
     d["dataset_name"] = run.dataset.name if run.dataset else None
     d["algorithm"] = run.model_config.algorithm if run.model_config else None
     d["model_family"] = run.model_config.family if run.model_config else None
+    # A segment re-run leaves this run at "success"; expose the in-flight count so
+    # the job page can show a "Retraining" state and keep polling until it lands.
+    d["retraining_segment_count"] = (
+        CalibrationRunSegment.query.filter(
+            CalibrationRunSegment.calibration_run_id == run.id,
+            CalibrationRunSegment.status.in_(("queued", "running")),
+        ).count()
+        if run.seg_sectors_json is not None
+        else 0
+    )
     if run.workflow_run_id:
         from project.db_models.workflow_models import WorkflowRun
 
