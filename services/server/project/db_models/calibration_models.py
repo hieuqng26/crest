@@ -16,7 +16,7 @@ class Dataset(db.Model):
     row_count = db.Column(db.Integer, nullable=True)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     status = db.Column(db.String(32), nullable=False, default="ready")
     kind = db.Column(db.String(32), nullable=False, default="calibration")
@@ -56,7 +56,7 @@ class ModelConfig(db.Model):
     max_segments = db.Column(db.Integer, nullable=False, default=5)
     created_by = db.Column(db.String(64), db.ForeignKey("users.email"), nullable=False)
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     calibration_runs = db.relationship(
@@ -277,7 +277,7 @@ class Forecast(db.Model):
     forecast_horizon = db.Column(db.Integer, nullable=True)
     forecast_json = db.Column(db.Text, nullable=True)  # legacy; NULL for new rows
     created_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.now(timezone.utc)
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
     results = db.relationship(
