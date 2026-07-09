@@ -78,26 +78,49 @@ this real mapping instead of Flask re-raising.
 4. Test the service directly (see `tests/services/test_launch_services.py`) — that
    test is also the MCP contract.
 
-## Workers (`project/workers/tasks.py`)
+## Workers (`project/workers/`)
 
-- Tasks build their own app context via `_make_flask_app()` and write progress
-  through `_write_progress` / `_write_forecast_progress` / `_cal_log` / `_cr_log`.
+`tasks.py` is a thin re-export **shim**; the task bodies live in per-domain
+modules so `include=["project.workers.tasks"]` still registers all 8 tasks and
+`from project.workers.tasks import X` keeps working:
+
+| Module | Contents |
+|---|---|
+| `common.py` | `format_failure`, `_make_flask_app`, the four progress/log writers, dataset loaders, shared slot constants — no task defs, no cross-task dispatch |
+| `calibration.py` | `run_calibration`, `run_segment_calibration` + CV/segmentation/fit helpers |
+| `forecast.py` | `run_forecast`, `recompute_forecast_run_segment` + scoring helpers |
+| `credit.py` | `run_credit_analysis`, `backfill_analysis_series` + portfolio compute |
+| `segments.py` | `recompute_segment_downstream` |
+| `workflow.py` | `advance_workflow(_impl)`, `delete_workflow` |
+| `context.py` | `worker_session()` (independent Session — the detached-instance fix) |
+
+- Tasks are **mutually recursive** (`advance_workflow` ⇄ `run_forecast`/
+  `run_credit_analysis`; `run_segment_calibration` → `recompute_segment_downstream`).
+  Those cross-task `.delay()` refs use **deferred (function-local) imports** to
+  break the otherwise-cyclic module graph; helper cross-imports stay top-level.
 - **Failure contract:** a failed run stores the **full traceback** in
   `error_message` via `format_failure(exc)` (not `str(exc)`), plus a short
   human message in `progress_message`/logs and progress `Progress.FAILED`.
-- Progress/log writers are non-fatal but **log** on failure (never bare `pass`).
-- Detached-instance hazard: `app_session()` closes the shared scoped session,
-  expiring held ORM instances — extract scalars immediately after a query,
-  before any session-closing helper call. See
+- Progress/log writers are non-fatal but **log** on failure (never bare `pass`),
+  and write via `worker_session()` (an independent Session) so they can't detach
+  the ORM objects a task holds. `app_session()` (which closes the shared scoped
+  session) is still fine for a task's own start/end writes. See
   `.claude/bugs/detached-instance-in-celery-tasks.md`.
+- Patching note: patch a *task object's* attribute (`...run_forecast.delay`) from
+  the shim; patch a *plain function the task calls* (`_make_flask_app`, `storage`)
+  on the module that runs it (e.g. `project.workers.calibration._make_flask_app`).
 
 ## Status of the production-grade refactor
 
-The service/schema/boundary layering above is in place for the **run-launching**
-surface (calibration, forecast, credit-risk, workflow create/rerun) — the
-MCP-critical path. Read/analysis endpoints (credit-risk heatmap/forecast,
-dataset stats) and the legacy `users`/`auditlog` modules still hold logic in
-their routes and are being migrated to the same pattern; `workers/tasks.py` is
-slated to be split into per-domain modules with a `ProgressReporter` on an
-independent session. Follow the recipe above for anything new so the surface
-keeps converging rather than diverging.
+In place: the service/schema/boundary layering for the **run-launching** surface
+(calibration/forecast/credit-risk/workflow create + rerun) and the **credit-risk
+analysis reads** (`services/credit_analysis.py` — heatmap/forecast builders);
+`extensions.py`; `SerializerMixin` for plain-column `to_dict`; and the
+`workers/` decomposition + `worker_session` fix above.
+
+Still route-resident (lower priority — not MCP-exposed): the datasets
+upload/query/stats handlers (transport-bound file/SQL) and the legacy
+`users`/`auditlog` modules (concrete defects fixed — audit `ORDER BY` injection,
+404s — but the full Pydantic rewrite + dropping the bespoke `validate_request`
+regex WAF is a deliberate security-posture change left for a focused pass).
+Follow the recipe above for anything new so the surface keeps converging.
