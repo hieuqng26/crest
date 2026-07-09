@@ -391,7 +391,13 @@ def _workflow_log_df(wf) -> pd.DataFrame:
                     "target": cal_target.get(log.run_id),
                     "sector": log.sector,
                     "segment": log.segment,
-                    "t": log.logged_at.strftime("%H:%M:%S") if log.logged_at else None,
+                    # Full UTC datetime (matching ForecastRunLog/CreditRiskRunLog.t
+                    # and CalibrationRunLog.to_dict); the client renders it in the
+                    # configured display timezone via fmtTime, so all log rows and
+                    # the run-details chips agree on time.
+                    "t": log.logged_at.strftime("%Y-%m-%d %H:%M:%S")
+                    if log.logged_at
+                    else None,
                     "level": log.level,
                     "message": log.message,
                     "_id": log.id,

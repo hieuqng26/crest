@@ -3,6 +3,7 @@
 // WorkflowDetail.vue (runs launched as part of a workflow).
 // Numeric columns are right-aligned tabular mono per design.md — magnitudes
 // must be scannable down a column. Widths are raw px (never rem).
+import { fmtTime } from '@/utils/datetime'
 export const forecastResultColumns = [
   { field: 'date', header: 'Date', width: '128px', mono: true },
   { field: 'predicted', header: 'Predicted', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toFixed(4) : '—') }
@@ -28,7 +29,7 @@ export const workflowLogColumns = [
   { field: 'target', header: 'Target', width: '9rem', mono: true },
   { field: 'sector', header: 'Sector', width: '9rem' },
   { field: 'segment', header: 'Segment', width: '9rem', mono: true },
-  { field: 't', header: 'Time', width: '6rem', mono: true, sortable: false, filterable: false },
+  { field: 't', header: 'Time', width: '6rem', mono: true, sortable: false, filterable: false, formatter: (v) => fmtTime(v) },
   { field: 'level', header: 'Level', width: '6rem' },
   { field: 'message', header: 'Message', width: '30rem', sortable: false, filterable: false }
 ]

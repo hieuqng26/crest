@@ -2019,7 +2019,7 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                     s.add(
                         ForecastRunLog(
                             run_id=fr_run_uuid,
-                            t=datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                            t=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                             level="error",
                             message=f"Segment '{segment_key}' recompute failed: {exc}",
                             sector=seg_sector,
