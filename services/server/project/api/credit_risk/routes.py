@@ -99,10 +99,9 @@ def get_clients():
         if os.path.isabs(dataset.file_path)
         else os.path.join(DATA_STORE, dataset.file_path)
     )
-    try:
-        df = _read_dataset(path)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    # A read failure here is an internal error — let it reach the global
+    # boundary (logged, generic 500) rather than echoing the raw error.
+    df = _read_dataset(path)
 
     if "client_id" not in df.columns:
         return jsonify({"error": "Dataset has no client_id column"}), 400
@@ -163,9 +162,9 @@ def compute_kmv():
         return jsonify({"client_id": client_id, "rows": records}), 200
 
     except ValueError as e:
+        # User-facing semantic error (bad inputs); unexpected errors fall
+        # through to the global boundary (logged, generic 500 — no leak).
         return jsonify({"error": str(e)}), 422
-    except Exception as e:
-        return jsonify({"error": f"Unexpected error: {e}"}), 500
 
 
 @credit_risk.post("/ecl")
@@ -234,9 +233,9 @@ def compute_ecl_v2():
         return jsonify({"rows": records}), 200
 
     except ValueError as e:
+        # User-facing semantic error (bad inputs); unexpected errors fall
+        # through to the global boundary (logged, generic 500 — no leak).
         return jsonify({"error": str(e)}), 422
-    except Exception as e:
-        return jsonify({"error": f"Unexpected error: {e}"}), 500
 
 
 # ── analysis run management ───────────────────────────────────────────────────

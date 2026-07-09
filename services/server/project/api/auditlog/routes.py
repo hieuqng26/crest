@@ -2,13 +2,14 @@ from datetime import timedelta
 
 import pandas as pd
 from flask import Blueprint, jsonify, make_response, request
-from sqlalchemy import text
 
 from project.api.auditlog.models import AuditLog, log_audit
 from project.api.auth.decorators import require_perm
 from project.api.utils import valid_date, validate_request
+from project.logger import get_logger
 
 auditlog = Blueprint("auditlog", __name__)
+logger = get_logger(__name__)
 
 
 @auditlog.route("/all", methods=["POST"], endpoint="get_all_logs")
@@ -83,9 +84,12 @@ def get_all_logs():
         if action:
             query = query.filter(AuditLog.action.in_(action))
 
-        # order
+        # order — use the mapped Column object and a whitelisted direction so
+        # neither sort_column nor sort_order is ever interpolated into raw SQL.
         if sort_column in column_map:
-            query = query.order_by(text(f"{sort_column} {sort_order}"))
+            col = column_map[sort_column]
+            descending = str(sort_order).lower() == "desc"
+            query = query.order_by(col.desc() if descending else col.asc())
 
         if sort_column != "timestamp":
             query = query.order_by(
@@ -124,8 +128,9 @@ def get_all_logs():
         output_json = log_df.to_dict(orient="records")
 
         return make_response(jsonify(output_json), 200)
-    except Exception as e:
-        return make_response(jsonify({"message": str(e)}), 500)
+    except Exception:
+        logger.exception("Failed to query audit logs")
+        return make_response(jsonify({"message": "Failed to query audit logs"}), 500)
 
 
 @auditlog.route("/email/<string:email>", methods=["GET"], endpoint="get_logs_by_user")

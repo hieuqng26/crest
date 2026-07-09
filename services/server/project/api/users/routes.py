@@ -297,7 +297,7 @@ def update_user(email):
         user = User.query.filter_by(email=email).first()
 
         if not user:
-            raise Exception("User not found")
+            return make_response(jsonify({"message": "User not found"}), 404)
 
         data = request.get_json()
         email = data.get("email")
@@ -402,7 +402,9 @@ def update_users():
 
             user = User.query.filter_by(email=email).first()
             if not user:
-                raise Exception("User not found")
+                return make_response(
+                    jsonify({"message": f"User not found: {email}"}), 404
+                )
 
             password = (
                 oneOfUsers["password"] if "password" in oneOfUsers.keys() else None
@@ -509,7 +511,7 @@ def delete_user(email):
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            raise Exception("User not found")
+            return make_response(jsonify({"message": "User not found"}), 404)
         sessions.revoke_all_for_user(user.email)  # blocks any active tokens immediately
         sessions.delete_all_for_user(
             user.email
