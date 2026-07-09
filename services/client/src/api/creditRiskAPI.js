@@ -35,6 +35,7 @@ const creditRiskAPI = {
   analysisMeta:     (runId = null) => httpClient.get('/credit-risk/analysis/meta', { params: runId ? { run_id: runId } : {} }),
   analysisHeatmap:  (params)       => httpClient.get('/credit-risk/analysis/heatmap', { params }),
   analysisForecast: (params)       => httpClient.get('/credit-risk/analysis/forecast', { params }),
+  analysisTransitions: (params = {}) => httpClient.get('/credit-risk/analysis/transitions', { params }),
 }
 
 export default creditRiskAPI

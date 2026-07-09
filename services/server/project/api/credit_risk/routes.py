@@ -1491,3 +1491,81 @@ def get_analysis_forecast():
     return jsonify(
         {"sector": sector, "client_id": client_id, "metrics": metrics_out}
     ), 200
+
+
+# ── Analysis: forecast-implied rating transition matrix ───────────────────────
+#
+# Built from the active run's KMV rating paths (Rating per year/scenario/client)
+# stored in CreditRiskResult.kmv_json. Counting Rating[t] -> Rating[t+1] across
+# clients and row-normalising gives a genuine 1-year transition matrix. This is a
+# forecast-implied matrix, NOT a historical/agency cohort matrix (the platform
+# has no observed rating-history data) — the UI labels it accordingly.
+
+
+def _transition_payload(cr) -> dict:
+    """Cached per-run {scenarios, by_scenario} transition structure.
+
+    Results are immutable for a successful run except via segment recompute,
+    which clears this key (see workers/tasks.py) — so a long TTL is safe and
+    avoids re-parsing every client's kmv_json on each request/poll.
+    """
+    from project.core.credit_risk.transitions import build_transition_matrices
+
+    cache_key = f"cr_transitions:{cr.run_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    rows = (
+        CreditRiskResult.query.filter_by(run_id=cr.run_id)
+        .with_entities(CreditRiskResult.kmv_json)
+        .all()
+    )
+    client_kmv_rows = [json.loads(r.kmv_json or "[]") for r in rows]
+
+    pd_df = _pd_rating_df(cr.curve)
+    rating_category = (
+        dict(zip(pd_df["Rating"], pd_df["Category"])) if not pd_df.empty else {}
+    )
+
+    payload = build_transition_matrices(client_kmv_rows, rating_category)
+    cache.set(cache_key, payload, timeout=3600)
+    return payload
+
+
+@credit_risk.get("/analysis/transitions")
+@require_perm("credit_risk:read")
+def get_analysis_transitions():
+    try:
+        cr = _get_analysis_run(request.args.get("run_id"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+    payload = _transition_payload(cr)
+    scenarios = payload["scenarios"]
+    if not scenarios:
+        return jsonify(
+            {"error": "No transition data for the active analysis run."}
+        ), 422
+
+    requested = request.args.get("scenario")
+    if requested and requested not in scenarios:
+        return jsonify(
+            {"error": f"Scenario '{requested}' is not present in this run."}
+        ), 422
+    scenario = requested or ("Baseline" if "Baseline" in scenarios else scenarios[0])
+
+    data = payload["by_scenario"][scenario]
+    if not data["ratings"]:
+        return jsonify(
+            {"error": "No transition data for the active analysis run."}
+        ), 422
+
+    return jsonify(
+        {
+            "run_id": cr.run_id,
+            "scenario": scenario,
+            "scenarios": scenarios,
+            **data,
+        }
+    ), 200

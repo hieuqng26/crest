@@ -1787,6 +1787,16 @@ def run_credit_analysis(self, cr_run_id: str):
                 r.progress = 100
                 s.add(r)
 
+            # Results changed (initial run or rerun reusing this run_id) — drop the
+            # cached results frame and transition matrices so reads recompute fresh.
+            try:
+                from project import cache
+
+                cache.delete(f"cr_run_results:{cr_run_id}")
+                cache.delete(f"cr_transitions:{cr_run_id}")
+            except Exception:
+                pass
+
             # 7. Materialise the Heatmap / Financial Forecast level series so those
             # pages load from cheap indexed SELECTs instead of recomputing from
             # MinIO + pandas on every request. Best-effort: a failure here must not
@@ -2160,6 +2170,7 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                 from project import cache
 
                 cache.delete(f"cr_run_results:{cr_run_id}")
+                cache.delete(f"cr_transitions:{cr_run_id}")
             except Exception:
                 pass
             _cr_log(
