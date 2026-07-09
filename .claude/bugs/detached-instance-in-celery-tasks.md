@@ -41,3 +41,13 @@ for seg_artifact_path, seg_key in segment_refs:
 as a session-closing boundary. Query → extract scalars → then call the helper. This
 mirrors the pattern already used at the top of `run_forecast`/`run_credit_analysis`
 for loading initial run values before the main `try:` block.
+
+**Structural fix (Phase 8):** the progress/log writers (`_write_progress`,
+`_write_forecast_progress`, `_cal_log`, `_cr_log`) now write through
+`worker_session()` (`project/workers/context.py`) — an *independent* Session, not
+the shared scoped `db.session`. Closing it no longer expires the task's held
+instances, so calling a progress writer mid-task can no longer trigger this bug.
+The "extract scalars immediately" convention above is still good hygiene, but it
+is no longer load-bearing for the progress/log helpers. (Anything writing through
+`worker_session` must use `s.query(Model)` / `s.get(...)`, not `Model.query`,
+which binds to the scoped session.)

@@ -24,6 +24,7 @@ from project.core import dataset_io, storage
 from project.core.model_registry import get_model_class
 from project.logger import get_logger
 from project.workers import celery_app
+from project.workers.context import worker_session
 
 _TRACEBACK_LIMIT = 20000
 
@@ -102,10 +103,10 @@ def _cal_log(
     Used for segment re-fits, which log against an already-complete parent run
     (progress 100) that must not be rewound. Silent-fails like _write_progress."""
     try:
-        from project import app_session
         from project.db_models.calibration_models import CalibrationRunLog
 
-        with app_session() as s:
+        # worker_session() so this write never expires ORM objects the task holds.
+        with worker_session() as s:
             s.add(
                 CalibrationRunLog(
                     run_id=run_id,
@@ -132,7 +133,6 @@ def _write_progress(
     ``sector``/``segment`` tag a segment-scoped line so the unified workflow log
     view can filter by them; leave them None for general lines."""
     try:
-        from project import app_session
         from project.db_models.calibration_models import (
             CalibrationRun,
             CalibrationRunLog,
@@ -143,12 +143,12 @@ def _write_progress(
             if progress < 0
             else ("warn" if "warn" in message.lower() else "info")
         )
-        with app_session() as s:
-            r = CalibrationRun.query.filter_by(run_id=run_id).first()
+        # worker_session() so this write never expires ORM objects the task holds.
+        with worker_session() as s:
+            r = s.query(CalibrationRun).filter_by(run_id=run_id).first()
             if r:
                 r.progress = max(0, progress)
                 r.progress_message = message
-                s.add(r)
             s.add(
                 CalibrationRunLog(
                     run_id=run_id,
@@ -1136,15 +1136,14 @@ def _write_forecast_progress(
 
     ``sector``/``segment`` tag a segment-scoped line for the unified workflow log."""
     try:
-        from project import app_session
         from project.db_models.forecast_models import ForecastRun, ForecastRunLog
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        with app_session() as s:
-            r = ForecastRun.query.filter_by(run_id=run_id).first()
+        # worker_session() so this write never expires ORM objects the task holds.
+        with worker_session() as s:
+            r = s.query(ForecastRun).filter_by(run_id=run_id).first()
             if r:
                 r.progress = max(0, progress)
-                s.add(r)
             s.add(
                 ForecastRunLog(
                     run_id=run_id,
@@ -1429,11 +1428,11 @@ def _cr_log(
 
     ``sector``/``segment`` tag a segment-scoped line for the unified workflow log."""
     try:
-        from project import app_session
         from project.db_models.credit_models import CreditRiskRun, CreditRiskRunLog
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        with app_session() as s:
+        # worker_session() so this write never expires ORM objects the task holds.
+        with worker_session() as s:
             s.add(
                 CreditRiskRunLog(
                     run_id=cr_run_id,
@@ -1445,10 +1444,9 @@ def _cr_log(
                 )
             )
             if progress is not None:
-                r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                r = s.query(CreditRiskRun).filter_by(run_id=cr_run_id).first()
                 if r:
                     r.progress = progress
-                    s.add(r)
     except Exception as _e:
         logger.warning(f"_cr_log failed: {_e}")
 
