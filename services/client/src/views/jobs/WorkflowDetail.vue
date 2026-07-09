@@ -323,9 +323,9 @@ const confirmDelete = () => {
           </div>
           <div v-if="!runLogCollapsed" class="runlog-body">
             <div class="runlog-details">
-              <div v-for="row in runDetailRows" :key="row.k" class="detail-chip">
-                <span class="detail-chip-key">{{ row.k }}</span>
-                <span class="detail-chip-val" :class="{ 'font-mono': row.mono }">{{ row.v }}</span>
+              <div v-for="row in runDetailRows" :key="row.k" class="detail-row">
+                <div class="detail-key">{{ row.k }}</div>
+                <div class="detail-value" :class="{ 'font-mono': row.mono }">{{ row.v }}</div>
               </div>
             </div>
             <WorkflowLogsPanel :run-id="runId" />
@@ -408,10 +408,13 @@ const confirmDelete = () => {
 .runlog-bar .spacer { flex: 1; }
 .runlog-bar .toggle-icon { font-size: 11px; color: var(--text-color-muted); }
 .runlog-body { padding: 16px; }
-.runlog-details { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 16px; }
-.detail-chip { display: flex; flex-direction: column; gap: 2px; }
-.detail-chip-key { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
-.detail-chip-val { font-size: 12.5px; color: var(--text-color); word-break: break-word; }
+/* Aligned key/value rows (mockup run-details), laid out two-up to use the
+   full-width box; collapses to one column on narrow screens. */
+.runlog-details { display: grid; grid-template-columns: 1fr 1fr; column-gap: 32px; margin-bottom: 16px; }
+@media (max-width: 720px) { .runlog-details { grid-template-columns: 1fr; } }
+.detail-row { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--surface-border-row); font-size: 13px; }
+.detail-key { width: 150px; flex: none; color: var(--text-color-muted); }
+.detail-value { flex: 1; line-height: 1.5; word-break: break-word; }
 
 /* .panel is global (_brand.scss). */
 .target-panel { padding: 18px 20px; min-width: 0; }

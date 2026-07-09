@@ -3,7 +3,7 @@
     <PageHeader eyebrow="SYSTEM" title="Audit Logs" subtitle="Search and export system activity records." />
 
     <!-- Filters panel -->
-    <div class="panel mb-4">
+    <div class="panel panel--emphasis mb-4">
       <div class="panel-section-label mb-3">Search Criteria</div>
 
       <div class="grid-filters mb-4">
@@ -28,11 +28,12 @@
             :filter="moduleOptions.length >= 5"
             placeholder="All"
             :multiple="true"
+            showToggleAll
             class="w-full"
           />
         </div>
         <div class="filter-field">
-          <label class="field-label">Sub-Module</label>
+          <label class="field-label">Sub-module</label>
           <EySelect
             v-model="selectedSubmodules"
             :loading="loadingDD"
@@ -40,6 +41,7 @@
             :filter="submoduleOptions.length >= 5"
             placeholder="All"
             :multiple="true"
+            showToggleAll
             class="w-full"
           />
         </div>
@@ -52,35 +54,15 @@
             :filter="actionOptions.length >= 5"
             placeholder="All"
             :multiple="true"
+            showToggleAll
             class="w-full"
           />
         </div>
       </div>
 
-      <div class="flex align-items-end gap-3">
-        <div class="filter-field" style="min-width: 16rem">
-          <label class="field-label">Sort By</label>
-          <div class="flex align-items-center gap-2">
-            <EySelect
-              v-model="selectedSortColumn"
-              :options="searchColumns"
-              :loading="loadingTable && searchColumns.length === 0"
-              :filter="true"
-              showClear
-              class="flex-1"
-              placeholder="Sort by…"
-            />
-            <button
-              class="sort-dir-btn"
-              :title="selectedSortOrder ? 'Ascending' : 'Descending'"
-              :aria-label="selectedSortOrder ? 'Sort ascending' : 'Sort descending'"
-              @click="selectedSortOrder = !selectedSortOrder"
-            >
-              <i :class="selectedSortOrder ? 'pi pi-sort-amount-up' : 'pi pi-sort-amount-down'" />
-            </button>
-          </div>
-        </div>
-        <Button label="Apply filters" icon="pi pi-filter" severity="secondary" outlined @click="onConfirmSelect" />
+      <div class="crit-actions">
+        <Button label="Apply filters" class="btn-apply" @click="onConfirmSelect" />
+        <Button label="Reset" class="btn-reset" @click="onResetFilters" />
       </div>
     </div>
 
@@ -95,10 +77,12 @@
             v-model:expandedRows="expandedRows"
             :value="filteredLogs"
             dataKey="log_id"
-            :sortField="sortColumn ? null : 'timestamp'"
-            :sortOrder="-1"
+            lazy
+            :sortField="sortColumn || 'timestamp'"
+            :sortOrder="sortOrder === 'asc' ? 1 : -1"
             :rowHover="true"
             class="bare-table-inner"
+            @sort="onSort"
           >
             <template #header>
               <div class="flex align-items-center justify-content-between pb-2">
@@ -118,25 +102,25 @@
             </template>
 
             <Column expander style="width: 40px" />
-            <Column field="timestamp"    header="Last Update"  :sortable="false" style="min-width: 168px">
+            <Column field="timestamp"    header="Last Update"  :sortable="true" style="min-width: 168px">
               <template #body="{ data }"><span class="font-mono cell-mono">{{ formatDate(data.timestamp, true) }}</span></template>
             </Column>
-            <Column field="user_email"   header="User ID"      :sortable="false" style="min-width: 140px" />
-            <Column field="role"         header="Role"         :sortable="false" style="min-width: 96px" />
-            <Column field="action"       header="Action"       :sortable="false" style="min-width: 100px" />
-            <Column field="module"       header="Module"       :sortable="false" style="min-width: 96px" />
-            <Column field="submodule"    header="Submodule"    :sortable="false" style="min-width: 104px" />
-            <Column field="status"       header="Status"       :sortable="false" style="min-width: 96px">
+            <Column field="user_email"   header="User ID"      :sortable="true" style="min-width: 140px" />
+            <Column field="role"         header="Role"         :sortable="true" style="min-width: 96px" />
+            <Column field="action"       header="Action"       :sortable="true" style="min-width: 100px" />
+            <Column field="module"       header="Module"       :sortable="true" style="min-width: 96px" />
+            <Column field="submodule"    header="Submodule"    :sortable="true" style="min-width: 104px" />
+            <Column field="status"       header="Status"       :sortable="true" style="min-width: 96px">
               <template #body="{ data }">
                 <Tag :value="data.status" :severity="getStatusLabel(data.status)" />
               </template>
             </Column>
-            <Column field="log_id"       header="Identifier"   :sortable="false" style="min-width: 120px">
+            <Column field="log_id"       header="Identifier"   :sortable="true" style="min-width: 120px">
               <template #body="{ data }">
                 <span class="font-mono cell-mono" :title="data.log_id">{{ shortId(data.log_id) }}</span>
               </template>
             </Column>
-            <Column field="description"  header="Description"  :sortable="false" style="min-width: 220px" />
+            <Column field="description"  header="Description"  :sortable="true" style="min-width: 220px" />
 
             <!-- Everything else (IPs, device, session, login meta, API detail)
                  lives in the expansion so the scan surface stays 9 columns. -->
@@ -259,10 +243,7 @@ const totalSize = ref(0)
 const pageSize = ref(20)
 const selectedPerPage = ref(20)
 
-// search
-const searchColumns = ref(Object.keys(COLUMN_MAP))
-const selectedSortColumn = ref(null)
-const selectedSortOrder = ref(true)
+// search — sortColumn/sortOrder are set from the results table's header clicks
 const sortColumn = ref(null)
 const sortOrder = ref('asc')
 
@@ -319,9 +300,6 @@ onMounted(async () => {
 })
 
 const onConfirmSelect = () => {
-  sortColumn.value = COLUMN_MAP[selectedSortColumn.value]
-  sortOrder.value = selectedSortOrder.value ? 'asc' : 'desc'
-
   loadData(
     0,
     pageSize.value,
@@ -334,6 +312,26 @@ const onConfirmSelect = () => {
     sortColumn.value,
     sortOrder.value
   )
+}
+
+// Sorting is driven by the results table's column headers (server-side),
+// replacing the old Sort By control in the criteria panel.
+const onSort = (e) => {
+  sortColumn.value = e.sortField || null
+  sortOrder.value = e.sortOrder === 1 ? 'asc' : 'desc'
+  onConfirmSelect()
+}
+
+const onResetFilters = () => {
+  dateFrom.value = null
+  dateTo.value = null
+  userEmailInput.value = ''
+  selectedModules.value = []
+  selectedSubmodules.value = []
+  selectedActions.value = []
+  sortColumn.value = null
+  sortOrder.value = 'asc'
+  onConfirmSelect()
 }
 
 watch([currentPage, pageSize], ([p, p_size]) => {
@@ -571,25 +569,28 @@ const toDate = (date) => {
 .export-btn { color: var(--text-color-secondary) !important; font-size: 0.8rem; }
 .export-btn:hover { color: var(--text-color) !important; background: var(--surface-hover) !important; }
 
-.sort-dir-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex-shrink: 0;
+/* Emphasis card — 3px ink top border (design.md). */
+.panel--emphasis { border-top: 3px solid var(--ink); }
+
+.crit-actions { display: flex; gap: 10px; }
+:deep(.btn-apply.p-button) {
+  height: 36px;
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+:deep(.btn-apply.p-button:hover) { background: var(--ink-3); border-color: var(--ink-3); }
+:deep(.btn-reset.p-button) {
+  height: 36px;
+  background: var(--surface-card);
   border: 1px solid var(--surface-border-input);
-  border-radius: 2px;
-  background: var(--surface-ground);
   color: var(--text-color-secondary);
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  font-size: 13px;
+  font-weight: 600;
 }
-.sort-dir-btn:hover {
-  border-color: var(--ink);
-  color: var(--text-color);
-}
-.sort-dir-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--yellow); }
+:deep(.btn-reset.p-button:hover) { border-color: var(--ink); color: var(--ink); }
 
 .bare-table { margin: 0 -1.25rem; }
 /* Table chrome comes from the global _brand.scss skin. */

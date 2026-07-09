@@ -94,7 +94,7 @@ const topLevelRows = computed(() => {
 const tableColumns = computed(() => [
   ...(selectMode.value ? [{ field: 'check', label: '', width: '36px', hideHeader: true }] : []),
   { field: 'run', label: 'RUN' },
-  { field: 'type', label: 'TYPE',     width: '90px' },
+  { field: 'type', label: 'TYPE',     width: '110px' },
   { field: 'input', label: 'INPUT' },
   { field: 'status', label: 'STATUS',   width: '125px' },
   { field: 'progress', label: 'PROGRESS', width: '150px' },
@@ -127,14 +127,15 @@ const clickRow = (row) => {
 }
 
 // ── Progress labels ───────────────────────────────────────────────────────────
-// Terminal success shows nothing here — STATUS already says it. Only labels
-// that add information survive: the failure point, or the live stage.
+// Finished runs read "Completed"; a failure keeps its stop point; live runs
+// render a bar instead of a label (handled in the cell template).
 const progressLabel = (j) =>
-  j.status === 'failed' ? `Failed at ${j.progress}%` : '—'
+  j.status === 'failed' ? `Failed at ${j.progress}%` : j.status === 'success' ? 'Completed' : '—'
 
 const STAGE_LABEL = { training: 'Training', forecast: 'Forecasting', analysis: 'Analyzing' }
 const workflowProgressLabel = (wf) => {
-  if (wf.status === 'success' || wf.status === 'failed') return '—'
+  if (wf.status === 'success') return 'Completed'
+  if (wf.status === 'failed') return '—'
   return STAGE_LABEL[wf.current_stage] ?? '—'
 }
 const workflowRef = (wf) => (wf.targets ?? []).map((t) => t.target_col).join(', ') || '—'
@@ -362,7 +363,7 @@ async function deleteJob(j) {
       <template v-else>
         <span class="text-sm text-color-secondary">{{ selection.size }} selected</span>
         <template v-if="!confirmingBulkDelete">
-          <Button label="Delete selected" icon="pi pi-trash" size="small" severity="danger"
+          <Button label="Delete selected" icon="pi pi-trash" size="small" severity="danger" outlined
             :disabled="selection.size === 0" @click="confirmingBulkDelete = true" />
         </template>
         <template v-else>

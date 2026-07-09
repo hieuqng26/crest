@@ -7,6 +7,7 @@ import modelConfigsAPI from '@/api/modelConfigsAPI'
 import { configs, registry, fetchConfigs } from './newModelStore'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
+import SplitSlider from '@/components/ui/SplitSlider.vue'
 import { fmtDate } from '@/utils/datetime'
 
 const route = useRoute()
@@ -85,7 +86,7 @@ const SCORING_OPTIONS = [
 
 const form = ref({
   name: '', algorithm: null, hyperparams: {},
-  trainPct: 80, scaler: 'Standard', splitBy: 'Subsector', maxSeg: 5,
+  trainPct: 100, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
   cvSearch: { mode: 'None', folds: 5, nIter: 20, scoring: 'r2' },
   paramGrid: {}
 })
@@ -142,7 +143,7 @@ const openCreate = (presetAlgorithm = null) => {
   const meta = registry.value.find((a) => a.algorithm === algo)
   form.value = {
     name: '', algorithm: algo, hyperparams: meta ? meta.params.reduce((acc, p) => (acc[p.name] = p.default, acc), {}) : {},
-    trainPct: 80, scaler: 'Standard', splitBy: 'Subsector', maxSeg: 5,
+    trainPct: 100, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
     cvSearch: { mode: 'None', folds: 5, nIter: 20, scoring: 'r2' },
     paramGrid: buildDefaultGrid(meta?.params ?? [])
   }
@@ -302,19 +303,8 @@ const onDelete = (cfg) => {
             </div>
           </div>
 
-          <div class="field-grid-2 mb-4">
-            <div class="field-col">
-              <label class="field-label">Data split — train {{ form.trainPct }}% / val {{ 100 - form.trainPct }}%</label>
-              <Slider v-model="form.trainPct" :min="50" :max="95" :step="5" />
-            </div>
-            <div class="field-col">
-              <label class="field-label">Feature scaler</label>
-              <div class="seg-pill-group">
-                <button v-for="o in SCALER_OPTIONS" :key="o" type="button" class="seg-pill" :class="{ 'is-active': form.scaler === o }" @click="form.scaler = o">{{ o }}</button>
-              </div>
-            </div>
-          </div>
-
+          <div class="editor-divider" />
+          <div class="eyebrow editor-section-label">Segmentation</div>
           <div class="field-grid-2 mb-4">
             <div class="field-col">
               <label class="field-label">Split by</label>
@@ -325,13 +315,30 @@ const onDelete = (cfg) => {
             </div>
             <div class="field-col">
               <label class="field-label">Max segments per sector</label>
-              <InputNumber v-model="form.maxSeg" :min="2" :max="20" showButtons class="w-full" />
+              <div class="seg-stepper">
+                <button type="button" class="seg-stepper-btn" aria-label="Decrease max segments" @click="form.maxSeg = Math.max(2, form.maxSeg - 1)">−</button>
+                <div class="seg-stepper-val font-mono">{{ form.maxSeg }}</div>
+                <button type="button" class="seg-stepper-btn" aria-label="Increase max segments" @click="form.maxSeg = Math.min(20, form.maxSeg + 1)">+</button>
+              </div>
             </div>
           </div>
 
-          <div class="field-col mb-4">
-            <label class="field-label">Hyperparameter search</label>
-            <div class="advanced-panel">
+          <Accordion :multiple="true" :activeIndex="[]" class="editor-accordion mb-4">
+            <AccordionTab header="Training &amp; validation">
+              <div class="field-grid-2">
+                <div class="field-col">
+                  <SplitSlider v-model="form.trainPct" />
+                </div>
+                <div class="field-col">
+                  <label class="field-label">Feature scaler</label>
+                  <div class="seg-pill-group">
+                    <button v-for="o in SCALER_OPTIONS" :key="o" type="button" class="seg-pill" :class="{ 'is-active': form.scaler === o }" @click="form.scaler = o">{{ o }}</button>
+                  </div>
+                </div>
+              </div>
+            </AccordionTab>
+
+            <AccordionTab header="Hyperparameter search">
               <div class="seg-pill-group mb-3">
                 <button v-for="o in SEARCH_MODES" :key="o" type="button" class="seg-pill" :class="{ 'is-active': form.cvSearch.mode === o }" @click="form.cvSearch.mode = o">{{ o }}</button>
               </div>
@@ -351,41 +358,43 @@ const onDelete = (cfg) => {
                   </div>
                 </div>
                 <div class="grid-caption mb-2">{{ enabledParamCount }} of {{ selectedAlgoMeta.params.length }} enabled · {{ combinationCount.toLocaleString() }} combos</div>
-                <table class="grid-table">
-                  <thead>
-                    <tr><th style="width:2rem"></th><th>Parameter</th><th style="width:6rem">Mode</th><th>Range / values</th><th style="width:4rem" class="ta-right">#</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="p in selectedAlgoMeta.params" :key="p.name" :class="{ 'is-disabled-row': !form.paramGrid[p.name]?.enabled }">
-                      <td><Checkbox v-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].enabled" :binary="true" /></td>
-                      <td><span class="font-mono">{{ p.name }}</span></td>
-                      <td>
-                        <EySelect
-                          v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int')"
-                          v-model="form.paramGrid[p.name].kind" :options="[{label:'Linear',value:'linspace'},{label:'Log',value:'logspace'},{label:'Values',value:'list'}]"
-                          optionLabel="label" optionValue="value" :disabled="!form.paramGrid[p.name]?.enabled" class="w-full"
-                        />
-                        <span v-else class="tag-outline">values</span>
-                      </td>
-                      <td>
-                        <div v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int') && form.paramGrid[p.name].kind !== 'list'" class="range-row">
-                          <InputNumber v-model="form.paramGrid[p.name].min" :disabled="!form.paramGrid[p.name]?.enabled" :useGrouping="false" :maxFractionDigits="6" placeholder="min" class="range-input" />
-                          <span>&rarr;</span>
-                          <InputNumber v-model="form.paramGrid[p.name].max" :disabled="!form.paramGrid[p.name]?.enabled" :useGrouping="false" :maxFractionDigits="6" placeholder="max" class="range-input" />
-                          <span class="grid-caption">in</span>
-                          <InputNumber v-model="form.paramGrid[p.name].steps" :disabled="!form.paramGrid[p.name]?.enabled" :min="2" :max="50" :useGrouping="false" class="step-input" />
-                          <span class="grid-caption">steps</span>
-                        </div>
-                        <InputText v-else-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].values" :disabled="!form.paramGrid[p.name]?.enabled" placeholder="comma-separated" class="w-full" />
-                      </td>
-                      <td class="ta-right font-mono grid-caption">{{ form.paramGrid[p.name]?.enabled ? expandValues(form.paramGrid[p.name]).length : '—' }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <div class="grid-table-scroll">
+                  <table class="grid-table">
+                    <thead>
+                      <tr><th style="width:2rem"></th><th>Parameter</th><th style="width:6rem">Mode</th><th>Range / values</th><th style="width:4rem" class="ta-right">#</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="p in selectedAlgoMeta.params" :key="p.name" :class="{ 'is-disabled-row': !form.paramGrid[p.name]?.enabled }">
+                        <td><Checkbox v-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].enabled" :binary="true" /></td>
+                        <td><span class="font-mono">{{ p.name }}</span></td>
+                        <td>
+                          <EySelect
+                            v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int')"
+                            v-model="form.paramGrid[p.name].kind" :options="[{label:'Linear',value:'linspace'},{label:'Log',value:'logspace'},{label:'Values',value:'list'}]"
+                            optionLabel="label" optionValue="value" :disabled="!form.paramGrid[p.name]?.enabled" class="w-full"
+                          />
+                          <span v-else class="tag-outline">values</span>
+                        </td>
+                        <td>
+                          <div v-if="form.paramGrid[p.name] && (p.type === 'float' || p.type === 'int') && form.paramGrid[p.name].kind !== 'list'" class="range-row">
+                            <InputNumber v-model="form.paramGrid[p.name].min" :disabled="!form.paramGrid[p.name]?.enabled" :useGrouping="false" :maxFractionDigits="6" placeholder="min" class="range-input" />
+                            <span>&rarr;</span>
+                            <InputNumber v-model="form.paramGrid[p.name].max" :disabled="!form.paramGrid[p.name]?.enabled" :useGrouping="false" :maxFractionDigits="6" placeholder="max" class="range-input" />
+                            <span class="grid-caption">in</span>
+                            <InputNumber v-model="form.paramGrid[p.name].steps" :disabled="!form.paramGrid[p.name]?.enabled" :min="2" :max="50" :useGrouping="false" class="step-input" />
+                            <span class="grid-caption">steps</span>
+                          </div>
+                          <InputText v-else-if="form.paramGrid[p.name]" v-model="form.paramGrid[p.name].values" :disabled="!form.paramGrid[p.name]?.enabled" placeholder="comma-separated" class="w-full" />
+                        </td>
+                        <td class="ta-right font-mono grid-caption">{{ form.paramGrid[p.name]?.enabled ? expandValues(form.paramGrid[p.name]).length : '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </template>
               <div v-else class="grid-caption">No search — the hyperparameter values above are used as-is.</div>
-            </div>
-          </div>
+            </AccordionTab>
+          </Accordion>
 
           <div class="editor-footer">
             <span class="grid-caption">Saved as a reusable configuration — apply it in New Model or per-sector overrides</span>
@@ -461,10 +470,53 @@ const onDelete = (cfg) => {
 .algo-row--algo { font-size: 12.5px; }
 .algo-count-badge { background: var(--ink); color: var(--yellow); font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 2px; }
 
-.configs-main { display: flex; flex-direction: column; gap: 16px; }
+/* min-width:0 lets this grid column shrink instead of letting wide editor
+   content (hyperparameter grid, search table) overflow and push the page
+   wider than the viewport — which is what misaligned the header button. */
+.configs-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 .card-editor { background: var(--surface-card); border: 1px solid var(--surface-border); border-top: 3px solid var(--yellow); border-radius: 2px; padding: 20px 24px; }
 .editor-title { margin-bottom: 14px; }
+/* Hairline section dividers group the editor into basics · segmentation. */
+.editor-divider { height: 1px; background: var(--surface-border); margin: 4px 0 16px; }
+.editor-section-label { margin-bottom: 14px; }
+
+/* Max-segments stepper (mockup) — bordered −/value/+ with yellow hover. */
+.seg-stepper { display: inline-flex; align-self: flex-start; align-items: stretch; border: 1px solid var(--surface-border-input); border-radius: 2px; overflow: hidden; }
+.seg-stepper-btn { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; color: var(--text-color-secondary); background: #fff; border: none; }
+.seg-stepper-btn:first-child { border-right: 1px solid var(--surface-border-row); }
+.seg-stepper-btn:last-child { border-left: 1px solid var(--surface-border-row); }
+.seg-stepper-btn:hover { background: var(--yellow); color: var(--ink); }
+.seg-stepper-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--yellow); }
+.seg-stepper-val { width: 56px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; height: 38px; }
+
+/* Collapsible editor sections. Flat, ink headers matching the section eyebrows. */
+.grid-table-scroll { overflow-x: auto; }
+:deep(.editor-accordion .p-accordion-tab) { margin-bottom: 10px; }
+:deep(.editor-accordion .p-accordion-header-link) {
+  background: var(--surface-inset);
+  border: 1px solid var(--surface-border);
+  border-radius: 2px;
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-color);
+}
+:deep(.editor-accordion .p-accordion-header:not(.p-disabled).p-highlight .p-accordion-header-link) {
+  border-color: var(--ink);
+}
+:deep(.editor-accordion .p-accordion-header-link:focus) { box-shadow: 0 0 0 2px var(--yellow); }
+:deep(.editor-accordion .p-accordion-content) {
+  border: 1px solid var(--surface-border);
+  border-top: 0;
+  padding: 16px 14px;
+}
+
+@media (max-width: 720px) {
+  .field-grid-2, .field-grid-3, .hp-grid-3 { grid-template-columns: 1fr; }
+}
 .editor-footer { display: flex; align-items: center; gap: 12px; }
 .footer-spacer { flex: 1; }
 
