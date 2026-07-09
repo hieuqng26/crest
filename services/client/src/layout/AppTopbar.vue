@@ -169,6 +169,7 @@ const toggleMenu = (event) => {
 
     <button
       class="p-link layout-menu-button layout-topbar-button"
+      aria-label="Toggle navigation menu"
       @click="onMenuToggle()"
     >
       <i class="pi pi-bars"></i>
@@ -176,6 +177,7 @@ const toggleMenu = (event) => {
 
     <button
       class="p-link layout-topbar-menu-button layout-topbar-button"
+      aria-label="Open menu"
       @click="onTopBarMenuButton()"
     >
       <i class="pi pi-ellipsis-v"></i>

@@ -611,6 +611,7 @@ onUnmounted(() => { loaded = false })
 .mode-card { text-align: left; background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 2px; padding: 16px 18px; cursor: pointer; transition: border-color 0.15s ease; }
 .mode-card:hover { border-color: var(--text-color-muted); }
 .mode-card.is-active { border: 2px solid var(--ink); padding: 15px 17px; }
+.mode-card:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--yellow); }
 .mode-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .mode-title { font-size: 14.5px; font-weight: 700; }
 .mode-badge { font-size: 9.5px; }

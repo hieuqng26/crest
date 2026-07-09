@@ -189,7 +189,7 @@ const saveQuery = () => {
             <Button label="Confirm" icon="pi pi-check" size="small" severity="danger" @click="bulkDelete" />
             <Button label="Cancel"  size="small" severity="secondary" text @click="confirmingBulkDelete = false" />
           </template>
-          <Button icon="pi pi-times" size="small" severity="secondary" text rounded @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
+          <Button icon="pi pi-times" size="small" severity="secondary" text rounded aria-label="Exit select mode" @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
         </template>
       </div>
 
@@ -240,8 +240,8 @@ const saveQuery = () => {
         <Column v-if="!selectMode" header="" style="width:7rem">
           <template #body="{ data }">
             <div class="flex gap-1 justify-content-end">
-              <Button icon="pi pi-eye"   text rounded size="small" v-tooltip.top="'View'"   @click="view(data)" />
-              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete'" @click="onDelete(data)" />
+              <Button icon="pi pi-eye"   text rounded size="small" v-tooltip.top="'View'"   aria-label="View dataset"   @click="view(data)" />
+              <Button icon="pi pi-trash" text rounded size="small" severity="danger" v-tooltip.top="'Delete'" aria-label="Delete dataset" @click="onDelete(data)" />
             </div>
           </template>
         </Column>

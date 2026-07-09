@@ -371,7 +371,7 @@ async function deleteJob(j) {
           <Button label="Confirm" icon="pi pi-check" size="small" severity="danger" @click="bulkDelete" />
           <Button label="Cancel" size="small" severity="secondary" text @click="confirmingBulkDelete = false" />
         </template>
-        <Button icon="pi pi-times" size="small" severity="secondary" text rounded @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
+        <Button icon="pi pi-times" size="small" severity="secondary" text rounded aria-label="Exit select mode" @click="exitSelectMode" v-tooltip.top="'Exit select mode'" />
       </template>
     </div>
 

@@ -548,6 +548,7 @@ const onDelete = (cfg) => {
 .seg-pill-group { display: inline-flex; align-self: flex-start; width: fit-content; border: 1px solid var(--ink); border-radius: 2px; overflow: hidden; }
 .seg-pill { padding: 9px 16px; border: 0; background: #FFFFFF; color: var(--text-color-secondary); font-size: 13px; font-weight: 600; cursor: pointer; }
 .seg-pill.is-active { background: var(--ink); color: var(--yellow); }
+.seg-pill:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--yellow); }
 
 .configs-panel { padding: 0 16px 4px; }
 .configs-header { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
