@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -6,7 +7,7 @@ from flask import current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy.orm import selectinload
 
-from project import cache, db
+from project import DATA_STORE, app_session, cache, db
 from project.api.auth.decorators import require_perm
 from project.api.helpers import pagination_envelope
 from project.api.utils import paginate_logs
@@ -75,8 +76,6 @@ def get_pd_ratings():
 @require_perm("credit_risk:read")
 def get_clients():
     from project.db_models.calibration_models import Dataset
-    from project import DATA_STORE
-    import os
 
     mock = request.args.get("mock", "false").lower() == "true"
     if (resp := _reject_mock_if_disabled(mock)) is not None:
@@ -301,7 +300,6 @@ def get_active_run():
 @credit_risk.put("/runs/<cr_run_id>/active")
 @require_perm("credit_risk:execute")
 def set_active_run(cr_run_id: str):
-    from project import app_session
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
@@ -323,7 +321,6 @@ def set_active_run(cr_run_id: str):
 @credit_risk.post("/runs/<cr_run_id>/rerun")
 @require_perm("credit_risk:execute")
 def rerun_run(cr_run_id: str):
-    from project import app_session
     from project.workers.tasks import run_credit_analysis
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
@@ -351,7 +348,6 @@ def rerun_run(cr_run_id: str):
 @credit_risk.post("/runs/<cr_run_id>/cancel")
 @require_perm("credit_risk:execute")
 def cancel_run(cr_run_id: str):
-    from project import app_session
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
@@ -522,7 +518,6 @@ def get_run_results_distinct(cr_run_id: str):
 @credit_risk.delete("/runs/<cr_run_id>")
 @require_perm("credit_risk:write")
 def delete_run(cr_run_id: str):
-    from project import app_session
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
@@ -669,8 +664,6 @@ def _read_dataset(path: str) -> pd.DataFrame:
 
 def _load_client_data(dataset_id: int, client_id: str):
     from project.db_models.calibration_models import Dataset
-    from project import DATA_STORE
-    import os
 
     dataset = Dataset.query.get(dataset_id)
     if not dataset or not dataset.file_path:

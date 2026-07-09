@@ -24,7 +24,12 @@ from project.logger import get_logger
 from project.schemas.calibrations import CreateCalibrationRun
 from project.services import calibrations as calibration_service
 from project.services.run_guards import ensure_not_workflow_member
-from project.workers.tasks import run_calibration, run_segment_calibration
+from project.workers.tasks import (
+    _load_forecast_data,
+    advance_workflow,
+    run_calibration,
+    run_segment_calibration,
+)
 
 from . import calibrations
 
@@ -314,7 +319,6 @@ def get_diagnostics(run_id):
 @calibrations.get("/<run_id>/forecast")
 @require_perm("calibration:read")
 def get_forecast(run_id):
-    from project.workers.tasks import _load_forecast_data
 
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
@@ -357,7 +361,6 @@ def _run_predictions_df(run: CalibrationRun) -> pd.DataFrame:
     never change), so paging/sorting/filtering the backtest table doesn't reload and
     re-parse every ForecastResult row on each request. Segmented runs are excluded —
     a segment re-run can change their downstream forecast."""
-    from project.workers.tasks import _load_forecast_data
 
     cacheable = run.status == "success" and not run.is_segmented
     cache_key = f"calib_run_preds:{run.run_id}"
@@ -532,8 +535,6 @@ def cancel_run(run_id):
         s.flush()
         result = r.to_dict()
     if workflow_run_id:
-        from project.workers.tasks import advance_workflow
-
         advance_workflow.delay(workflow_run_id)
     return jsonify(result), 200
 

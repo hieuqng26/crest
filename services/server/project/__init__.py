@@ -1,12 +1,7 @@
 import os
-from contextlib import contextmanager
 
 from flask import Flask, request
-from flask_bcrypt import Bcrypt
-from flask_caching import Cache
 from flask_jwt_extended import JWTManager
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from project.config import (
@@ -16,34 +11,33 @@ from project.config import (
     TestingConfig,
     validate_required_config,
 )
+from project.extensions import (  # re-exported for `from project import db/...`
+    DATA_STORE,
+    app_session,
+    bcrypt,
+    cache,
+    db,
+    migrate,
+)
 from project.logger import get_logger
 
 logger = get_logger(__name__)
 
-db = SQLAlchemy()
-migrate = Migrate()
-bcrypt = Bcrypt()
-cache = Cache()
-DATA_STORE = os.getenv("DATA_STORE", "/var/lib/app_data")
+__all__ = [
+    "DATA_STORE",
+    "app_session",
+    "bcrypt",
+    "cache",
+    "create_app",
+    "db",
+    "migrate",
+]
 
 
 def _cors_allowed_origins() -> list[str]:
     """Parse the CORS allowlist from the ``CORS_ORIGIN`` env var (comma-separated)."""
     raw = os.getenv("CORS_ORIGIN", "")
     return [s.strip() for s in raw.split(",") if s.strip()]
-
-
-@contextmanager
-def app_session():
-    """Provide a transactional scope around a series of operations."""
-    try:
-        yield db.session
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
-    finally:
-        db.session.close()
 
 
 def create_app():

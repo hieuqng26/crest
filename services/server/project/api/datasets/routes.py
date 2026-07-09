@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import uuid
 
 import pandas as pd
@@ -105,8 +106,6 @@ def query_dataset():
         return jsonify({"error": "Only SELECT / WITH queries are permitted"}), 400
 
     try:
-        import os
-
         conn_str = os.getenv("RISK_DB_CONN_STR", "")
         if not conn_str:
             return jsonify({"error": "Risk DB not configured"}), 503

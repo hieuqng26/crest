@@ -5,6 +5,7 @@ import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
+from project import app_session
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
@@ -139,7 +140,6 @@ def _cr_refs_for(fr_id: int):
 @forecast_runs.delete("/<run_id>")
 @require_perm("forecast:write")
 def delete_run(run_id: str):
-    from project import app_session
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -168,7 +168,6 @@ def delete_run(run_id: str):
 @forecast_runs.post("/bulk-delete")
 @require_perm("forecast:write")
 def bulk_delete_runs():
-    from project import app_session
 
     run_ids = (request.get_json(silent=True) or {}).get("run_ids", [])
     if not run_ids:
@@ -202,7 +201,6 @@ def bulk_delete_runs():
 @forecast_runs.post("/<run_id>/cancel")
 @require_perm("forecast:execute")
 def cancel_run(run_id: str):
-    from project import app_session
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -242,7 +240,6 @@ def get_logs(run_id: str):
 @forecast_runs.post("/<run_id>/rerun")
 @require_perm("forecast:execute")
 def rerun_run(run_id: str):
-    from project import app_session
     from project.workers.tasks import run_forecast
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
