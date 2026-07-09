@@ -16,6 +16,17 @@ const METRICS = [
 ]
 const selectedMetric = ref(METRICS[0].key)
 
+// Scenario selector. The forecast is computed per scenario (Baseline / Adverse /
+// Severely Adverse); the list is populated from the first heatmap response since it
+// depends on which scenarios the active run's forecast produced.
+const SCENARIO_LABELS = {
+  Baseline: 'Baseline',
+  Adverse: 'Adverse',
+  'Severely Adverse': 'Severely Adverse',
+}
+const scenarios        = ref([])
+const selectedScenario = ref('Baseline')
+
 const loading      = ref(false)
 const noActiveRun  = ref(false)
 const errorMessage = ref(null)
@@ -72,7 +83,7 @@ async function fetchHeatmap() {
   loading.value = true
   errorMessage.value = null
   try {
-    const params = { metric: selectedMetric.value }
+    const params = { metric: selectedMetric.value, scenario: selectedScenario.value }
     if (drilledSector.value) {
       params.sector = drilledSector.value
       params.clients = appliedCompanies.value.join(',')
@@ -86,6 +97,10 @@ async function fetchHeatmap() {
     materializing.value = false
     materializeAttempts = 0
     heat.value = data
+    // Populate the scenario list from the response and reconcile the selection with
+    // what the backend actually served (it falls back to Baseline for an unknown one).
+    if (Array.isArray(data.scenarios)) scenarios.value = data.scenarios
+    if (data.scenario) selectedScenario.value = data.scenario
     noActiveRun.value = false
   } catch (e) {
     heat.value = null
@@ -101,6 +116,14 @@ async function fetchHeatmap() {
 
 function selectMetric(key) {
   selectedMetric.value = key
+}
+
+function selectScenario(key) {
+  selectedScenario.value = key
+}
+
+function scenarioLabel(key) {
+  return SCENARIO_LABELS[key] ?? key
 }
 
 function drillInto(sector) {
@@ -130,6 +153,13 @@ function backToSectors() {
 // Metric change: re-fetch sector view immediately, or re-fetch drill-down only if
 // companies are already applied (don't auto-compute before the user confirms).
 watch(selectedMetric, () => {
+  if (drilledSector.value && !appliedCompanies.value.length) return
+  fetchHeatmap()
+})
+
+// Scenario change: same guard as metric — re-fetch the sector view immediately, or
+// the drill-down only once companies are applied.
+watch(selectedScenario, () => {
   if (drilledSector.value && !appliedCompanies.value.length) return
   fetchHeatmap()
 })
@@ -166,6 +196,18 @@ onMounted(async () => {
         @click="selectMetric(m.key)"
       >{{ m.label }}</div>
       <span class="font-mono unit-caption">{{ heat?.unit ?? '' }}</span>
+    </div>
+
+    <!-- Scenario selector (populated from the active run's forecast scenarios) -->
+    <div v-if="scenarios.length > 1" class="metric-row">
+      <span class="metric-label">SCENARIO</span>
+      <div
+        v-for="s in scenarios"
+        :key="s"
+        class="metric-chip"
+        :class="{ active: selectedScenario === s }"
+        @click="selectScenario(s)"
+      >{{ scenarioLabel(s) }}</div>
     </div>
 
     <!-- Company picker (drill-down only) -->

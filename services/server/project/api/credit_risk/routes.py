@@ -1142,17 +1142,32 @@ def _load_analysis_series(
     return series, sector_of
 
 
-def _forecast_years(series: dict) -> list[int]:
-    """Baseline forecast years present anywhere in a loaded series (scope-agnostic)."""
+def _forecast_years(series: dict, scenario: str = "Baseline") -> list[int]:
+    """Forecast years for ``scenario`` present anywhere in a loaded series
+    (scope-agnostic). Each forecast scenario defines its own horizon, so the heatmap
+    columns follow the selected scenario rather than always tracking Baseline."""
     return sorted(
         {
             yr
             for scope_map in series.values()
             for key_map in scope_map.values()
             for slot_map in key_map.values()
-            for yr in slot_map.get("Baseline", {})
+            for yr in slot_map.get(scenario, {})
         }
     )
+
+
+def _series_scenarios(series: dict) -> list[str]:
+    """Non-history forecast scenarios present in a loaded series, in the canonical
+    Baseline → Adverse → Severely Adverse order (mirrors ``_all_scenarios``)."""
+    order = {"Baseline": 0, "Adverse": 1, "Severely Adverse": 2}
+    scens: set[str] = set()
+    for scope_map in series.values():
+        for key_map in scope_map.values():
+            for slot_map in key_map.values():
+                scens.update(slot_map.keys())
+    scens.discard(_SERIES_HISTORY)
+    return sorted(scens, key=lambda s: (order.get(s, 99), s))
 
 
 def _series_levels(series, scope_type, scope_key, slot, scenario) -> dict:
@@ -1272,18 +1287,31 @@ def get_analysis_heatmap():
             }
         ), 422
 
-    # Forecast columns are the Baseline years present in the materialised series
-    # (the forecast run defines them). Read straight from the loaded rows.
-    forecast_years = _forecast_years(series)
+    # Scenario selector: the materialised series stores every forecast scenario, so
+    # the heatmap can be built for any of them. Default to Baseline; reject an
+    # unknown scenario (mirrors the transition-matrix endpoint).
+    scenarios = _series_scenarios(series)
+    requested_scenario = request.args.get("scenario")
+    if requested_scenario and requested_scenario not in scenarios:
+        return jsonify({"error": f"Unknown scenario '{requested_scenario}'"}), 400
+    scenario = requested_scenario or (
+        "Baseline"
+        if "Baseline" in scenarios
+        else (scenarios[0] if scenarios else "Baseline")
+    )
+
+    # Forecast columns are the selected scenario's years present in the materialised
+    # series (the forecast run defines them). Read straight from the loaded rows.
+    forecast_years = _forecast_years(series, scenario)
 
     def combined_levels(scope_type, scope_key, slot) -> dict:
-        """History merged with the Baseline forecast for one slot/scope — the same
-        {year: value} that _variable_levels(rows_df, fr, 'Baseline', hist) produced,
-        now read straight from the materialised table."""
+        """History merged with the selected scenario's forecast for one slot/scope —
+        the same {year: value} that _variable_levels(rows_df, fr, scenario, hist)
+        produced, now read straight from the materialised table."""
         levels = dict(
             _series_levels(series, scope_type, scope_key, slot, _SERIES_HISTORY)
         )
-        levels.update(_series_levels(series, scope_type, scope_key, slot, "Baseline"))
+        levels.update(_series_levels(series, scope_type, scope_key, slot, scenario))
         return levels
 
     def metric_series(scope_type, scope_key) -> dict:
@@ -1358,6 +1386,8 @@ def get_analysis_heatmap():
                 "drilled": True,
                 "title": sector_filter,
                 "subtitle": f"Company-level {spec['label'].lower()} across forecast years",
+                "scenario": scenario,
+                "scenarios": scenarios,
                 "rows": rows_out,
             }
         ), 200
@@ -1384,6 +1414,8 @@ def get_analysis_heatmap():
             "drilled": False,
             "title": "Sector Heatmap",
             "subtitle": "Forecasted change by sector and year",
+            "scenario": scenario,
+            "scenarios": scenarios,
             "rows": rows_out,
         }
     ), 200
