@@ -13,7 +13,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Install dependencies for building Python via microdnf (including findutils & tar)
-RUN microdnf update -y && \
+RUN echo "sslverify=false" >> /etc/dnf/dnf.conf && \
+    microdnf update -y && \
     microdnf install -y \
       gcc \
       findutils \
@@ -31,7 +32,7 @@ RUN microdnf update -y && \
 
 # Download and compile Python 3.11.9
 RUN cd /usr/src && \
-    wget --max-redirect=0 https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz && \
+    wget --no-check-certificate --max-redirect=0 https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz && \
     tar xzf Python-3.11.9.tgz && \
     cd Python-3.11.9 && \
     ./configure --enable-optimizations && \
@@ -43,8 +44,14 @@ RUN cd /usr/src && \
 
 # Build Python wheels for dependencies
 COPY requirements.txt ./
-RUN python3.11 -m pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements.txt
-
+RUN /usr/local/bin/python3.11 -m pip wheel \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    --no-cache-dir \
+    --no-deps \
+    --wheel-dir /usr/src/app/wheels \
+    -r requirements.txt
 #########
 # FINAL #
 #########
@@ -56,7 +63,8 @@ FROM registry.access.redhat.com/ubi9/ubi-minimal
 RUN mkdir -p /home/app
 
 # Create the app user
-RUN microdnf update -y && \
+RUN echo "sslverify=false" >> /etc/dnf/dnf.conf && \
+    microdnf update -y && \
     microdnf install -y shadow-utils && \
     microdnf clean all && \
     groupadd --system app && useradd --system --home /usr/src/app --no-create-home --gid app app
@@ -72,7 +80,8 @@ RUN mkdir -p /home/app/var/lib/app_data /var/log/gunicorn && \
     chmod -R 755 /home/app /var/log/gunicorn
 
 # Install runtime system dependencies via microdnf
-RUN microdnf update -y && \
+RUN echo "sslverify=false" >> /etc/dnf/dnf.conf && \
+    microdnf update -y && \
     microdnf install -y \
       gcc \
       findutils \
@@ -92,7 +101,8 @@ RUN mkdir -p /etc/pki/rpm-gpg && \
     curl https://packages.microsoft.com/config/rhel/9/prod.repo -o /etc/yum.repos.d/mssql-release.repo
 
 # Install the ODBC driver and tools
-RUN microdnf update -y && \
+RUN echo "sslverify=false" >> /etc/dnf/dnf.conf && \
+    microdnf update -y && \
     ACCEPT_EULA=Y microdnf install -y msodbcsql18 mssql-tools18 && \
     microdnf clean all
 
@@ -107,8 +117,17 @@ COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
 # Install Python dependencies from wheels
 COPY --from=builder /usr/src/app/wheels /wheels
 COPY requirements.txt ./
-RUN python3.11 -m pip install --upgrade pip && \
-    python3.11 -m pip install --no-cache /wheels/* && \
+
+RUN /usr/local/bin/python3.11 -m pip install \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    --upgrade pip && \
+    /usr/local/bin/python3.11 -m pip install \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    --no-cache /wheels/* && \
     rm -rf /wheels
 
 # Copy entrypoint script and make executable
@@ -117,7 +136,7 @@ COPY entrypoint.sh $APP_HOME/entrypoint.sh
 RUN chmod +x $APP_HOME/entrypoint.sh
 
 # Copy application code
-COPY manage.py pytest.ini requirements.txt $APP_HOME/
+COPY manage.py requirements.txt $APP_HOME/
 COPY migrations[2]/ $APP_HOME/migrations/
 COPY project/ $APP_HOME/project/
 
