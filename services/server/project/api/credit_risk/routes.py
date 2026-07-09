@@ -1,14 +1,14 @@
 import json
-import uuid
 from datetime import datetime, timezone
 
 import pandas as pd
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy.orm import selectinload
 
 from project import cache, db
 from project.api.auth.decorators import require_perm
+from project.api.helpers import pagination_envelope
 from project.api.utils import paginate_logs
 from project.core import table_query
 from project.db_models.calibration_models import Dataset
@@ -21,11 +21,26 @@ from project.db_models.credit_models import (
     PdRating,
 )
 from project.db_models.forecast_models import ForecastRun
+from project.schemas.credit_risk import CreateCreditRiskRun
+from project.services import credit_risk as credit_risk_service
+from project.services.run_guards import ensure_not_workflow_member
 
 from . import credit_risk
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+
+def _reject_mock_if_disabled(requested_mock: bool):
+    """Return a 400 response tuple if mock data is requested but disabled.
+
+    Mock credit data (mock_credit.py) is a dev/test convenience gated by the
+    ALLOW_MOCK_CREDIT config flag — it must never be reachable in production."""
+    if requested_mock and not current_app.config.get("ALLOW_MOCK_CREDIT", False):
+        return jsonify(
+            {"error": "Mock credit data is disabled in this environment"}
+        ), 400
+    return None
 
 
 def _load_metrics(run_id: str) -> dict | None:
@@ -63,6 +78,8 @@ def get_clients():
     import os
 
     mock = request.args.get("mock", "false").lower() == "true"
+    if (resp := _reject_mock_if_disabled(mock)) is not None:
+        return resp
     if mock:
         from project.core.credit_risk.mock_credit import mock_credit_data
 
@@ -103,6 +120,8 @@ def compute_kmv():
     client_id = body.get("client_id")
     scenarios = body.get("scenarios")
 
+    if (resp := _reject_mock_if_disabled(mock)) is not None:
+        return resp
     if not client_id:
         return jsonify({"error": "client_id is required"}), 400
 
@@ -172,6 +191,8 @@ def compute_ecl_v2():
         else:
             # Re-run KMV inline
             mock = body.get("mock", False)
+            if (resp := _reject_mock_if_disabled(mock)) is not None:
+                return resp
             client_id = body.get("client_id")
             if not client_id:
                 return jsonify({"error": "client_id or kmv_result is required"}), 400
@@ -247,84 +268,14 @@ def list_runs():
         d["dataset_name"] = ds.name if ds else None
         result.append(d)
 
-    return jsonify(
-        {"items": result, "total": runs.total, "page": page, "pages": runs.pages}
-    ), 200
+    return jsonify(pagination_envelope(result, runs)), 200
 
 
 @credit_risk.post("/runs")
 @require_perm("credit_risk:execute")
 def create_run():
-    from project import app_session
-    from project.workers.tasks import run_credit_analysis
-
-    body = request.get_json(silent=True) or {}
-    dataset_id = body.get("dataset_id")
-    if not dataset_id:
-        return jsonify({"error": "dataset_id is required"}), 400
-
-    ds = Dataset.query.get(int(dataset_id))
-    if not ds:
-        return jsonify({"error": "Dataset not found"}), 404
-
-    financial_portfolio_dataset_id = body.get("financial_portfolio_dataset_id")
-    if financial_portfolio_dataset_id:
-        fin_ds = Dataset.query.get(int(financial_portfolio_dataset_id))
-        if not fin_ds:
-            return jsonify({"error": "Financial portfolio dataset not found"}), 404
-        financial_portfolio_dataset_id = int(financial_portfolio_dataset_id)
-
-    forecast_inputs = body.get("cal_inputs") or {}
-    required_keys = {"total_assets", "short_term_debts", "long_term_debts"}
-    missing = required_keys - {k for k, v in forecast_inputs.items() if v}
-    if missing:
-        return jsonify(
-            {"error": f"Missing required forecast inputs: {sorted(missing)}"}
-        ), 400
-
-    # Resolve each slot's UUID to its integer PK — validates existence and acts as
-    # the FK reference that will block accidental deletion of the forecast run.
-    slot_to_forecast_run: dict[str, ForecastRun] = {}
-    for slot, run_uuid in forecast_inputs.items():
-        fr = ForecastRun.query.filter_by(run_id=run_uuid).first()
-        if not fr or fr.status != "success":
-            return jsonify(
-                {"error": f"Forecast run for '{slot}' not found or not successful"}
-            ), 400
-        slot_to_forecast_run[slot] = fr
-
-    cr_run_id = str(uuid.uuid4())
-    identity = get_jwt_identity()
-
-    cr = CreditRiskRun(
-        run_id=cr_run_id,
-        dataset_id=int(dataset_id),
-        financial_portfolio_dataset_id=financial_portfolio_dataset_id,
-        is_active=False,
-        exposure=float(body.get("exposure", 1_000_000)),
-        discount_rate=float(body.get("discount_rate", 0.05)),
-        lifetime_horizon=int(body.get("lifetime_horizon", 5)),
-        curve=body.get("curve", "moodys"),
-        status="queued",
-        triggered_by=identity,
-        created_at=datetime.now(timezone.utc),
-    )
-    with app_session() as s:
-        s.add(cr)
-        s.flush()
-        for slot, fr in slot_to_forecast_run.items():
-            s.add(
-                CreditRiskForecastInput(
-                    credit_risk_run_id=cr.id,
-                    forecast_run_id=fr.id,
-                    forecast_run_uuid=fr.run_id,
-                    slot=slot,
-                )
-            )
-        s.flush()
-        cr_dict = cr.to_dict()
-
-    run_credit_analysis.delay(cr_run_id)
+    payload = CreateCreditRiskRun.model_validate(request.get_json(silent=True) or {})
+    cr_dict = credit_risk_service.create_run(payload, get_jwt_identity())
     return jsonify(cr_dict), 202
 
 
@@ -369,25 +320,6 @@ def set_active_run(cr_run_id: str):
     return jsonify({"ok": True}), 200
 
 
-def _check_workflow_membership(cr: CreditRiskRun):
-    """Return a 409 response if this run belongs to a workflow, else None."""
-    if cr.workflow_run_id:
-        from project.db_models.workflow_models import WorkflowRun
-
-        wf = WorkflowRun.query.get(cr.workflow_run_id)
-        wf_name = wf.name if wf else cr.workflow_run_id
-        return (
-            jsonify(
-                {
-                    "error": f"This run belongs to workflow '{wf_name}' — delete "
-                    "or rerun the workflow instead."
-                }
-            ),
-            409,
-        )
-    return None
-
-
 @credit_risk.post("/runs/<cr_run_id>/rerun")
 @require_perm("credit_risk:execute")
 def rerun_run(cr_run_id: str):
@@ -397,9 +329,7 @@ def rerun_run(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
         return jsonify({"error": "Run not found"}), 404
-    err = _check_workflow_membership(cr)
-    if err:
-        return err
+    ensure_not_workflow_member(cr)
 
     with app_session() as s:
         CreditRiskResult.query.filter_by(run_id=cr_run_id).delete()
@@ -597,9 +527,7 @@ def delete_run(cr_run_id: str):
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
     if not cr:
         return jsonify({"error": "Run not found"}), 404
-    err = _check_workflow_membership(cr)
-    if err:
-        return err
+    ensure_not_workflow_member(cr)
 
     with app_session() as s:
         CreditRiskRunLog.query.filter_by(run_id=cr_run_id).delete()
@@ -837,11 +765,9 @@ def _load_dataset_df(dataset) -> pd.DataFrame:
     path), so the cross-request entry never goes stale and only needs a TTL for
     memory hygiene. This is the fix for re-downloading + re-parsing on every
     heatmap/forecast request and every 5 s poll."""
-    import io
-
     from flask import g
 
-    from project.core import storage
+    from project.core import dataset_io
 
     g_key = f"_dataset_df_{dataset.id}"
     cached = getattr(g, g_key, None)
@@ -851,17 +777,7 @@ def _load_dataset_df(dataset) -> pd.DataFrame:
     xcache_key = f"cr_dataset_df:{dataset.id}:{dataset.file_path}"
     df = cache.get(xcache_key)
     if df is None:
-        file_bytes = storage.download_bytes(dataset.file_path.split("/", 1)[-1])
-        ext = dataset.file_path.rsplit(".", 1)[-1].lower()
-        buf = io.BytesIO(file_bytes)
-        if ext == "csv":
-            df = pd.read_csv(buf)
-        elif ext == "xlsx":
-            df = pd.read_excel(buf)
-        elif ext == "parquet":
-            df = pd.read_parquet(buf)
-        else:
-            raise ValueError(f"Unsupported file type: {ext}")
+        df = dataset_io.download_dataset_df(dataset)
         cache.set(xcache_key, df, timeout=3600)
 
     setattr(g, g_key, df)
@@ -884,7 +800,6 @@ def _get_analysis_run(run_id: str | None) -> "CreditRiskRun":
 
 
 def _slot_forecast_runs(cr) -> dict[str, ForecastRun]:
-    from project.db_models.credit_models import CreditRiskForecastInput
 
     slots = {}
     for inp in CreditRiskForecastInput.query.filter_by(credit_risk_run_id=cr.id).all():

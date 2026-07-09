@@ -47,7 +47,7 @@ def get_user_by_id(id):
         id = valid_uuid(id)
         user = User.query.filter_by(id=id).first()
         if not user:
-            raise Exception("User not found")
+            return make_response(jsonify({"message": "User not found"}), 404)
 
         # audit log
         log_audit(
@@ -97,7 +97,7 @@ def get_user_by_email(email):
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            raise Exception("User not found")
+            return make_response(jsonify({"message": "User not found"}), 404)
 
         # audit log
         log_audit(

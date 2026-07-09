@@ -3,6 +3,7 @@ import itertools
 import json
 import pickle
 import random
+import traceback
 import uuid
 from datetime import datetime, timezone
 
@@ -18,10 +19,25 @@ from sklearn.metrics import (
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
-from project.core import storage
+from project.constants import Progress
+from project.core import dataset_io, storage
 from project.core.model_registry import get_model_class
 from project.logger import get_logger
 from project.workers import celery_app
+
+_TRACEBACK_LIMIT = 20000
+
+
+def format_failure(exc: BaseException, limit: int = _TRACEBACK_LIMIT) -> str:
+    """Render the full traceback for persistence in a run's ``error_message``.
+
+    The architecture contract is that a failed run keeps its traceback (not
+    just ``str(exc)``) so failures are diagnosable from the run row alone. The
+    tail is kept when the trace exceeds ``limit`` — the innermost frames (where
+    the error actually occurred) are the most useful.
+    """
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return tb[-limit:]
 
 
 def _load_forecast_data(forecast) -> dict:
@@ -144,7 +160,9 @@ def _write_progress(
                 )
             )
     except Exception:
-        pass
+        # Progress/log writes must never kill a run, but a silent failure hides
+        # real DB problems — log it instead of swallowing outright.
+        logger.exception("_write_progress failed for run %s", run_id)
 
 
 def _cv_search(
@@ -831,9 +849,9 @@ def run_calibration(self, run_id: str):
                 if r:
                     r.status = "failed"
                     r.finished_at = datetime.now(timezone.utc)
-                    r.error_message = str(exc)
+                    r.error_message = format_failure(exc)
                     s.add(r)
-            _write_progress(run_id, -1, f"Failed: {exc}")
+            _write_progress(run_id, Progress.FAILED, f"Failed: {exc}")
             if initial_workflow_run_id:
                 advance_workflow.delay(initial_workflow_run_id)
             raise
@@ -1001,7 +1019,7 @@ def run_segment_calibration(self, run_id: str, segment_key: str):
                 row = CalibrationRunSegment.query.get(seg_id)
                 if row:
                     row.status = "failed"
-                    row.error_message = str(exc)
+                    row.error_message = format_failure(exc)
                     s.add(row)
             raise
 
@@ -1138,7 +1156,9 @@ def _write_forecast_progress(
                 )
             )
     except Exception:
-        pass
+        # Progress/log writes must never kill a run, but a silent failure hides
+        # real DB problems — log it instead of swallowing outright.
+        logger.exception("_write_forecast_progress failed for run %s", run_id)
 
 
 @celery_app.task(bind=True, name="run_forecast")
@@ -1389,9 +1409,9 @@ def run_forecast(self, run_id: str):
                 if r:
                     r.status = "failed"
                     r.finished_at = datetime.now(timezone.utc)
-                    r.error_message = str(exc)
+                    r.error_message = format_failure(exc)
                     s.add(r)
-            _write_forecast_progress(run_id, -1, f"Failed: {exc}")
+            _write_forecast_progress(run_id, Progress.FAILED, f"Failed: {exc}")
             if workflow_run_id:
                 advance_workflow.delay(workflow_run_id)
             raise
@@ -1795,7 +1815,11 @@ def run_credit_analysis(self, cr_run_id: str):
                 cache.delete(f"cr_run_results:{cr_run_id}")
                 cache.delete(f"cr_transitions:{cr_run_id}")
             except Exception:
-                pass
+                # Stale cache is self-healing (next read recomputes); log so a
+                # persistently broken cache backend is still visible.
+                logger.exception(
+                    "Cache invalidation failed for credit run %s", cr_run_id
+                )
 
             # 7. Materialise the Heatmap / Financial Forecast level series so those
             # pages load from cheap indexed SELECTs instead of recomputing from
@@ -1838,7 +1862,7 @@ def run_credit_analysis(self, cr_run_id: str):
                 if r:
                     r.status = "failed"
                     r.finished_at = datetime.now(timezone.utc)
-                    r.error_message = str(exc)
+                    r.error_message = format_failure(exc)
                     s.add(r)
             if workflow_run_id:
                 advance_workflow.delay(workflow_run_id)
@@ -1884,21 +1908,7 @@ def backfill_analysis_series(cr_run_id: str):
 
 def _load_df_by_dataset_id(ds_id: int) -> "pd.DataFrame":
     """Download a dataset by PK and return its DataFrame (csv/xlsx/parquet)."""
-    from project.db_models.calibration_models import Dataset
-
-    ds = Dataset.query.get(ds_id)
-    if not ds or not ds.file_path:
-        raise ValueError(f"Dataset {ds_id} not found or has no file")
-    file_bytes = storage.download_bytes(ds.file_path.split("/", 1)[-1])
-    ext = ds.file_path.rsplit(".", 1)[-1].lower()
-    buf = io.BytesIO(file_bytes)
-    if ext == "csv":
-        return pd.read_csv(buf)
-    if ext == "xlsx":
-        return pd.read_excel(buf)
-    if ext == "parquet":
-        return pd.read_parquet(buf)
-    raise ValueError(f"Unsupported file type: {ext}")
+    return dataset_io.load_dataset_df_by_id(ds_id)
 
 
 def _build_credit_portfolio_df(
@@ -2023,7 +2033,8 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                     fr.status = "failed"
                     fr.finished_at = datetime.now(timezone.utc)
                     fr.error_message = (
-                        f"Segment '{segment_key}' recompute failed: {exc}"
+                        f"Segment '{segment_key}' recompute failed:\n"
+                        f"{format_failure(exc)}"
                     )
                     s.add(fr)
                     s.add(
@@ -2172,7 +2183,11 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                 cache.delete(f"cr_run_results:{cr_run_id}")
                 cache.delete(f"cr_transitions:{cr_run_id}")
             except Exception:
-                pass
+                # Stale cache is self-healing (next read recomputes); log so a
+                # persistently broken cache backend is still visible.
+                logger.exception(
+                    "Cache invalidation failed for credit run %s", cr_run_id
+                )
             _cr_log(
                 cr_run_id,
                 f"Segment '{segment_key}' credit recompute complete",
@@ -2197,7 +2212,10 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                 if r:
                     r.status = "failed"
                     r.finished_at = datetime.now(timezone.utc)
-                    r.error_message = f"Segment '{segment_key}' recompute failed: {exc}"
+                    r.error_message = (
+                        f"Segment '{segment_key}' recompute failed:\n"
+                        f"{format_failure(exc)}"
+                    )
                     s.add(r)
             raise
 
@@ -2419,7 +2437,7 @@ def delete_workflow(self, run_id: str):
                 wf = WorkflowRun.query.filter_by(id=wf_id).first()
                 if wf:
                     wf.status = "failed"
-                    wf.error_message = f"Deletion failed: {e}"
+                    wf.error_message = f"Deletion failed:\n{format_failure(e)}"
                     wf.finished_at = datetime.now(timezone.utc)
                     s.add(wf)
             raise

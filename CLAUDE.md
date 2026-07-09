@@ -23,8 +23,8 @@ Tailwind 3.4, Vite 5; axios 1; charts apexcharts 5 / chart.js 4 / plotly.js 2.
 Flask-Migrate 4 (Alembic), Celery 5.4 + Redis, Pydantic 2; quant: numpy 2, pandas 2.2,
 scipy 1.14, scikit-learn, statsmodels.
 
-**Infra**: MSSQL (app DB, via pyodbc + ODBC Driver 17), MinIO (artifacts/files),
-MLflow (headless tracking — never expose the UI). Local stack: `docker-compose.debug.yml`.
+**Infra**: MSSQL (app DB, via pyodbc + ODBC Driver 17), MinIO (artifacts/files).
+Local stack: `docker-compose.debug.yml`. (MLflow was removed — no code references it.)
 
 → Full structure & request lifecycle: `.claude/docs/architecture.md`.
 
@@ -86,7 +86,10 @@ matrix: `.claude/docs/architecture.md`.
   process (use Redis in prod). `WTF_CSRF_ENABLED=False` is intentional (CSRF tokens are
   sent in a custom `X-CSRF-TOKEN` header, not via WTF forms). See `architecture.md` and
   `state_management.md` for full detail.
-- **Never expose** MLflow UI or Celery Flower to users.
+- **Never expose** Celery Flower to users. (MLflow was removed.)
+- **Service layer:** business logic for run-launching lives in `project/services/*`
+  (transport-agnostic, no Flask) so the MCP server can reuse it; routes stay thin.
+  A global error boundary maps `DomainError`s → HTTP status. See `backend.md`.
 - **Git commits:** never add `Co-Authored-By` trailers. Only commit when I explicitly tell you to.
 - **Branch management:** whenever fixing a bug or adding a new feature, if it requires a lot of changes, create a new branch to work on.
 
@@ -95,6 +98,8 @@ matrix: `.claude/docs/architecture.md`.
 **`.claude/docs/`** — domain knowledge:
 - [architecture.md](.claude/docs/architecture.md) — repo layout, backend/frontend
   structure, request lifecycle, core logic, model registry, run lifecycle, infra.
+- [backend.md](.claude/docs/backend.md) — backend layering (routes → schemas →
+  services → core), error boundary, "add an endpoint/tool" recipe, MCP reuse rule.
 - [database_models.md](.claude/docs/database_models.md) — tables, the `kind` column,
   FK dependency chain, delete constraints.
 - [state_management.md](.claude/docs/state_management.md) — Vuex store, JWT refresh

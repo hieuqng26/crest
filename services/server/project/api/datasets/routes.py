@@ -9,7 +9,7 @@ from flask_jwt_extended import get_jwt_identity
 
 from project import app_session, cache
 from project.api.auth.decorators import require_perm
-from project.core import storage, table_query
+from project.core import dataset_io, storage, table_query
 from project.db_models.calibration_models import Dataset
 from project.logger import get_logger
 
@@ -22,17 +22,6 @@ ALLOWED_EXTENSIONS = {"csv", "xlsx", "parquet"}
 
 def _ext(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-
-def _read_dataframe(file_bytes: bytes, ext: str) -> pd.DataFrame:
-    buf = io.BytesIO(file_bytes)
-    if ext == "csv":
-        return pd.read_csv(buf)
-    if ext == "xlsx":
-        return pd.read_excel(buf)
-    if ext == "parquet":
-        return pd.read_parquet(buf)
-    raise ValueError(f"Unsupported file type: {ext}")
 
 
 @datasets.get("/")
@@ -63,7 +52,7 @@ def upload_dataset():
 
     file_bytes = f.read()
     try:
-        df = _read_dataframe(file_bytes, ext)
+        df = dataset_io.read_dataframe(file_bytes, ext)
     except Exception as e:
         return jsonify({"error": f"Failed to parse file: {e}"}), 422
 
@@ -165,10 +154,7 @@ def _load_dataset_dataframe(ds: Dataset) -> pd.DataFrame:
     if df is not None:
         return df
 
-    object_name = ds.file_path.split("/", 1)[-1]
-    file_bytes = storage.download_bytes(object_name)
-    ext = object_name.rsplit(".", 1)[-1].lower()
-    df = _read_dataframe(file_bytes, ext)
+    df = dataset_io.download_dataset_df(ds)
     cache.set(cache_key, df, timeout=60)
     return df
 

@@ -1,5 +1,4 @@
 import json
-import uuid
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -11,10 +10,6 @@ from project import app_session, cache, db
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
-from project.core.calibration_launch import (
-    build_search_config_json,
-    validate_segmentation,
-)
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
@@ -23,8 +18,12 @@ from project.db_models.calibration_models import (
     Forecast,
     ModelConfig,
 )
+from project.api.helpers import pagination_envelope
 from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
+from project.schemas.calibrations import CreateCalibrationRun
+from project.services import calibrations as calibration_service
+from project.services.run_guards import ensure_not_workflow_member
 from project.workers.tasks import run_calibration, run_segment_calibration
 
 from . import calibrations
@@ -63,69 +62,14 @@ def list_runs():
         d["model_family"] = r.model_config.family if r.model_config else None
         result.append(d)
 
-    return jsonify(
-        {"items": result, "total": runs.total, "page": page, "pages": runs.pages}
-    ), 200
+    return jsonify(pagination_envelope(result, runs)), 200
 
 
 @calibrations.post("/")
 @require_perm("calibration:execute")
 def create_run():
-    body = request.get_json(silent=True) or {}
-    dataset_id = body.get("dataset_id")
-    if not dataset_id:
-        return jsonify({"error": "Missing: dataset_id"}), 400
-
-    model_config_id = body.get("model_config_id")
-    if not model_config_id:
-        return jsonify({"error": "Missing: model_config_id"}), 400
-
-    ds = Dataset.query.get(int(dataset_id))
-    cfg = ModelConfig.query.get(int(model_config_id))
-    if not ds:
-        return jsonify({"error": "Dataset not found"}), 404
-    if not cfg:
-        return jsonify({"error": "ModelConfig not found"}), 404
-
-    seg = body.get("segmentation") or None
-    parsed_seg, seg_error = validate_segmentation(seg)
-    if seg_error:
-        return jsonify({"error": seg_error}), 400
-    seg_sectors_json = parsed_seg["seg_sectors_json"]
-    seg_split_by = parsed_seg["seg_split_by"]
-    seg_max_segments = parsed_seg["seg_max_segments"]
-    seg_sector_overrides_json = parsed_seg["seg_sector_overrides_json"]
-
-    target_col = body.get("target_col") or None
-    feature_cols = body.get("feature_cols") or []
-    run_name = (body.get("name") or "").strip() or None
-
-    search_config_json = build_search_config_json(cfg)
-
-    run_id = str(uuid.uuid4())
-    with app_session() as session:
-        run = CalibrationRun(
-            run_id=run_id,
-            name=run_name,
-            dataset_id=ds.id,
-            model_config_id=cfg.id,
-            status="queued",
-            triggered_by=get_jwt_identity(),
-            search_config_json=search_config_json,
-            train_split=cfg.train_split if cfg.train_split is not None else 0.8,
-            scaler=cfg.scaler,
-            target_col=target_col,
-            feature_cols_json=json.dumps(feature_cols),
-            seg_sectors_json=seg_sectors_json,
-            seg_split_by=seg_split_by,
-            seg_max_segments=seg_max_segments,
-            seg_sector_overrides_json=seg_sector_overrides_json,
-        )
-        session.add(run)
-        session.flush()
-        result = run.to_dict()
-
-    run_calibration.delay(run_id)
+    payload = CreateCalibrationRun.model_validate(request.get_json(silent=True) or {})
+    result = calibration_service.create_run(payload, get_jwt_identity())
     return jsonify(result), 202
 
 
@@ -640,28 +584,6 @@ def _check_forecast_references(cal_run_id: int):
     return None, None
 
 
-def _check_workflow_membership(r):
-    """Return a 409 response if this run belongs to a workflow, else None.
-    Workflow children must be deleted/rerun as part of the whole workflow so
-    downstream forecast/analysis results never desync from their training run.
-    """
-    if r.workflow_run_id:
-        from project.db_models.workflow_models import WorkflowRun
-
-        wf = WorkflowRun.query.get(r.workflow_run_id)
-        wf_name = wf.name if wf else r.workflow_run_id
-        return (
-            jsonify(
-                {
-                    "error": f"This run belongs to workflow '{wf_name}' — delete "
-                    "or rerun the workflow instead."
-                }
-            ),
-            409,
-        )
-    return None
-
-
 @calibrations.delete("/<run_id>")
 @require_perm("calibration:write")
 def delete_run(run_id):
@@ -670,9 +592,7 @@ def delete_run(run_id):
         return jsonify({"error": "Not found"}), 404
     if r.status in ("queued", "running"):
         return jsonify({"error": "Cannot delete an active run — cancel it first"}), 409
-    err = _check_workflow_membership(r)
-    if err:
-        return err
+    ensure_not_workflow_member(r)
     err, code = _check_forecast_references(r.id)
     if err:
         return err, code
@@ -721,9 +641,7 @@ def recalibrate(run_id):
             return jsonify({"error": "Not found"}), 404
         if r.status in ("queued", "running"):
             return jsonify({"error": "Run is already active"}), 409
-        err = _check_workflow_membership(r)
-        if err:
-            return err
+        ensure_not_workflow_member(r)
 
         r.status = "queued"
         r.triggered_by = get_jwt_identity()
