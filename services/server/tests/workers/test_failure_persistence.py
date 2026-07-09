@@ -47,8 +47,19 @@ def test_format_failure_keeps_tail_when_over_limit():
 @pytest.fixture()
 def use_test_app(app):
     """Make the task bodies run against the test app/DB instead of building a
-    fresh app (with a separate in-memory SQLite) via create_app()."""
-    with patch("project.workers.tasks._make_flask_app", return_value=app):
+    fresh app (with a separate in-memory SQLite) via create_app().
+
+    Each task module binds its own ``_make_flask_app`` (imported from
+    workers.common), and the task resolves that module-global at call time — so
+    the patch must target the module the task lives in, not the tasks shim."""
+    import contextlib
+
+    modules = ("calibration", "forecast", "credit", "segments", "workflow")
+    with contextlib.ExitStack() as stack:
+        for mod in modules:
+            stack.enter_context(
+                patch(f"project.workers.{mod}._make_flask_app", return_value=app)
+            )
         yield app
 
 
