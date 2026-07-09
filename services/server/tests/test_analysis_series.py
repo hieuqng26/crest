@@ -7,6 +7,7 @@ helpers against directly-inserted rows (no MinIO), plus lazy-backfill wiring.
 
 from project import db
 from project.api.credit_risk import routes as R
+from project.services import credit_analysis as CA
 from project.db_models.credit_models import CreditRiskAnalysisSeries, CreditRiskRun
 
 
@@ -71,15 +72,15 @@ def test_load_and_read_series(app):
 
         series, sector_of = R._load_analysis_series(cr)
         assert sector_of == {"C1": "Tech"}
-        assert R._series_levels(
+        assert CA.series_levels(
             series, "sector", "Tech", "total_revenue", "Baseline"
         ) == {2021: 110.0, 2022: 121.0}
-        assert R._series_levels(
-            series, "sector", "Tech", "total_revenue", R._SERIES_HISTORY
+        assert CA.series_levels(
+            series, "sector", "Tech", "total_revenue", CA.SERIES_HISTORY
         ) == {2020: 100.0}
         # missing scope returns empty dict, not error
         assert (
-            R._series_levels(series, "client", "NOPE", "total_revenue", "Baseline")
+            CA.series_levels(series, "client", "NOPE", "total_revenue", "Baseline")
             == {}
         )
 
@@ -112,11 +113,11 @@ def test_combined_history_plus_baseline(app):
 
         series, _ = R._load_analysis_series(cr)
         combined = dict(
-            R._series_levels(
-                series, "sector", "Ind", "total_revenue", R._SERIES_HISTORY
+            CA.series_levels(
+                series, "sector", "Ind", "total_revenue", CA.SERIES_HISTORY
             )
         )
         combined.update(
-            R._series_levels(series, "sector", "Ind", "total_revenue", "Baseline")
+            CA.series_levels(series, "sector", "Ind", "total_revenue", "Baseline")
         )
         assert combined == {2019: 90.0, 2020: 105.0, 2021: 115.0}
