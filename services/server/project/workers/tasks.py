@@ -11,8 +11,12 @@ Note on patching: patching a *task object's* attribute (e.g.
 the shared task object. Patching a *plain function name* the tasks call
 internally (``_make_flask_app``, ``storage``) must target the module that runs
 it (e.g. ``project.workers.calibration._make_flask_app``), not this shim.
+
+``celery_app`` is re-exported too, so the worker's
+``-A project.workers.tasks.celery_app`` entrypoint keeps resolving.
 """
 
+from project.workers import celery_app
 from project.workers.calibration import (
     run_calibration,
     run_segment_calibration,
@@ -49,6 +53,7 @@ __all__ = [
     "advance_workflow",
     "advance_workflow_impl",
     "backfill_analysis_series",
+    "celery_app",
     "delete_workflow",
     "format_failure",
     "recompute_forecast_run_segment",
