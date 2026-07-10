@@ -12,7 +12,10 @@
   **transport-agnostic** (no `flask` import) so the MCP server reuses them; pure
   computation lives in `project/core/`.
 - Validate incoming JSON with a Pydantic schema in `project/schemas/` (the route
-  calls `Schema.model_validate(...)`); DB-dependent checks live in the service.
+  calls `Schema.model_validate(...)`, `extra="forbid"` + `max_length`); DB-dependent
+  checks live in the service. **Do not** add regex input "WAF" filtering — SQLi is
+  prevented by the ORM (parameterized), not by scrubbing input; see "Request
+  guarding" in [backend.md](backend.md).
 - Errors: raise a `DomainError` subclass (`project/exceptions.py`) — the global
   boundary (`project/api/error_handlers.py`) maps it to a status + JSON. Never build
   error tuples in a service, never wrap a whole route in `try/except`, never leak a

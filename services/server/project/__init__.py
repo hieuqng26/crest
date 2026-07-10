@@ -17,6 +17,7 @@ from project.extensions import (  # re-exported for `from project import db/...`
     bcrypt,
     cache,
     db,
+    limiter,
     migrate,
 )
 from project.logger import get_logger
@@ -30,6 +31,7 @@ __all__ = [
     "cache",
     "create_app",
     "db",
+    "limiter",
     "migrate",
 ]
 
@@ -84,6 +86,7 @@ def create_app():
     bcrypt.init_app(app)
     jwt.init_app(app)
     cache.init_app(app)
+    limiter.init_app(app)
 
     # Import models so Alembic autogenerate can detect them
     from project.api.auditlog.models import AuditLog  # noqa: F401

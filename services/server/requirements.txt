@@ -5,6 +5,7 @@ openpyxl
 redis
 Flask
 flask-wtf
+Flask-Limiter>=3.5
 Flask-SQLAlchemy==3.0.3
 psycopg2-binary
 flask-bcrypt

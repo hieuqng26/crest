@@ -65,6 +65,26 @@ intentional — match the surrounding module.
 `TestingConfig` sets `PROPAGATE_EXCEPTIONS = False` so integration tests exercise
 this real mapping instead of Flask re-raising.
 
+## Request guarding
+
+There is **no hand-rolled input WAF** (the old `validate_request` regex filter
+was removed — a bypassable blocklist that guarded no real sink). The layered,
+principled controls are:
+
+- **Validation** = strict Pydantic schemas (`extra="forbid"` + `max_length` +
+  field validators). Unknown keys are rejected; SQLi/XSS are *not* addressed here.
+- **SQL injection** is prevented by the SQLAlchemy ORM (parameterized) everywhere.
+  The one raw-SQL surface — `datasets /query` (user SQL) — is bounded by a query
+  timeout + row cap, and its real write-prevention is a **read-only `RISK_DB`
+  login** (`db_datareader`), documented in `env/.env.example.*`. The `SELECT/WITH`
+  check is fast-fail UX, not the boundary.
+- **Body size**: `MAX_CONTENT_LENGTH` (config, env `MAX_CONTENT_LENGTH_MB`) → 413.
+- **Rate limiting**: `flask-limiter` (Redis-backed, per client IP via ProxyFix) on
+  the auth endpoints (`RATELIMIT_AUTH`); complements the login lockout. Disabled
+  effectively in tests via a huge limit. A 429 flows through the boundary as
+  `{"message": ...}`.
+- Output encoding + CSP (frontend) handle XSS; do not filter it on input.
+
 ## Adding an endpoint / MCP tool (recipe)
 
 1. Add a request schema to `project/schemas/<domain>.py` (types + `field_validator`
@@ -118,9 +138,10 @@ analysis reads** (`services/credit_analysis.py` — heatmap/forecast builders);
 `extensions.py`; `SerializerMixin` for plain-column `to_dict`; and the
 `workers/` decomposition + `worker_session` fix above.
 
+The `validate_request` regex WAF has been removed and replaced by the strict
+Pydantic + ORM + body-cap + rate-limit model above (see "Request guarding");
+`users`/`auditlog` are on the unified `@bp.verb` + schema style.
+
 Still route-resident (lower priority — not MCP-exposed): the datasets
-upload/query/stats handlers (transport-bound file/SQL) and the legacy
-`users`/`auditlog` modules (concrete defects fixed — audit `ORDER BY` injection,
-404s — but the full Pydantic rewrite + dropping the bespoke `validate_request`
-regex WAF is a deliberate security-posture change left for a focused pass).
+upload/query/stats handlers (transport-bound file/SQL).
 Follow the recipe above for anything new so the surface keeps converging.

@@ -118,6 +118,18 @@ class Config:
 
     CACHE_TYPE = "SimpleCache"  # overridden to RedisCache in Dev/Prod
 
+    # Reject oversized request bodies with 413 before buffering/processing. A
+    # generous ceiling (defense-in-depth behind nginx's client_max_body_size);
+    # must stay above the largest legitimate dataset upload — tune per env.
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH_MB", 1024)) * 1024 * 1024
+
+    # Rate limiting (flask-limiter). Storage is memory:// unless a URI is set
+    # (Dev/Prod point it at Redis); per-route limits live on the endpoints.
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI")
+    RATELIMIT_HEADERS_ENABLED = True
+    # Limit for the auth endpoints (login/refresh/change-password).
+    RATELIMIT_AUTH = os.getenv("RATELIMIT_AUTH", "10 per minute")
+
     # Demo/mock credit-risk data (mock_credit.py) is a dev/test convenience and
     # must never be reachable in production. Off by default; Dev/Testing enable it.
     ALLOW_MOCK_CREDIT = os.getenv("ALLOW_MOCK_CREDIT", "false").lower() == "true"
@@ -147,6 +159,10 @@ class Config:
 class TestingConfig(Config):
     SECRET_KEY = "test-secret"
     ALLOW_MOCK_CREDIT = True
+    # Limiter stays wired (memory storage) but effectively unlimited so the
+    # login-heavy suite never trips it; the rate-limit test lowers RATELIMIT_AUTH.
+    RATELIMIT_STORAGE_URI = "memory://"
+    RATELIMIT_AUTH = "1000000 per hour"
     # Route exceptions through the global error boundary (as prod does) instead
     # of letting Flask re-raise them under TESTING — so integration tests see
     # the real DomainError/ValidationError -> HTTP status mapping.
@@ -171,6 +187,7 @@ class DevelopmentConfig(Config):
     CACHE_TYPE = "RedisCache"
     REDIS_URL = _redis_url()
     CACHE_REDIS_URL = REDIS_URL
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI") or REDIS_URL
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
 
@@ -194,6 +211,7 @@ class ProductionConfig(Config):
     CACHE_TYPE = "RedisCache"
     REDIS_URL = _redis_url()
     CACHE_REDIS_URL = REDIS_URL
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI") or REDIS_URL
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
 

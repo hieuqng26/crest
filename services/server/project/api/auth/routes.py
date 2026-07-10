@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, current_app, jsonify, make_response, request
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
@@ -14,16 +14,24 @@ from flask_jwt_extended import (
     unset_jwt_cookies,
 )
 
+from pydantic import ValidationError
+
 from project import bcrypt, db
 from project.api.auditlog.models import log_audit
 from project.api.auth import security, sessions
+from project.api.helpers import validation_message
 from project.api.roles.registry import permissions_for
 from project.api.users.models import User
-from project.api.utils import validate_request
+from project.extensions import limiter
 from project.logger import get_logger
+from project.schemas.auth import AuthLogin, ChangePassword
 
 auth = Blueprint("auth", __name__)
 logger = get_logger(__name__)
+
+
+def _auth_rate_limit() -> str:
+    return current_app.config["RATELIMIT_AUTH"]
 
 
 def _client_ip() -> str:
@@ -49,11 +57,14 @@ def _issue_session(user) -> tuple:
 
 
 @auth.post("/login")
-@validate_request(allowed_keys=["email", "password"])
+@limiter.limit(_auth_rate_limit)
 def login():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip()
-    password = data.get("password") or ""
+    try:
+        creds = AuthLogin.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"message": validation_message(e)}), 400
+    email = creds.email.strip()
+    password = creds.password
     ip = _client_ip()
 
     if security.is_locked(email, ip):
@@ -107,6 +118,7 @@ def login():
 
 
 @auth.post("/refresh")
+@limiter.limit(_auth_rate_limit)
 @jwt_required(refresh=True)
 def refresh():
     identity = get_jwt_identity()
@@ -164,20 +176,21 @@ def me():
 
 
 @auth.post("/change-password")
+@limiter.limit(_auth_rate_limit)
 @jwt_required()
-@validate_request(allowed_keys=["current_password", "new_password"])
 def change_password():
-    data = request.get_json() or {}
+    try:
+        body = ChangePassword.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"message": validation_message(e)}), 400
     user = User.query.filter_by(email=get_jwt_identity()).first()
-    if not user or not bcrypt.check_password_hash(
-        user.password, data.get("current_password", "")
-    ):
+    if not user or not bcrypt.check_password_hash(user.password, body.current_password):
         return jsonify({"message": "Current password is incorrect"}), 400
     try:
-        security.validate_password_strength(data.get("new_password", ""))
+        security.validate_password_strength(body.new_password)
     except ValueError as e:
         return jsonify({"message": str(e)}), 400
-    user.password = bcrypt.generate_password_hash(data["new_password"]).decode("utf-8")
+    user.password = bcrypt.generate_password_hash(body.new_password).decode("utf-8")
     db.session.commit()
     sessions.revoke_all_for_user(user.email)  # force re-login everywhere
     resp = make_response(jsonify({"ok": True}), 200)

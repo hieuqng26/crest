@@ -10,9 +10,23 @@ from typing import Any
 
 import pandas as pd
 from flask import request
+from pydantic import ValidationError
 
 from project.core import table_query
 from project.exceptions import NotFoundError
+
+
+def validation_message(exc: ValidationError) -> str:
+    """First pydantic error as a ``'<field>: <msg>'`` string.
+
+    Used by the admin/auth endpoints that must keep the ``{"message": ...}``
+    error shape their frontend views read (``response.data.message``), instead
+    of letting the ValidationError reach the boundary's ``{"error": ...}`` form.
+    """
+    first = exc.errors()[0] if exc.errors() else {}
+    loc = ".".join(str(p) for p in first.get("loc", ()))
+    msg = first.get("msg", "Invalid request")
+    return f"{loc}: {msg}" if loc else msg
 
 
 def get_or_404(model, description: str = "Resource not found", **filters):

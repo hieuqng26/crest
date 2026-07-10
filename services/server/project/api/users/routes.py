@@ -10,21 +10,13 @@ from project import bcrypt, db
 from project.api.auditlog.models import log_audit
 from project.api.auth import sessions
 from project.api.auth.decorators import require_perm
+from project.api.helpers import validation_message
 from project.api.roles.models import RoleModel
 from project.api.users.models import User
-from project.api.utils import valid_date, valid_uuid, validate_request
+from project.api.utils import valid_date, valid_uuid
 from project.schemas.users import AddUser, UpdateUser
 
 user = Blueprint("user", __name__)
-
-
-def _validation_message(exc: ValidationError) -> str:
-    """First pydantic error as a '<field>: <msg>' string for the {"message"}
-    error shape the UAM frontend reads."""
-    first = exc.errors()[0] if exc.errors() else {}
-    loc = ".".join(str(p) for p in first.get("loc", ()))
-    msg = first.get("msg", "Invalid request")
-    return f"{loc}: {msg}" if loc else msg
 
 
 def _role_exists(role: str) -> bool:
@@ -55,7 +47,6 @@ def _audit_user(
 
 @user.get("/all")
 @require_perm("user:read")
-@validate_request()
 def get_all_users():
     """Query all users"""
     users_list = [user.to_dict() for user in User.query.all()]
@@ -64,7 +55,6 @@ def get_all_users():
 
 @user.get("/is_local_system_admin/<string:username>")
 @require_perm("user:read")
-@validate_request()
 def get_is_local_system_admin(username):
     LOCAL_SYSTEM_ADMIN_USERNAME = os.getenv("LOCAL_SYSTEM_ADMIN_USERNAME")
     doMatch = username == LOCAL_SYSTEM_ADMIN_USERNAME
@@ -73,7 +63,6 @@ def get_is_local_system_admin(username):
 
 @user.get("/id/<string:id>")
 @require_perm("user:read")
-@validate_request()
 def get_user_by_id(id):
     """Query user by uid"""
     try:
@@ -108,7 +97,6 @@ def get_user_by_id(id):
 
 @user.get("/email/<string:email>")
 @require_perm("user:read")
-@validate_request()
 def get_user_by_email(email):
     """Query user by email"""
     try:
@@ -134,7 +122,6 @@ def get_user_by_email(email):
 
 @user.post("/add_batch")
 @require_perm("user:write")
-@validate_request(allowed_keys=["users"])
 def add_multi_users():
     """Add multiple users. Every row must carry a valid, existing role."""
     try:
@@ -187,9 +174,6 @@ def add_multi_users():
 
 @user.post("/add")
 @require_perm("user:write")
-@validate_request(
-    allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
-)
 def add_user():
     """Add user"""
     email = None  # bound for the audit descriptions in the except handlers below
@@ -197,7 +181,7 @@ def add_user():
         try:
             payload = AddUser.model_validate(request.get_json(silent=True) or {})
         except ValidationError as ve:
-            raise ValueError(_validation_message(ve)) from ve
+            raise ValueError(validation_message(ve)) from ve
         email = payload.email
         password = payload.password
         role = payload.role
@@ -255,9 +239,6 @@ def add_user():
 
 @user.put("/update/<string:email>")
 @require_perm("user:write")
-@validate_request(
-    allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
-)
 def update_user(email):
     """Update user by email"""
     try:
@@ -269,7 +250,7 @@ def update_user(email):
         try:
             payload = UpdateUser.model_validate(request.get_json(silent=True) or {})
         except ValidationError as ve:
-            raise ValueError(_validation_message(ve)) from ve
+            raise ValueError(validation_message(ve)) from ve
         email = payload.email
         password = payload.password
         role = payload.role
@@ -348,7 +329,6 @@ def update_user(email):
 
 @user.put("/updates")
 @require_perm("user:write")
-@validate_request(allowed_keys=["users"])
 def update_users():
     """Update users"""
     try:
@@ -445,7 +425,6 @@ def update_users():
 
 @user.delete("/delete/<string:email>")
 @require_perm("user:write")
-@validate_request()
 def delete_user(email):
     """Delete user by email"""
     try:
