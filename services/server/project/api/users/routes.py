@@ -20,6 +20,28 @@ def _role_exists(role: str) -> bool:
     return bool(role) and RoleModel.query.filter_by(name=role).first() is not None
 
 
+def _audit_user(
+    action,
+    description,
+    *,
+    error_codes="",
+    previous_data="",
+    new_data="",
+    database_involved="users",
+):
+    """log_audit with the UAM/user constants (module/submodule) pre-filled."""
+    log_audit(
+        action=action,
+        module="uam",
+        submodule="user",
+        previous_data=previous_data,
+        new_data=new_data,
+        description=description,
+        error_codes=error_codes,
+        database_involved=database_involved,
+    )
+
+
 @user.route("/all", methods=["GET"])
 @require_perm("user:read")
 @validate_request()
@@ -50,25 +72,14 @@ def get_user_by_id(id):
             return make_response(jsonify({"message": "User not found"}), 404)
 
         # audit log
-        log_audit(
-            action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] retrieved user with id {id}",
-            error_codes="",
-            database_involved="users",
+        _audit_user(
+            action="Retrieve", description=f"User [$USER] retrieved user with id {id}"
         )
         return make_response(jsonify(user.to_dict()), 200)
 
     except NameError as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve job. Job_id is invalid. Error: {str(e)}",
             error_codes="404",
             database_involved="jobs, jobHistory",
@@ -76,15 +87,10 @@ def get_user_by_id(id):
         return make_response(jsonify({"message": str(e)}), 404)
 
     except Exception as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve user with id {id}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -100,28 +106,17 @@ def get_user_by_email(email):
             return make_response(jsonify({"message": "User not found"}), 404)
 
         # audit log
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] retrieved user with email {email}",
-            error_codes="",
-            database_involved="users",
         )
         return make_response(jsonify(user.to_dict()), 200)
 
     except Exception as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve user with email {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -169,28 +164,14 @@ def add_multi_users():
             )
         db.session.commit()
 
-        log_audit(
-            action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description="User [$USER] added multiple users",
-            error_codes="",
-            database_involved="users",
-        )
+        _audit_user(action="Add", description="User [$USER] added multiple users")
         return make_response(jsonify({"message": "Users added"}), 201)
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add multiple users. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -231,57 +212,33 @@ def add_user():
         db.session.commit()
 
         # audit log
-        log_audit(
-            action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] added user {email}",
-            error_codes="",
-            database_involved="users",
-        )
+        _audit_user(action="Add", description=f"User [$USER] added user {email}")
         return make_response(jsonify(user.to_dict()), 201)
 
     except Conflict as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="409",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 409)
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 400)
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -349,43 +306,29 @@ def update_user(email):
             sessions.revoke_all_for_user(user.email)
 
         # audit log
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
+            description=f"User [$USER] updated user {email}",
             previous_data=json.dumps(previous_data),
             new_data=json.dumps(new_data),
-            description=f"User [$USER] updated user {email}",
-            error_codes="",
-            database_involved="users",
         )
         return make_response(jsonify(user.to_dict()), 200)
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 400)
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -462,43 +405,29 @@ def update_users():
                 sessions.revoke_all_for_user(user.email)
 
             # audit log
-            log_audit(
+            _audit_user(
                 action="Update",
-                module="uam",
-                submodule="user",
+                description=f"User [$USER] updated user {email}",
                 previous_data=json.dumps(previous_data),
                 new_data=json.dumps(new_data),
-                description=f"User [$USER] updated user {email}",
-                error_codes="",
-                database_involved="users",
             )
         return make_response(jsonify({"message": "Users updated"}), 201)
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 400)
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
 
@@ -520,28 +449,14 @@ def delete_user(email):
         db.session.commit()
 
         # audit log
-        log_audit(
-            action="Delete",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] deleted user {email}",
-            error_codes="",
-            database_involved="users",
-        )
+        _audit_user(action="Delete", description=f"User [$USER] deleted user {email}")
         return make_response(jsonify({"message": "User deleted"}), 200)
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Delete",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to delete user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
         return make_response(jsonify({"message": str(e)}), 500)
