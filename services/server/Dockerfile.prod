@@ -137,7 +137,7 @@ RUN chmod +x $APP_HOME/entrypoint.sh
 
 # Copy application code
 COPY manage.py requirements.txt $APP_HOME/
-COPY migrations[2]/ $APP_HOME/migrations/
+COPY migrations/ $APP_HOME/migrations/
 COPY project/ $APP_HOME/project/
 
 # Copy pyarmor runtime if present

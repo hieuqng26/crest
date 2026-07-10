@@ -62,8 +62,12 @@ RUN dnf update -y && \
 COPY --from=build-stage /app/dist /usr/share/nginx/html
 COPY default.conf.template ./
 COPY nginx.conf /etc/nginx/nginx.conf
+COPY ssl/ /etc/nginx/conf.d/ssl/
 
 RUN sed -i 's/https:\/\/github.com\/crypto\-browserify\/crypto\-browserify//g' /usr/share/nginx/html/assets/`ls /usr/share/nginx/html/assets | grep -E index.+\.js`
+
+RUN chown -R $NGINX_USER:$NGINX_GROUP /etc/nginx/conf.d/ssl/ && \
+    chmod 600 /etc/nginx/conf.d/ssl/nginx.key
 
 # Switch to the non-root user
 USER $NGINX_USER
