@@ -181,8 +181,6 @@ const COLUMN_MAP = {
   Submodule: 'submodule',
   Status: 'status',
   'IP Address': 'ip_address',
-  'IP Address2': 'ip_address2',
-  'IP Address3': 'ip_address3',
   Description: 'description',
   'Device Info': 'device_info',
   'Session ID': 'session_id',
@@ -207,8 +205,6 @@ const shortId = (id) => (id && id.length > 12 ? id.slice(0, 8) + '…' : (id ?? 
 const DETAIL_FIELDS = [
   { field: 'log_id', label: 'Identifier' },
   { field: 'ip_address', label: 'IP Address' },
-  { field: 'ip_address2', label: 'IP Address 2' },
-  { field: 'ip_address3', label: 'IP Address 3' },
   { field: 'session_id', label: 'Session ID' },
   { field: 'device_info', label: 'Device Info' },
   { field: 'login_time', label: 'Last Login', fmt: (v) => formatDate(v, true) },
