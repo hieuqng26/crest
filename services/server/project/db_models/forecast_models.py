@@ -18,6 +18,11 @@ class ForecastRun(db.Model):
     dataset_id = db.Column(db.Integer, db.ForeignKey("datasets.id"), nullable=False)
     status = db.Column(db.String(32), nullable=False, default="queued")
     triggered_by = db.Column(db.String(64), nullable=True)
+    # How the run was launched: 'manual' (HTTP) or 'auto' (MCP). Surfaced as the
+    # AUTO/MANUAL tag in job history.
+    origin = db.Column(
+        db.String(16), nullable=False, server_default="manual", default="manual"
+    )
     created_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -78,6 +83,7 @@ class ForecastRun(db.Model):
             dataset_name=ds.name if ds else None,
             status=self.status,
             triggered_by=self.triggered_by,
+            origin=self.origin,
             created_at=self.created_at.isoformat() if self.created_at else None,
             started_at=self.started_at.isoformat() if self.started_at else None,
             finished_at=self.finished_at.isoformat() if self.finished_at else None,

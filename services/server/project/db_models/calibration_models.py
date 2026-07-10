@@ -87,6 +87,11 @@ class CalibrationRun(db.Model):
     triggered_by = db.Column(
         db.String(64), db.ForeignKey("users.email"), nullable=False
     )
+    # How the run was launched: 'manual' (New Model wizard / HTTP) or 'auto'
+    # (MCP). Surfaced as the AUTO/MANUAL tag in job history.
+    origin = db.Column(
+        db.String(16), nullable=False, server_default="manual", default="manual"
+    )
     artifact_path = db.Column(db.String(1024), nullable=True)
     started_at = db.Column(db.DateTime, nullable=True, index=True)
     finished_at = db.Column(db.DateTime, nullable=True)
@@ -139,6 +144,7 @@ class CalibrationRun(db.Model):
             model_config_id=self.model_config_id,
             status=self.status,
             triggered_by=self.triggered_by,
+            origin=self.origin,
             artifact_path=self.artifact_path,
             started_at=self.started_at.isoformat() if self.started_at else None,
             finished_at=self.finished_at.isoformat() if self.finished_at else None,

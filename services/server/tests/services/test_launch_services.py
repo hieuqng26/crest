@@ -80,6 +80,21 @@ def test_calibration_create_run_dispatches_on_success(app, seed):
         result = svc.create_run(payload, seed["user"].email)
     assert result["status"] == "queued"
     delay.assert_called_once_with(result["run_id"])
+    # HTTP/service default is MANUAL (the New Model wizard); MCP passes AUTO.
+    assert result["origin"] == "manual"
+
+
+def test_calibration_create_run_origin_auto_when_passed(app, seed):
+    from project.constants import LaunchOrigin
+    from project.schemas.calibrations import CreateCalibrationRun
+    from project.services import calibrations as svc
+
+    payload = CreateCalibrationRun(
+        dataset_id=seed["dataset"].id, model_config_id=seed["cfg"].id
+    )
+    with patch("project.services.calibrations.run_calibration.delay"):
+        result = svc.create_run(payload, seed["user"].email, LaunchOrigin.AUTO)
+    assert result["origin"] == "auto"
 
 
 # ── forecast_runs.create_run ───────────────────────────────────────────────

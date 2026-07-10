@@ -1,7 +1,5 @@
-import json
 from datetime import datetime, timezone
 
-import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
@@ -9,17 +7,12 @@ from project import app_session
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
-from project.db_models.calibration_models import (
-    CalibrationRun,
-    Dataset,
-)
 from project.db_models.credit_models import CreditRiskForecastInput, CreditRiskRun
 from project.db_models.forecast_models import (
     ForecastRun,
     ForecastRunLog,
     ForecastRunResult,
 )
-from project.api.helpers import pagination_envelope
 from project.schemas.forecast_runs import CreateForecastRun
 from project.services import forecast_runs as forecast_run_service
 from project.services.run_guards import ensure_not_workflow_member
@@ -30,54 +23,13 @@ from . import forecast_runs
 @forecast_runs.get("")
 @require_perm("forecast:read")
 def list_runs():
-    status = request.args.get("status")
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
-
-    q = ForecastRun.query
-    if status:
-        q = q.filter_by(status=status)
-    runs = q.order_by(ForecastRun.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    items = runs.items
-
-    # Batch-load the related rows so ForecastRun.to_dict() doesn't fire three
-    # per-row queries (was 1 + 3N; now a handful of IN(...) lookups).
-    from project.db_models.calibration_models import ModelConfig
-
-    cal_ids = {r.calibration_run_id for r in items}
-    ds_ids = {r.dataset_id for r in items}
-    cals = (
-        {c.id: c for c in CalibrationRun.query.filter(CalibrationRun.id.in_(cal_ids))}
-        if cal_ids
-        else {}
-    )
-    cfg_ids = {c.model_config_id for c in cals.values()}
-    cfgs = (
-        {m.id: m for m in ModelConfig.query.filter(ModelConfig.id.in_(cfg_ids))}
-        if cfg_ids
-        else {}
-    )
-    datasets = (
-        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
-        if ds_ids
-        else {}
-    )
-
-    result = []
-    for r in items:
-        cal = cals.get(r.calibration_run_id)
-        cfg = cfgs.get(cal.model_config_id) if cal else None
-        result.append(
-            r.to_dict(
-                cal_run=cal,
-                dataset=datasets.get(r.dataset_id),
-                config_name=cfg.name if cfg else None,
-            )
+    return jsonify(
+        forecast_run_service.list_runs(
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 50, type=int),
+            status=request.args.get("status"),
         )
-
-    return jsonify(pagination_envelope(result, runs)), 200
+    ), 200
 
 
 @forecast_runs.post("")
@@ -91,16 +43,7 @@ def create_run():
 @forecast_runs.get("/<run_id>")
 @require_perm("forecast:read")
 def get_run(run_id: str):
-    fr = ForecastRun.query.filter_by(run_id=run_id).first()
-    if not fr:
-        return jsonify({"error": "Not found"}), 404
-    d = fr.to_dict()
-    if fr.workflow_run_id:
-        from project.db_models.workflow_models import WorkflowRun
-
-        wf = WorkflowRun.query.get(fr.workflow_run_id)
-        d["workflow_run_uuid"] = wf.run_id if wf else None
-    return jsonify(d), 200
+    return jsonify(forecast_run_service.get_run(run_id)), 200
 
 
 @forecast_runs.get("/<run_id>/refs")
@@ -261,41 +204,19 @@ def rerun_run(run_id: str):
     return jsonify({"ok": True}), 202
 
 
-def _forecast_results_df(fr: ForecastRun) -> pd.DataFrame:
-    rows = (
-        ForecastRunResult.query.filter_by(forecast_run_id=fr.id)
-        .order_by(ForecastRunResult.id)
-        .all()
-    )
-    records = []
-    for r in rows:
-        try:
-            meta = json.loads(r.meta_json) if r.meta_json else {}
-        except (TypeError, ValueError):
-            meta = {}
-        records.append({"date": r.date, "predicted": r.predicted, **meta})
-    return pd.DataFrame.from_records(records)
-
-
 @forecast_runs.get("/<run_id>/results")
 @require_perm("forecast:read")
 def get_results(run_id: str):
-    fr = ForecastRun.query.filter_by(run_id=run_id).first()
-    if not fr:
-        return jsonify({"error": "Not found"}), 404
-
-    df = _forecast_results_df(fr)
-    page, total = table_query.query_page(
-        df,
-        page=int(request.args.get("page", 0)),
-        page_size=int(request.args.get("page_size", 50)),
-        sort_column=request.args.get("sort_column"),
-        sort_order=request.args.get("sort_order"),
-        filters=table_query.parse_filters(request.args.get("filters")),
-    )
-    rows = page.where(pd.notnull(page), None).to_dict(orient="records")
-    columns = list(df.columns)
-    return jsonify({"rows": rows, "total": total, "columns": columns}), 200
+    return jsonify(
+        forecast_run_service.get_results(
+            run_id,
+            page=int(request.args.get("page", 0)),
+            page_size=int(request.args.get("page_size", 50)),
+            sort_column=request.args.get("sort_column"),
+            sort_order=request.args.get("sort_order"),
+            filters=table_query.parse_filters(request.args.get("filters")),
+        )
+    ), 200
 
 
 @forecast_runs.get("/<run_id>/results/distinct")
@@ -308,5 +229,5 @@ def get_results_distinct(run_id: str):
     if not column:
         return jsonify({"values": [], "truncated": False}), 200
 
-    df = _forecast_results_df(fr)
+    df = forecast_run_service.results_df(fr)
     return jsonify(table_query.distinct_values(df, column)), 200

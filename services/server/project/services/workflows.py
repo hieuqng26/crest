@@ -1,8 +1,8 @@
-"""Workflow launch orchestration (transport-agnostic).
+"""Workflow orchestration and reads (transport-agnostic).
 
-Shared by the Flask route and the future MCP "launch workflow" tool. No Flask
-imports — the caller supplies the acting user's identity and a validated
-``CreateWorkflow`` schema, and receives a plain dict (or raises a DomainError).
+Shared by the Flask routes and the MCP tools. No Flask imports — the caller
+supplies the acting user's identity and validated arguments, and receives a
+plain dict (or raises a DomainError).
 """
 
 import json
@@ -10,13 +10,25 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from project import app_session
-from project.constants import RunStatus, WorkflowStage
+import pandas as pd
+from sqlalchemy.orm import selectinload
+
+from project import app_session, db
+from project.constants import LaunchOrigin, RunStatus, WorkflowStage
+from project.core import table_query
 from project.core.calibration_launch import (
     build_search_config_json,
     validate_segmentation,
 )
-from project.db_models.calibration_models import CalibrationRun, Dataset, ModelConfig
+from project.db_models.calibration_models import (
+    CalibrationRun,
+    CalibrationRunLog,
+    CalibrationRunSegment,
+    Dataset,
+    ModelConfig,
+)
+from project.db_models.credit_models import CreditRiskRun, CreditRiskRunLog
+from project.db_models.forecast_models import ForecastRun, ForecastRunLog
 from project.db_models.workflow_models import WorkflowRun
 from project.exceptions import (
     BadRequestError,
@@ -25,6 +37,7 @@ from project.exceptions import (
     UnprocessableEntityError,
 )
 from project.schemas.workflows import CreateWorkflow
+from project.services._pagination import pagination_envelope
 from project.workers.tasks import run_calibration
 
 _NUMERIC_DTYPE_PREFIXES = ("int", "float", "uint")
@@ -45,13 +58,21 @@ def dataset_schema(ds: Dataset) -> tuple[set, dict]:
 
 
 def launch_workflow(
-    name, resolved_targets, analysis_params, datasets, identity, parsed_seg=None
+    name,
+    resolved_targets,
+    analysis_params,
+    datasets,
+    identity,
+    parsed_seg=None,
+    origin: str = LaunchOrigin.MANUAL,
 ):
     """Create a WorkflowRun + one CalibrationRun per target, then dispatch
     ``run_calibration`` for each. Returns ``(wf_dict, created_list)``.
 
     ``datasets`` = {'calibration', 'forecast', 'credit'|None, 'financial'|None}
     ``resolved_targets`` = [{'target_col', '_cfg': ModelConfig, 'feature_cols'}]
+    ``origin`` (MANUAL from HTTP wizard, AUTO from MCP) is stamped on the
+    workflow and every child run so job history tags them consistently.
     """
     if parsed_seg is None:
         parsed_seg = {
@@ -75,6 +96,7 @@ def launch_workflow(
             status=RunStatus.QUEUED,
             current_stage=WorkflowStage.TRAINING,
             triggered_by=identity,
+            origin=origin,
             created_at=datetime.now(timezone.utc),
             calibration_dataset_id=cal_ds.id,
             forecast_dataset_id=fc_ds.id,
@@ -106,6 +128,7 @@ def launch_workflow(
                 model_config_id=cfg.id,
                 status=RunStatus.QUEUED,
                 triggered_by=identity,
+                origin=origin,
                 search_config_json=build_search_config_json(cfg),
                 train_split=cfg.train_split if cfg.train_split is not None else 0.8,
                 scaler=cfg.scaler,
@@ -144,12 +167,17 @@ def _resolve_config(config_id: int, *, target_col: str | None = None) -> ModelCo
     raise NotFoundError("ModelConfig not found")
 
 
-def create_workflow(payload: CreateWorkflow, identity: str) -> dict:
+def create_workflow(
+    payload: CreateWorkflow,
+    identity: str,
+    origin: str = LaunchOrigin.MANUAL,
+) -> dict:
     """Validate the launch request against current datasets and launch it.
 
-    Returns the workflow dict (with a ``targets`` list of created runs). Raises
-    ``NotFoundError`` (404), ``BadRequestError`` (400) or
-    ``UnprocessableEntityError`` (422) on invalid input.
+    ``origin`` (MANUAL from the HTTP wizard, AUTO from MCP) tags the workflow +
+    children in job history. Returns the workflow dict (with a ``targets`` list
+    of created runs). Raises ``NotFoundError`` (404), ``BadRequestError`` (400)
+    or ``UnprocessableEntityError`` (422) on invalid input.
     """
     default_cfg = _resolve_config(payload.model_config_id)
 
@@ -251,6 +279,7 @@ def create_workflow(payload: CreateWorkflow, identity: str) -> dict:
         datasets,
         identity,
         parsed_seg,
+        origin=origin,
     )
     wf_dict["targets"] = created_list
     return wf_dict
@@ -284,11 +313,17 @@ def _original_segmentation(workflow_pk: int) -> dict | None:
     }
 
 
-def rerun_workflow(run_id: str, identity: str) -> dict:
+def rerun_workflow(
+    run_id: str,
+    identity: str,
+    origin: str = LaunchOrigin.MANUAL,
+) -> dict:
     """Relaunch an existing workflow from its stored targets/analysis params.
 
-    Reuses the current latest datasets. Raises ``NotFoundError`` (404),
-    ``ConflictError`` (409, still active) or ``UnprocessableEntityError`` (422).
+    ``origin`` reflects who launched the RE-RUN (MANUAL from HTTP, AUTO from
+    MCP), not the original. Reuses the current latest datasets. Raises
+    ``NotFoundError`` (404), ``ConflictError`` (409, still active) or
+    ``UnprocessableEntityError`` (422).
     """
     wf = WorkflowRun.query.filter_by(run_id=run_id).first()
     if not wf:
@@ -341,6 +376,318 @@ def rerun_workflow(run_id: str, identity: str) -> dict:
         datasets,
         identity,
         _original_segmentation(wf.id),
+        origin=origin,
     )
     wf_dict["targets"] = created_list
     return wf_dict
+
+
+def list_workflows(page: int = 1, per_page: int = 50) -> dict:
+    """Paginated workflow list, newest first. Each workflow is one process with
+    a single overall status — no per-stage breakdown here; see ``get_workflow``
+    for the per-target detail."""
+    paged = WorkflowRun.query.order_by(WorkflowRun.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    wf_ids = [wf.id for wf in paged.items]
+    cr_by_wf = {}
+    if wf_ids:
+        for cr in CreditRiskRun.query.filter(
+            CreditRiskRun.workflow_run_id.in_(wf_ids)
+        ).all():
+            cr_by_wf[cr.workflow_run_id] = cr
+
+    result = []
+    for wf in paged.items:
+        d = wf.to_dict()
+        cr = cr_by_wf.get(wf.id)
+        d["analysis_summary"] = (
+            {"run_id": cr.run_id, "is_active": bool(cr.is_active), "status": cr.status}
+            if cr
+            else None
+        )
+        result.append(d)
+    return pagination_envelope(result, paged)
+
+
+def _retraining_counts(cal_ids):
+    """Segments queued/running per calibration, in one grouped query.
+
+    A segment re-run leaves the parent run's status at "success", so this count
+    is the only signal the UI has to surface a per-target "Retraining" state.
+    """
+    if not cal_ids:
+        return {}
+    rows = (
+        db.session.query(
+            CalibrationRunSegment.calibration_run_id,
+            db.func.count(CalibrationRunSegment.id),
+        )
+        .filter(
+            CalibrationRunSegment.calibration_run_id.in_(cal_ids),
+            CalibrationRunSegment.status.in_(("queued", "running")),
+        )
+        .group_by(CalibrationRunSegment.calibration_run_id)
+        .all()
+    )
+    return dict(rows)
+
+
+def _get_workflow_light(wf: WorkflowRun) -> dict:
+    """Status-only workflow payload for the 5s poll.
+
+    Returns just the fields the page needs to stay live — per-target statuses,
+    progress and the retraining count — without the heavy per-run to_dict()
+    (which serialises train_metrics_json / val_metrics_json blobs) or the
+    dataset-name lookups. The frontend merges this into the full object it
+    already holds, so the static fields it omits are preserved.
+    """
+    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
+    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
+    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).first()
+    fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
+    retraining_by_cal = _retraining_counts([c.id for c in cals])
+
+    targets = []
+    for cal in cals:
+        fr = fcs_by_cal.get(cal.id)
+        targets.append(
+            {
+                "target_col": cal.target_col,
+                "calibration": {
+                    "run_id": cal.run_id,
+                    "status": cal.status,
+                    "progress": cal.progress,
+                    "finished_at": cal.finished_at.isoformat()
+                    if cal.finished_at
+                    else None,
+                    "retraining_segment_count": retraining_by_cal.get(cal.id, 0),
+                },
+                "forecast": {
+                    "run_id": fr.run_id,
+                    "status": fr.status,
+                    "progress": fr.progress,
+                    "finished_at": fr.finished_at.isoformat()
+                    if fr.finished_at
+                    else None,
+                }
+                if fr
+                else None,
+            }
+        )
+
+    return {
+        "run_id": wf.run_id,
+        "status": wf.status,
+        "current_stage": wf.current_stage,
+        "finished_at": wf.finished_at.isoformat() if wf.finished_at else None,
+        "error_message": wf.error_message,
+        "targets": targets,
+        "analysis": {
+            "run_id": crs.run_id,
+            "status": crs.status,
+            "progress": crs.progress,
+            "finished_at": crs.finished_at.isoformat() if crs.finished_at else None,
+        }
+        if crs
+        else None,
+    }
+
+
+def get_workflow(run_id: str, light: bool = False) -> dict:
+    """One workflow with per-target calibration/forecast detail.
+
+    ``light=True`` returns the status-only polling payload. Raises
+    ``NotFoundError`` (404).
+    """
+    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
+    if not wf:
+        raise NotFoundError("Not found")
+
+    if light:
+        return _get_workflow_light(wf)
+
+    cals = (
+        CalibrationRun.query.options(selectinload(CalibrationRun.model_config))
+        .filter_by(workflow_run_id=wf.id)
+        .all()
+    )
+    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
+    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).all()
+    fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
+    cal_by_id = {cal.id: cal for cal in cals}
+
+    # Batch-load every dataset referenced by the forecast runs and by the four
+    # workflow dataset slots, so the per-target fr.to_dict() and the slot loop
+    # below don't each fire their own .get() (was 3 queries/target + 4 slot gets).
+    ds_ids = {fr.dataset_id for fr in fcs}
+    ds_ids.update(
+        i
+        for i in (
+            wf.calibration_dataset_id,
+            wf.forecast_dataset_id,
+            wf.credit_dataset_id,
+            wf.financial_dataset_id,
+        )
+        if i
+    )
+    datasets = (
+        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
+        if ds_ids
+        else {}
+    )
+
+    retraining_by_cal = _retraining_counts([c.id for c in cals])
+
+    targets = []
+    for cal in cals:
+        cal_d = cal.to_dict()
+        cal_d["retraining_segment_count"] = retraining_by_cal.get(cal.id, 0)
+        cal_d["config_name"] = cal.model_config.name if cal.model_config else None
+        cal_d["algorithm"] = cal.model_config.algorithm if cal.model_config else None
+        fr = fcs_by_cal.get(cal.id)
+        forecast_d = None
+        if fr:
+            fr_cal = cal_by_id.get(fr.calibration_run_id)
+            fr_cfg = fr_cal.model_config if fr_cal else None
+            forecast_d = fr.to_dict(
+                cal_run=fr_cal,
+                dataset=datasets.get(fr.dataset_id),
+                config_name=fr_cfg.name if fr_cfg else None,
+            )
+        targets.append(
+            {
+                "target_col": cal.target_col,
+                "calibration": cal_d,
+                "forecast": forecast_d,
+            }
+        )
+
+    d = wf.to_dict()
+    d["targets"] = targets
+    d["analysis"] = crs[0].to_dict() if crs else None
+    for key, ds_id in (
+        ("calibration_dataset_name", wf.calibration_dataset_id),
+        ("forecast_dataset_name", wf.forecast_dataset_id),
+        ("credit_dataset_name", wf.credit_dataset_id),
+        ("financial_dataset_name", wf.financial_dataset_id),
+    ):
+        ds = datasets.get(ds_id) if ds_id else None
+        d[key] = ds.name if ds else None
+    return d
+
+
+# ── Unified workflow logs ───────────────────────────────────────────────────────
+# One paginated/filterable view over the workflow's training + forecast + credit
+# log lines, each tagged with step/target/sector/segment so the Overview log panel
+# can filter without hitting three separate endpoints.
+
+_LOG_STEP_RANK = {"Training": 0, "Forecast": 1, "Credit": 2}
+_LOG_COLUMNS = ["step", "target", "sector", "segment", "t", "level", "message"]
+
+
+def workflow_log_df(wf: WorkflowRun) -> pd.DataFrame:
+    """Every training/forecast/credit log line of a workflow as one tagged frame."""
+    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
+    cal_target = {c.run_id: c.target_col for c in cals}
+    cal_uuid_by_id = {c.id: c.run_id for c in cals}
+    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
+    fr_target = {
+        fr.run_id: cal_target.get(cal_uuid_by_id.get(fr.calibration_run_id))
+        for fr in fcs
+    }
+    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).all()
+
+    records: list[dict] = []
+    if cal_target:
+        for log in CalibrationRunLog.query.filter(
+            CalibrationRunLog.run_id.in_(list(cal_target))
+        ).all():
+            records.append(
+                {
+                    "step": "Training",
+                    "target": cal_target.get(log.run_id),
+                    "sector": log.sector,
+                    "segment": log.segment,
+                    # Full UTC datetime (matching ForecastRunLog/CreditRiskRunLog.t
+                    # and CalibrationRunLog.to_dict); the client renders it in the
+                    # configured display timezone via fmtTime, so all log rows and
+                    # the run-details chips agree on time.
+                    "t": log.logged_at.strftime("%Y-%m-%d %H:%M:%S")
+                    if log.logged_at
+                    else None,
+                    "level": log.level,
+                    "message": log.message,
+                    "_id": log.id,
+                }
+            )
+    if fcs:
+        for log in ForecastRunLog.query.filter(
+            ForecastRunLog.run_id.in_([fr.run_id for fr in fcs])
+        ).all():
+            records.append(
+                {
+                    "step": "Forecast",
+                    "target": fr_target.get(log.run_id),
+                    "sector": log.sector,
+                    "segment": log.segment,
+                    "t": log.t,
+                    "level": log.level,
+                    "message": log.message,
+                    "_id": log.id,
+                }
+            )
+    if crs:
+        for log in CreditRiskRunLog.query.filter(
+            CreditRiskRunLog.run_id.in_([cr.run_id for cr in crs])
+        ).all():
+            records.append(
+                {
+                    "step": "Credit",
+                    "target": None,
+                    "sector": log.sector,
+                    "segment": log.segment,
+                    "t": log.t,
+                    "level": log.level,
+                    "message": log.message,
+                    "_id": log.id,
+                }
+            )
+
+    df = pd.DataFrame.from_records(records, columns=[*_LOG_COLUMNS, "_id"])
+    if df.empty:
+        return df[_LOG_COLUMNS]
+    # Default order is reverse-chronological by the workflow's execution order:
+    # Credit (last stage) → Forecast → Training, newest id first within each stage.
+    df["_rank"] = df["step"].map(_LOG_STEP_RANK).fillna(99)
+    df = df.sort_values(["_rank", "_id"], ascending=[False, False], kind="stable")
+    return df[_LOG_COLUMNS]
+
+
+def get_workflow_logs(
+    run_id: str,
+    page: int = 0,
+    page_size: int = 50,
+    sort_column: str | None = None,
+    sort_order: str | None = None,
+    filters: list | None = None,
+) -> dict:
+    """One filtered/sorted page of a workflow's unified log lines.
+
+    ``filters`` is the already-parsed ``table_query`` filter list. Raises
+    ``NotFoundError`` (404).
+    """
+    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
+    if not wf:
+        raise NotFoundError("Not found")
+    df = workflow_log_df(wf)
+    page_df, total = table_query.query_page(
+        df,
+        page=page,
+        page_size=page_size,
+        sort_column=sort_column,
+        sort_order=sort_order,
+        filters=filters,
+    )
+    rows = page_df.where(pd.notnull(page_df), None).to_dict(orient="records")
+    return {"rows": rows, "total": total, "columns": list(df.columns)}

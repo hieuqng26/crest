@@ -51,6 +51,11 @@ class CreditRiskRun(db.Model):
     curve = db.Column(db.String(32), nullable=False, default="moodys")
     status = db.Column(db.String(32), nullable=False, default="queued")
     triggered_by = db.Column(db.String(64), nullable=True)
+    # How the run was launched: 'manual' (HTTP) or 'auto' (MCP). Surfaced as the
+    # AUTO/MANUAL tag in job history.
+    origin = db.Column(
+        db.String(16), nullable=False, server_default="manual", default="manual"
+    )
     started_at = db.Column(db.DateTime, nullable=True)
     finished_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
@@ -88,6 +93,7 @@ class CreditRiskRun(db.Model):
             curve=self.curve,
             status=self.status,
             triggered_by=self.triggered_by,
+            origin=self.origin,
             started_at=self.started_at.isoformat() if self.started_at else None,
             finished_at=self.finished_at.isoformat() if self.finished_at else None,
             error_message=self.error_message,

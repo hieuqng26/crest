@@ -1,0 +1,5 @@
+# MCP server dependencies — opt-in for the local host running
+# `python -m project.mcp_server`; the Flask/Celery Docker images install
+# only requirements.txt and stay unchanged.
+-r requirements.txt
+mcp>=1.9,<2

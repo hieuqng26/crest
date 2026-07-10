@@ -42,7 +42,8 @@ RUN /usr/local/bin/pip3 install \
       --trusted-host pypi.python.org \
       --trusted-host files.pythonhosted.org \
       -r /tmp/requirements.txt \
-      debugpy==1.8.5 werkzeug==2.2.2 && \
+      debugpy==1.8.5 werkzeug==2.2.2 \
+      "mcp>=1.9,<2" && \
     rm /tmp/requirements.txt
 
 # Stage 2: Runtime — minimal image, copy only compiled artifacts

@@ -9,10 +9,10 @@ from project.api.auth.decorators import require_perm
 from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
 from project.db_models.calibration_models import (
     CalibrationRun,
-    CalibrationRunSegment,
     ModelConfig,
 )
 from project.logger import get_logger
+from project.services import model_configs as model_config_service
 
 from . import model_configs
 
@@ -48,19 +48,6 @@ def _validate_train_split(raw) -> tuple[float | None, str | None]:
     return value, None
 
 
-def _used_by_label(config_id: int) -> str:
-    sectors = (
-        CalibrationRunSegment.query.with_entities(CalibrationRunSegment.sector)
-        .filter_by(model_config_id=config_id)
-        .distinct()
-        .count()
-    )
-    if sectors:
-        return f"{sectors} sector{'s' if sectors != 1 else ''}"
-    direct = CalibrationRun.query.filter_by(model_config_id=config_id).count()
-    return f"{direct} run{'s' if direct != 1 else ''}" if direct else "—"
-
-
 @model_configs.get("/registry")
 @require_perm("model_config:read")
 def list_registry():
@@ -70,13 +57,7 @@ def list_registry():
 @model_configs.get("/")
 @require_perm("model_config:read")
 def list_configs():
-    rows = ModelConfig.query.order_by(ModelConfig.created_at.desc()).all()
-    result = []
-    for r in rows:
-        d = r.to_dict()
-        d["used_by"] = _used_by_label(r.id)
-        result.append(d)
-    return jsonify(result), 200
+    return jsonify(model_config_service.list_configs()), 200
 
 
 @model_configs.post("/")
