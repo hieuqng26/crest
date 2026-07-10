@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from sqlalchemy.orm import selectinload
 
 from project import app_session, cache, db
 from project.api.auth.decorators import require_perm
@@ -14,11 +13,9 @@ from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunLog,
     CalibrationRunSegment,
-    Dataset,
     Forecast,
     ModelConfig,
 )
-from project.api.helpers import pagination_envelope
 from project.db_models.forecast_models import ForecastRun
 from project.logger import get_logger
 from project.schemas.calibrations import CreateCalibrationRun
@@ -39,35 +36,13 @@ logger = get_logger(__name__)
 @calibrations.get("/")
 @require_perm("calibration:read")
 def list_runs():
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
-    status_filter = request.args.get("status")
-
-    q = (
-        CalibrationRun.query.options(
-            selectinload(CalibrationRun.model_config),
-            selectinload(CalibrationRun.dataset),
+    return jsonify(
+        calibration_service.list_runs(
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 50, type=int),
+            status=request.args.get("status"),
         )
-        .join(Dataset, CalibrationRun.dataset_id == Dataset.id)
-        .join(ModelConfig, CalibrationRun.model_config_id == ModelConfig.id)
-        .order_by(CalibrationRun.started_at.desc())
-    )
-
-    if status_filter:
-        q = q.filter(CalibrationRun.status == status_filter)
-
-    runs = q.paginate(page=page, per_page=per_page, error_out=False)
-    result = []
-    for r in runs.items:
-        d = r.to_dict()
-        d["config_name"] = r.model_config.name if r.model_config else None
-        d["run_name"] = r.name or d["config_name"]
-        d["dataset_name"] = r.dataset.name if r.dataset else None
-        d["algorithm"] = r.model_config.algorithm if r.model_config else None
-        d["model_family"] = r.model_config.family if r.model_config else None
-        result.append(d)
-
-    return jsonify(pagination_envelope(result, runs)), 200
+    ), 200
 
 
 @calibrations.post("/")
@@ -81,54 +56,15 @@ def create_run():
 @calibrations.get("/<run_id>")
 @require_perm("calibration:read")
 def get_run(run_id):
-    run = CalibrationRun.query.filter_by(run_id=run_id).first()
-    if not run:
-        return jsonify({"error": "Not found"}), 404
-    d = run.to_dict()
-    d["config_name"] = run.model_config.name if run.model_config else None
-    d["run_name"] = run.name or d["config_name"]
-    d["dataset_name"] = run.dataset.name if run.dataset else None
-    d["algorithm"] = run.model_config.algorithm if run.model_config else None
-    d["model_family"] = run.model_config.family if run.model_config else None
-    # A segment re-run leaves this run at "success"; expose the in-flight count so
-    # the job page can show a "Retraining" state and keep polling until it lands.
-    d["retraining_segment_count"] = (
-        CalibrationRunSegment.query.filter(
-            CalibrationRunSegment.calibration_run_id == run.id,
-            CalibrationRunSegment.status.in_(("queued", "running")),
-        ).count()
-        if run.seg_sectors_json is not None
-        else 0
-    )
-    if run.workflow_run_id:
-        from project.db_models.workflow_models import WorkflowRun
-
-        wf = WorkflowRun.query.get(run.workflow_run_id)
-        d["workflow_run_uuid"] = wf.run_id if wf else None
-    return jsonify(d), 200
-
-
-# The per-observation validation arrays are what make the segment metrics blobs
-# huge. The segment LIST never needs them — the actual-vs-predicted scatter fetches
-# them for the ONE selected segment via GET /<run_id>/diagnostics?segment_key=.
-# `residuals`/`fitted` are kept: they're single arrays the aggregate residual
-# histogram sums across segments, and dropping them would break that view.
-_HEAVY_METRIC_KEYS = ("val_obs", "train_obs")
-
-
-def _slim_metrics(m):
-    """Drop the big per-observation arrays from a metrics dict, keeping the rest."""
-    if not isinstance(m, dict):
-        return m
-    return {k: v for k, v in m.items() if k not in _HEAVY_METRIC_KEYS}
+    return jsonify(calibration_service.get_run(run_id)), 200
 
 
 def _serialize_segment(s, algorithm, full):
     d = s.to_dict()
     d["algorithm"] = algorithm
     if not full:
-        d["val_metrics"] = _slim_metrics(d.get("val_metrics"))
-        d["train_metrics"] = _slim_metrics(d.get("train_metrics"))
+        d["val_metrics"] = calibration_service.slim_metrics(d.get("val_metrics"))
+        d["train_metrics"] = calibration_service.slim_metrics(d.get("train_metrics"))
     return d
 
 
@@ -275,44 +211,10 @@ def recalibrate_segment(run_id, segment_key):
 @calibrations.get("/<run_id>/diagnostics")
 @require_perm("calibration:read")
 def get_diagnostics(run_id):
-    run = CalibrationRun.query.filter_by(run_id=run_id).first()
-    if not run:
-        return jsonify({"error": "Not found"}), 404
-    if run.status != "success":
-        return jsonify(
-            {"error": f"Run is {run.status}, diagnostics not available"}
-        ), 409
-
-    segment_key = request.args.get("segment_key")
-    if segment_key:
-        seg = CalibrationRunSegment.query.filter_by(
-            calibration_run_id=run.id, segment_key=segment_key
-        ).first()
-        if not seg:
-            return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
-        if seg.status != "success":
-            return jsonify({"error": f"Segment is {seg.status}"}), 409
-        metrics = json.loads(seg.val_metrics_json or "{}")
-        return jsonify(
-            {
-                "run_id": run_id,
-                "segment_key": segment_key,
-                "sector": seg.sector,
-                "split_value": seg.split_value,
-                "config_name": run.model_config.name if run.model_config else None,
-                "algorithm": run.model_config.algorithm if run.model_config else None,
-                "metrics": metrics,
-            }
-        ), 200
-
-    metrics = json.loads(run.val_metrics_json or "{}")
     return jsonify(
-        {
-            "run_id": run_id,
-            "config_name": run.model_config.name if run.model_config else None,
-            "algorithm": run.model_config.algorithm if run.model_config else None,
-            "metrics": metrics,
-        }
+        calibration_service.get_diagnostics(
+            run_id, request.args.get("segment_key"), slim=False
+        )
     ), 200
 
 

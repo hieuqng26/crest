@@ -14,6 +14,16 @@ from pydantic import ValidationError
 
 from project.core import table_query
 from project.exceptions import NotFoundError
+from project.services._pagination import pagination_envelope
+
+__all__ = [
+    "dataframe_distinct_response",
+    "dataframe_page_response",
+    "get_or_404",
+    "pagination_envelope",
+    "table_query_args",
+    "validation_message",
+]
 
 
 def validation_message(exc: ValidationError) -> str:
@@ -39,20 +49,6 @@ def get_or_404(model, description: str = "Resource not found", **filters):
     if row is None:
         raise NotFoundError(description)
     return row
-
-
-def pagination_envelope(items: list, paged) -> dict[str, Any]:
-    """Standard ORM list envelope for a Flask-SQLAlchemy ``paginate()`` result.
-
-    ``items`` is the (possibly enriched) serialised page; ``paged`` is the
-    pagination object. Shape matches the pre-refactor hand-built dict exactly.
-    """
-    return {
-        "items": items,
-        "total": paged.total,
-        "page": paged.page,
-        "pages": paged.pages,
-    }
 
 
 def table_query_args() -> dict[str, Any]:

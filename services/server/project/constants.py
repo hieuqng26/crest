@@ -39,6 +39,20 @@ class DatasetKind(str, Enum):
     FINANCIAL_PORTFOLIO = "financial_portfolio"
 
 
+class LaunchOrigin(str, Enum):
+    """How a run/workflow was launched — the ``origin`` column on each
+    ``*_runs`` / ``workflow_runs`` table, surfaced as the AUTO/MANUAL tag in
+    job history.
+
+    ``MANUAL`` = a human via the New Model wizard (the HTTP API). ``AUTO`` = the
+    MCP server (New Model "Auto" mode / agent-driven). The launching transport
+    sets it: HTTP routes default to MANUAL, MCP tools pass AUTO.
+    """
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
 class Progress(IntEnum):
     """Well-known job-progress sentinels written to the ``progress`` column.
 

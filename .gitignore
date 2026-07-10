@@ -50,3 +50,5 @@ dist/
 services/server/ql_build/*
 doc/*
 !doc/markdown
+# Local MCP server registration (copy of .mcp.json.example with local paths/secrets)
+.mcp.json

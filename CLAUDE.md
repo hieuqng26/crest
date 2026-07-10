@@ -39,6 +39,7 @@ pip install -r requirements.txt
 flask db upgrade                                   # apply migrations
 flask run --port 5001 --debug                      # dev server
 celery -A project.workers.tasks worker --loglevel=info   # async worker
+pip install -r requirements-mcp.txt && python -m project.mcp_server  # MCP server (stdio; see backend.md)
 
 # Frontend (from services/client/)
 npm install
@@ -119,7 +120,8 @@ matrix: `.claude/docs/architecture.md`.
   and debugging of local web apps (screenshots, console/network logs).
 
 **`.claude/bugs/`** — fixed-bug patterns (read before touching the same area):
-- [fk-constraint-on-delete.md](.claude/bugs/fk-constraint-on-delete.md),
+- [mcp-stdio-sqlalchemy-echo.md](.claude/bugs/mcp-stdio-sqlalchemy-echo.md),
+  [fk-constraint-on-delete.md](.claude/bugs/fk-constraint-on-delete.md),
   [vmodel-ternary-compile-error.md](.claude/bugs/vmodel-ternary-compile-error.md),
   [detached-instance-in-celery-tasks.md](.claude/bugs/detached-instance-in-celery-tasks.md),
   [primevue-multiselect-filter-matchmode.md](.claude/bugs/primevue-multiselect-filter-matchmode.md),

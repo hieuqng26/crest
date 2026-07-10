@@ -13,6 +13,7 @@ from project.api.auth.decorators import require_perm
 from project.core import dataset_io, storage, table_query
 from project.db_models.calibration_models import Dataset
 from project.logger import get_logger
+from project.services import datasets as dataset_service
 
 from . import datasets
 
@@ -34,12 +35,7 @@ def _ext(filename: str) -> str:
 @datasets.get("/")
 @require_perm("dataset:read")
 def list_datasets():
-    kind = request.args.get("kind")
-    q = Dataset.query.filter(Dataset.status != "deleted")
-    if kind:
-        q = q.filter(Dataset.kind == kind)
-    rows = q.order_by(Dataset.created_at.desc()).all()
-    return jsonify([r.to_dict() for r in rows]), 200
+    return jsonify(dataset_service.list_datasets(request.args.get("kind"))), 200
 
 
 @datasets.post("/upload")

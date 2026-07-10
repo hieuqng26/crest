@@ -44,7 +44,7 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
     app = _make_flask_app()
     with app.app_context():
         from project import app_session
-        from project.api.credit_risk.routes import _pd_rating_df
+        from project.services.credit_risk import pd_rating_df as _pd_rating_df
         from project.core.credit_risk.forecast_lookup import build_variable_index
         from project.db_models.calibration_models import (
             CalibrationRun,

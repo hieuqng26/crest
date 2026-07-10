@@ -212,7 +212,7 @@ def run_credit_analysis(self, cr_run_id: str):
     app = _make_flask_app()
     with app.app_context():
         from project import app_session
-        from project.api.credit_risk.routes import _pd_rating_df
+        from project.services.credit_risk import pd_rating_df as _pd_rating_df
         from project.db_models.calibration_models import Dataset
         from project.db_models.credit_models import CreditRiskRun
         from project.db_models.forecast_models import ForecastRun
@@ -416,9 +416,11 @@ def run_credit_analysis(self, cr_run_id: str):
             # MinIO + pandas on every request. Best-effort: a failure here must not
             # fail the analysis run (the pages fall back to lazy on-demand compute).
             try:
-                from project.api.credit_risk.routes import (
-                    _analysis_portfolio_df,
-                    _slot_forecast_runs,
+                from project.services.credit_risk_analysis import (
+                    analysis_portfolio_df as _analysis_portfolio_df,
+                )
+                from project.services.credit_risk_analysis import (
+                    slot_forecast_runs as _slot_forecast_runs,
                 )
                 from project.core.credit_risk.analysis_series import (
                     materialize_analysis_series,
@@ -472,9 +474,11 @@ def backfill_analysis_series(cr_run_id: str):
     only enqueue this once.
     """
     from project import app_session
-    from project.api.credit_risk.routes import (
-        _analysis_portfolio_df,
-        _slot_forecast_runs,
+    from project.services.credit_risk_analysis import (
+        analysis_portfolio_df as _analysis_portfolio_df,
+    )
+    from project.services.credit_risk_analysis import (
+        slot_forecast_runs as _slot_forecast_runs,
     )
     from project.core.credit_risk.analysis_series import materialize_analysis_series
     from project.db_models.credit_models import CreditRiskRun

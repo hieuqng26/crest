@@ -6,8 +6,8 @@ helpers against directly-inserted rows (no MinIO), plus lazy-backfill wiring.
 """
 
 from project import db
-from project.api.credit_risk import routes as R
 from project.services import credit_analysis as CA
+from project.services import credit_risk_analysis as R
 from project.db_models.credit_models import CreditRiskAnalysisSeries, CreditRiskRun
 
 
@@ -70,7 +70,7 @@ def test_load_and_read_series(app):
         )
         db.session.commit()
 
-        series, sector_of = R._load_analysis_series(cr)
+        series, sector_of = R.load_analysis_series(cr)
         assert sector_of == {"C1": "Tech"}
         assert CA.series_levels(
             series, "sector", "Tech", "total_revenue", "Baseline"
@@ -111,7 +111,7 @@ def test_combined_history_plus_baseline(app):
         )
         db.session.commit()
 
-        series, _ = R._load_analysis_series(cr)
+        series, _ = R.load_analysis_series(cr)
         combined = dict(
             CA.series_levels(
                 series, "sector", "Ind", "total_revenue", CA.SERIES_HISTORY

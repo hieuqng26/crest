@@ -1,9 +1,9 @@
 # Backend Architecture (services/server)
 
 Deep-dive companion to `architecture.md`. Read this before adding an endpoint,
-a Celery task, or building the MCP server. The backend is layered so that
-business logic is transport-agnostic and reusable by both the Flask routes and
-the future MCP tools.
+a Celery task, or an MCP tool. The backend is layered so that business logic
+is transport-agnostic and reused by both the Flask routes and the MCP server
+(`project/mcp_server/` — see "MCP server" below).
 
 ## Layers
 
@@ -95,8 +95,56 @@ principled controls are:
 3. Route: `@bp.verb` + `@require_perm("domain:action")` + `Schema.model_validate(request.get_json())`
    + call service + `jsonify`. Keep it ~3 lines. (Template: `api/model_configs/routes.py`,
    or the launch routes in calibrations/forecast_runs/workflows/credit_risk.)
-4. Test the service directly (see `tests/services/test_launch_services.py`) — that
-   test is also the MCP contract.
+   For an MCP tool the caller is instead a `crest_*` function in
+   `project/mcp_server/tools/` — `@mcp.tool(name=..., annotations=...)` +
+   `@tool_boundary` + call service. Same thinness rule.
+4. Test the service directly (see `tests/services/test_launch_services.py` and
+   `test_read_services.py`) — those tests are also the MCP contract; tool-level
+   tests live in `tests/mcp_server/`.
+
+## MCP server (`project/mcp_server/`)
+
+A stdio MCP server exposing 27 `crest_*` tools (launch + monitor + reads) —
+a sibling transport to `project/api/` that calls the same `services/` functions
+and validates the same `schemas/` models.
+
+- **Run**: `python -m project.mcp_server` from `services/server/`. It calls
+  `create_app()`, so it needs the app's **native deps** (`pyodbc`/unixodbc) and
+  env (`CONFIG_NAME`, `JWT_SECRET_KEY` — hard-required even though MCP mints no
+  JWTs — plus DB/Redis/MinIO). Because the debug stack runs the backend in
+  **Docker** (`build_debug.sh up`) and the host usually lacks unixodbc, the
+  recommended registration runs the server **inside the backend container**,
+  where those deps + `env/.env.dev` already exist:
+  `docker compose -f docker-compose.debug.yml exec -T backend python3 -m project.mcp_server`.
+  Copy `.mcp.json.example` (repo root) → `.mcp.json` for the Claude Code
+  wiring (both the container form and a host-run alternative are documented
+  there). The debug image installs the MCP SDK (`services/server/Dockerfile`);
+  `requirements-mcp.txt` is the host-run equivalent. Celery + Redis must run for
+  launched jobs to execute.
+- **Host gotchas** (only if running the server on the host, not the container):
+  `docker-compose.debug.yml` publishes MinIO on **9100** (not 9000) and does
+  **not** publish redis — so a host-run server can read the DB but can't reach
+  MinIO/redis at the obvious ports. Running inside the container avoids all of
+  this.
+- **Layout**: `server.py` (FastMCP instance + registration), `runtime.py`
+  (`get_app()` singleton, `MCP_IDENTITY`, `tool_boundary`), `tools/{launch,
+  runs,results,refs,analysis}.py`.
+- **Identity**: `MCP_IDENTITY` env (default `mcp-agent`) is passed as the
+  services' `identity` arg → `triggered_by`. No RBAC in v1.
+- **Boundary**: `tool_boundary` mirrors `error_handlers.py` — `DomainError` →
+  `ToolError("[<code>] <message>")`, unexpected exceptions → logged +
+  generic `"Internal server error"` (never leaked). It also pushes a Flask
+  **app context per call** and removes the scoped session after — FastMCP runs
+  sync tools on worker threads, so never hoist one global app context.
+- **stdout is the protocol**: everything must log to stderr.
+  `runtime.get_app()` force-disables `SQLALCHEMY_ECHO` before `create_app()`
+  (engines are created in `init_app` and echo writes to stdout).
+- **Context budget**: every list/log/result tool is paginated with hard caps
+  (100 items / 200 rows / 500 log lines); calibration diagnostics are always
+  slimmed (no `val_obs`/`train_obs`). Don't add an "all rows" path.
+- **Not exposed in v1**: dataset upload/query/stats, model-config CRUD,
+  cancel/delete, segment recalibrate, set-active, transitions matrix,
+  client list.
 
 ## Workers (`project/workers/`)
 
@@ -133,8 +181,12 @@ modules so `include=["project.workers.tasks"]` still registers all 8 tasks and
 ## Status of the production-grade refactor
 
 In place: the service/schema/boundary layering for the **run-launching** surface
-(calibration/forecast/credit-risk/workflow create + rerun) and the **credit-risk
-analysis reads** (`services/credit_analysis.py` — heatmap/forecast builders);
+(calibration/forecast/credit-risk/workflow create + rerun), the **read surface**
+(run list/get, logs — `services/run_logs.py`, results, diagnostics, dataset/
+model-config/pd-rating listings) and the **credit-risk analysis reads**
+(`services/credit_analysis.py` builders + `services/credit_risk_analysis.py`
+loaders, which the Celery materializer also reuses — no more worker/core
+imports from route modules); the **MCP server** (`project/mcp_server/`, above);
 `extensions.py`; `SerializerMixin` for plain-column `to_dict`; and the
 `workers/` decomposition + `worker_session` fix above.
 

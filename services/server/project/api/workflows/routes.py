@@ -3,27 +3,22 @@ from datetime import datetime, timezone
 import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
-from sqlalchemy.orm import selectinload
 
-from project import app_session, db
+from project import app_session
 from project.api.auth.decorators import current_permissions, require_perm
 from project.api.auth.permissions import has_permission
-from project.api.helpers import pagination_envelope
 from project.core import table_query
 from project.schemas.workflows import CreateWorkflow
 from project.services import workflows as workflow_service
 from project.db_models.calibration_models import (
     CalibrationRun,
-    CalibrationRunLog,
     CalibrationRunSegment,
-    Dataset,
 )
 from project.db_models.credit_models import (
     CreditRiskForecastInput,
     CreditRiskRun,
-    CreditRiskRunLog,
 )
-from project.db_models.forecast_models import ForecastRun, ForecastRunLog
+from project.db_models.forecast_models import ForecastRun
 from project.db_models.workflow_models import WorkflowRun
 from project.workers.tasks import delete_workflow as delete_workflow_task
 
@@ -43,304 +38,34 @@ def resolve_datasets():
 @workflows.get("/")
 @require_perm("calibration:read")
 def list_workflows():
-    """List workflows. Each workflow is one process with a single overall
-    status — no per-stage (training/forecast/analysis) breakdown here; see
-    GET /<run_id> for the per-target detail."""
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
-    paged = WorkflowRun.query.order_by(WorkflowRun.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    wf_ids = [wf.id for wf in paged.items]
-    cr_by_wf = {}
-    if wf_ids:
-        for cr in CreditRiskRun.query.filter(
-            CreditRiskRun.workflow_run_id.in_(wf_ids)
-        ).all():
-            cr_by_wf[cr.workflow_run_id] = cr
-
-    result = []
-    for wf in paged.items:
-        d = wf.to_dict()
-        cr = cr_by_wf.get(wf.id)
-        d["analysis_summary"] = (
-            {"run_id": cr.run_id, "is_active": bool(cr.is_active), "status": cr.status}
-            if cr
-            else None
-        )
-        result.append(d)
-    return jsonify(pagination_envelope(result, paged)), 200
-
-
-def _retraining_counts(cal_ids):
-    """Segments queued/running per calibration, in one grouped query.
-
-    A segment re-run leaves the parent run's status at "success", so this count
-    is the only signal the UI has to surface a per-target "Retraining" state.
-    """
-    if not cal_ids:
-        return {}
-    rows = (
-        db.session.query(
-            CalibrationRunSegment.calibration_run_id,
-            db.func.count(CalibrationRunSegment.id),
-        )
-        .filter(
-            CalibrationRunSegment.calibration_run_id.in_(cal_ids),
-            CalibrationRunSegment.status.in_(("queued", "running")),
-        )
-        .group_by(CalibrationRunSegment.calibration_run_id)
-        .all()
-    )
-    return dict(rows)
-
-
-def _get_workflow_light(wf):
-    """Status-only workflow payload for the 5s poll.
-
-    Returns just the fields the page needs to stay live — per-target statuses,
-    progress and the retraining count — without the heavy per-run to_dict()
-    (which serialises train_metrics_json / val_metrics_json blobs) or the
-    dataset-name lookups. The frontend merges this into the full object it
-    already holds, so the static fields it omits are preserved.
-    """
-    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
-    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
-    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).first()
-    fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
-    retraining_by_cal = _retraining_counts([c.id for c in cals])
-
-    targets = []
-    for cal in cals:
-        fr = fcs_by_cal.get(cal.id)
-        targets.append(
-            {
-                "target_col": cal.target_col,
-                "calibration": {
-                    "run_id": cal.run_id,
-                    "status": cal.status,
-                    "progress": cal.progress,
-                    "finished_at": cal.finished_at.isoformat()
-                    if cal.finished_at
-                    else None,
-                    "retraining_segment_count": retraining_by_cal.get(cal.id, 0),
-                },
-                "forecast": {
-                    "run_id": fr.run_id,
-                    "status": fr.status,
-                    "progress": fr.progress,
-                    "finished_at": fr.finished_at.isoformat()
-                    if fr.finished_at
-                    else None,
-                }
-                if fr
-                else None,
-            }
-        )
-
     return jsonify(
-        {
-            "run_id": wf.run_id,
-            "status": wf.status,
-            "current_stage": wf.current_stage,
-            "finished_at": wf.finished_at.isoformat() if wf.finished_at else None,
-            "error_message": wf.error_message,
-            "targets": targets,
-            "analysis": {
-                "run_id": crs.run_id,
-                "status": crs.status,
-                "progress": crs.progress,
-                "finished_at": crs.finished_at.isoformat() if crs.finished_at else None,
-            }
-            if crs
-            else None,
-        }
+        workflow_service.list_workflows(
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 50, type=int),
+        )
     ), 200
 
 
 @workflows.get("/<run_id>")
 @require_perm("calibration:read")
 def get_workflow(run_id):
-    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
-    if not wf:
-        return jsonify({"error": "Not found"}), 404
-
-    if request.args.get("light") in ("1", "true"):
-        return _get_workflow_light(wf)
-
-    cals = (
-        CalibrationRun.query.options(selectinload(CalibrationRun.model_config))
-        .filter_by(workflow_run_id=wf.id)
-        .all()
-    )
-    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
-    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).all()
-    fcs_by_cal = {fr.calibration_run_id: fr for fr in fcs}
-    cal_by_id = {cal.id: cal for cal in cals}
-
-    # Batch-load every dataset referenced by the forecast runs and by the four
-    # workflow dataset slots, so the per-target fr.to_dict() and the slot loop
-    # below don't each fire their own .get() (was 3 queries/target + 4 slot gets).
-    ds_ids = {fr.dataset_id for fr in fcs}
-    ds_ids.update(
-        i
-        for i in (
-            wf.calibration_dataset_id,
-            wf.forecast_dataset_id,
-            wf.credit_dataset_id,
-            wf.financial_dataset_id,
-        )
-        if i
-    )
-    datasets = (
-        {d.id: d for d in Dataset.query.filter(Dataset.id.in_(ds_ids))}
-        if ds_ids
-        else {}
-    )
-
-    retraining_by_cal = _retraining_counts([c.id for c in cals])
-
-    targets = []
-    for cal in cals:
-        cal_d = cal.to_dict()
-        cal_d["retraining_segment_count"] = retraining_by_cal.get(cal.id, 0)
-        cal_d["config_name"] = cal.model_config.name if cal.model_config else None
-        cal_d["algorithm"] = cal.model_config.algorithm if cal.model_config else None
-        fr = fcs_by_cal.get(cal.id)
-        forecast_d = None
-        if fr:
-            fr_cal = cal_by_id.get(fr.calibration_run_id)
-            fr_cfg = fr_cal.model_config if fr_cal else None
-            forecast_d = fr.to_dict(
-                cal_run=fr_cal,
-                dataset=datasets.get(fr.dataset_id),
-                config_name=fr_cfg.name if fr_cfg else None,
-            )
-        targets.append(
-            {
-                "target_col": cal.target_col,
-                "calibration": cal_d,
-                "forecast": forecast_d,
-            }
-        )
-
-    d = wf.to_dict()
-    d["targets"] = targets
-    d["analysis"] = crs[0].to_dict() if crs else None
-    for key, ds_id in (
-        ("calibration_dataset_name", wf.calibration_dataset_id),
-        ("forecast_dataset_name", wf.forecast_dataset_id),
-        ("credit_dataset_name", wf.credit_dataset_id),
-        ("financial_dataset_name", wf.financial_dataset_id),
-    ):
-        ds = datasets.get(ds_id) if ds_id else None
-        d[key] = ds.name if ds else None
-    return jsonify(d), 200
-
-
-# ── Unified workflow logs ───────────────────────────────────────────────────────
-# One paginated/filterable view over the workflow's training + forecast + credit
-# log lines, each tagged with step/target/sector/segment so the Overview log panel
-# can filter without hitting three separate endpoints.
-
-_LOG_STEP_RANK = {"Training": 0, "Forecast": 1, "Credit": 2}
-_LOG_COLUMNS = ["step", "target", "sector", "segment", "t", "level", "message"]
-
-
-def _workflow_log_df(wf) -> pd.DataFrame:
-    cals = CalibrationRun.query.filter_by(workflow_run_id=wf.id).all()
-    cal_target = {c.run_id: c.target_col for c in cals}
-    cal_uuid_by_id = {c.id: c.run_id for c in cals}
-    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
-    fr_target = {
-        fr.run_id: cal_target.get(cal_uuid_by_id.get(fr.calibration_run_id))
-        for fr in fcs
-    }
-    crs = CreditRiskRun.query.filter_by(workflow_run_id=wf.id).all()
-
-    records: list[dict] = []
-    if cal_target:
-        for log in CalibrationRunLog.query.filter(
-            CalibrationRunLog.run_id.in_(list(cal_target))
-        ).all():
-            records.append(
-                {
-                    "step": "Training",
-                    "target": cal_target.get(log.run_id),
-                    "sector": log.sector,
-                    "segment": log.segment,
-                    # Full UTC datetime (matching ForecastRunLog/CreditRiskRunLog.t
-                    # and CalibrationRunLog.to_dict); the client renders it in the
-                    # configured display timezone via fmtTime, so all log rows and
-                    # the run-details chips agree on time.
-                    "t": log.logged_at.strftime("%Y-%m-%d %H:%M:%S")
-                    if log.logged_at
-                    else None,
-                    "level": log.level,
-                    "message": log.message,
-                    "_id": log.id,
-                }
-            )
-    if fcs:
-        for log in ForecastRunLog.query.filter(
-            ForecastRunLog.run_id.in_([fr.run_id for fr in fcs])
-        ).all():
-            records.append(
-                {
-                    "step": "Forecast",
-                    "target": fr_target.get(log.run_id),
-                    "sector": log.sector,
-                    "segment": log.segment,
-                    "t": log.t,
-                    "level": log.level,
-                    "message": log.message,
-                    "_id": log.id,
-                }
-            )
-    if crs:
-        for log in CreditRiskRunLog.query.filter(
-            CreditRiskRunLog.run_id.in_([cr.run_id for cr in crs])
-        ).all():
-            records.append(
-                {
-                    "step": "Credit",
-                    "target": None,
-                    "sector": log.sector,
-                    "segment": log.segment,
-                    "t": log.t,
-                    "level": log.level,
-                    "message": log.message,
-                    "_id": log.id,
-                }
-            )
-
-    df = pd.DataFrame.from_records(records, columns=[*_LOG_COLUMNS, "_id"])
-    if df.empty:
-        return df[_LOG_COLUMNS]
-    # Default order is reverse-chronological by the workflow's execution order:
-    # Credit (last stage) → Forecast → Training, newest id first within each stage.
-    df["_rank"] = df["step"].map(_LOG_STEP_RANK).fillna(99)
-    df = df.sort_values(["_rank", "_id"], ascending=[False, False], kind="stable")
-    return df[_LOG_COLUMNS]
+    light = request.args.get("light") in ("1", "true")
+    return jsonify(workflow_service.get_workflow(run_id, light=light)), 200
 
 
 @workflows.get("/<run_id>/logs")
 @require_perm("calibration:read")
 def get_workflow_logs(run_id):
-    wf = WorkflowRun.query.filter_by(run_id=run_id).first()
-    if not wf:
-        return jsonify({"error": "Not found"}), 404
-    df = _workflow_log_df(wf)
-    page, total = table_query.query_page(
-        df,
-        page=int(request.args.get("page", 0)),
-        page_size=int(request.args.get("page_size", 50)),
-        sort_column=request.args.get("sort_column"),
-        sort_order=request.args.get("sort_order"),
-        filters=table_query.parse_filters(request.args.get("filters")),
-    )
-    rows = page.where(pd.notnull(page), None).to_dict(orient="records")
-    return jsonify({"rows": rows, "total": total, "columns": list(df.columns)}), 200
+    return jsonify(
+        workflow_service.get_workflow_logs(
+            run_id,
+            page=int(request.args.get("page", 0)),
+            page_size=int(request.args.get("page_size", 50)),
+            sort_column=request.args.get("sort_column"),
+            sort_order=request.args.get("sort_order"),
+            filters=table_query.parse_filters(request.args.get("filters")),
+        )
+    ), 200
 
 
 @workflows.get("/<run_id>/logs/distinct")
@@ -352,7 +77,9 @@ def get_workflow_logs_distinct(run_id):
     column = request.args.get("column", "")
     if not column:
         return jsonify({"values": [], "truncated": False}), 200
-    return jsonify(table_query.distinct_values(_workflow_log_df(wf), column)), 200
+    return jsonify(
+        table_query.distinct_values(workflow_service.workflow_log_df(wf), column)
+    ), 200
 
 
 # ── Combined forecast results ───────────────────────────────────────────────────
@@ -364,7 +91,7 @@ _FORECAST_COL_ORDER = ["target", "sector", "segment", "date", "predicted"]
 
 
 def _combined_forecast_df(wf) -> pd.DataFrame:
-    from project.api.forecast_runs.routes import _forecast_results_df
+    from project.services.forecast_runs import results_df as _forecast_results_df
 
     fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
     cal_ids = {fr.calibration_run_id for fr in fcs}

@@ -24,6 +24,11 @@ class WorkflowRun(db.Model):
     triggered_by = db.Column(
         db.String(64), db.ForeignKey("users.email"), nullable=False
     )
+    # How the workflow was launched: 'manual' (New Model wizard / HTTP) or
+    # 'auto' (MCP). Surfaced as the AUTO/MANUAL tag in job history.
+    origin = db.Column(
+        db.String(16), nullable=False, server_default="manual", default="manual"
+    )
     created_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -64,6 +69,7 @@ class WorkflowRun(db.Model):
             status=self.status,
             current_stage=self.current_stage,
             triggered_by=self.triggered_by,
+            origin=self.origin,
             created_at=self.created_at.isoformat() if self.created_at else None,
             started_at=self.started_at.isoformat() if self.started_at else None,
             finished_at=self.finished_at.isoformat() if self.finished_at else None,

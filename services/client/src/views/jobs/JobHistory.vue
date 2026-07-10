@@ -65,27 +65,37 @@ const TYPE_CHIPS  = ['All', 'Auto', 'Manual']
 const activeType  = ref('All')
 const search      = ref('')
 
-const typeCounts = computed(() => ({
-  All:    workflows.value.length + standaloneJobs.value.length,
-  Auto:   workflows.value.length,
-  Manual: standaloneJobs.value.length,
-}))
+// AUTO = launched by MCP (New Model "Auto" mode); MANUAL = the New Model
+// wizard. The backend records this per run/workflow in `origin`; workflows
+// carry it top-level, standalone jobs on `.raw`. Default to manual for safety.
+const originOf = (item) => item.origin ?? item.raw?.origin ?? 'manual'
+const matchesType = (origin) =>
+  activeType.value === 'All' ||
+  (activeType.value === 'Auto'   && origin === 'auto') ||
+  (activeType.value === 'Manual' && origin === 'manual')
+
+const typeCounts = computed(() => {
+  const all = [...workflows.value, ...standaloneJobs.value]
+  return {
+    All:    all.length,
+    Auto:   all.filter((i) => originOf(i) === 'auto').length,
+    Manual: all.filter((i) => originOf(i) === 'manual').length,
+  }
+})
 
 // ── Top-level rows ────────────────────────────────────────────────────────────
 const topLevelRows = computed(() => {
   const q = search.value.trim().toLowerCase()
 
-  const wfRows = (activeType.value === 'All' || activeType.value === 'Auto')
-    ? workflows.value
-        .filter((w) => !q || (w.name + w.run_id).toLowerCase().includes(q))
-        .map((w) => ({ type: 'workflow', key: `wf-${w.run_id}`, sortAt: w.started_at ?? w.created_at, wf: w }))
-    : []
+  const wfRows = workflows.value
+    .filter((w) => matchesType(originOf(w)))
+    .filter((w) => !q || (w.name + w.run_id).toLowerCase().includes(q))
+    .map((w) => ({ type: 'workflow', key: `wf-${w.run_id}`, sortAt: w.started_at ?? w.created_at, wf: w }))
 
-  const jobRows = (activeType.value === 'All' || activeType.value === 'Manual')
-    ? standaloneJobs.value
-        .filter((j) => !q || (j.name + j.ref + j.run_id).toLowerCase().includes(q))
-        .map((j) => ({ type: 'job', key: `job-${j.run_id}`, sortAt: j.started_at, job: j }))
-    : []
+  const jobRows = standaloneJobs.value
+    .filter((j) => matchesType(originOf(j)))
+    .filter((j) => !q || (j.name + j.ref + j.run_id).toLowerCase().includes(q))
+    .map((j) => ({ type: 'job', key: `job-${j.run_id}`, sortAt: j.started_at, job: j }))
 
   return [...wfRows, ...jobRows].sort((a, b) => new Date(b.sortAt ?? 0) - new Date(a.sortAt ?? 0))
 })
@@ -116,6 +126,7 @@ const rowIsActive  = (row) =>
   (row.type === 'workflow' && row.wf.analysis_summary?.is_active) ||
   (row.type === 'job' && row.job.kind === KIND.ANALYSIS && row.job.raw.is_active)
 const rowMenu      = (row) => (row.type === 'workflow' ? buildWorkflowMenu(row.wf) : buildJobMenu(row.job))
+const rowOrigin    = (row) => (row.type === 'workflow' ? row.wf.origin : row.job.raw.origin) ?? 'manual'
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 const openJob      = (j)  => router.push({ name: 'jobs_detail', params: { kind: j.kind, run_id: j.run_id } })
@@ -424,8 +435,8 @@ async function deleteJob(j) {
 
         <!-- TYPE -->
         <template #cell-type="{ row }">
-          <span class="type-tag" :class="row.type === 'workflow' ? 'type-tag--auto' : ''">
-            {{ row.type === 'workflow' ? 'AUTO' : 'MANUAL' }}
+          <span class="type-tag" :class="rowOrigin(row) === 'auto' ? 'type-tag--auto' : ''">
+            {{ rowOrigin(row) === 'auto' ? 'AUTO' : 'MANUAL' }}
           </span>
         </template>
 

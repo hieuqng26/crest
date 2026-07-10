@@ -2,10 +2,10 @@
 read, so those pages don't recompute them from MinIO + pandas on every request.
 
 The heavy lifting (portfolio load, forecast-index build, per-client aggregation)
-already lives as helpers on ``project.api.credit_risk.routes``. To guarantee the
-stored numbers are byte-identical to what the on-demand endpoints produce, we reuse
-those exact helpers here rather than re-deriving the math — this module only decides
-*which* scopes/slots/scenarios to enumerate and shapes the rows for bulk insert.
+lives in ``project.services.credit_risk_analysis``. To guarantee the stored numbers
+are byte-identical to what the on-demand endpoints produce, we reuse those exact
+helpers here rather than re-deriving the math — this module only decides *which*
+scopes/slots/scenarios to enumerate and shapes the rows for bulk insert.
 
 Called once per successful credit-analysis run (from ``run_credit_analysis``) and,
 as a lazy fallback, on first read of a run that predates this feature.
@@ -36,12 +36,12 @@ def build_analysis_series_rows(
     ``slots`` maps slot_key → ForecastRun (as produced by ``_slot_forecast_runs``).
     Reuses the endpoint helpers so the stored level series matches the live math.
     """
-    # Imported lazily to avoid a circular import at module load (routes imports the
-    # worker, which imports this module).
-    from project.api.credit_risk.routes import (
-        _all_scenarios,
-        _historical_series,
-        _variable_levels,
+    # Imported lazily to avoid a circular import at module load (the service
+    # imports the worker's tasks, which import this module).
+    from project.services.credit_risk_analysis import (
+        all_scenarios,
+        historical_series,
+        variable_levels,
     )
 
     if "sector" not in portfolio_df.columns:
@@ -49,6 +49,11 @@ def build_analysis_series_rows(
 
     run_pk = cr.id
     rows: list[dict] = []
+    # One memo for the whole materialisation: the parsed historical frames and
+    # forecast indexes are reused across every sector/client iteration below
+    # (this replaces the request-scoped flask.g memoization the helpers had
+    # when they lived on the routes).
+    memo: dict = {}
 
     def _emit(scope_type, scope_key, sector, slot, scenario, is_history, levels):
         for yr, val in levels.items():
@@ -72,15 +77,15 @@ def build_analysis_series_rows(
         fr = slots.get(slot)
         if not fr:
             continue
-        scenarios = _all_scenarios(fr)
+        scenarios = all_scenarios(fr, memo)
 
         # ── sector scope ──────────────────────────────────────────────────────
         for sector in sectors:
             sector_rows = portfolio_df[portfolio_df["sector"] == sector]
-            hist = _historical_series(fr, sector, None)
+            hist = historical_series(fr, sector, None, memo)
             _emit("sector", sector, None, slot, _HISTORY_SCENARIO, True, hist)
             for scen in scenarios:
-                levels = _variable_levels(sector_rows, fr, scen, {})
+                levels = variable_levels(sector_rows, fr, scen, {}, memo)
                 _emit("sector", sector, None, slot, scen, False, levels)
 
         # ── client scope ──────────────────────────────────────────────────────
@@ -88,10 +93,10 @@ def build_analysis_series_rows(
             ["sector", "client_id"], sort=False
         ):
             cid = str(client_id)
-            hist = _historical_series(fr, None, cid)
+            hist = historical_series(fr, None, cid, memo)
             _emit("client", cid, str(sector), slot, _HISTORY_SCENARIO, True, hist)
             for scen in scenarios:
-                levels = _variable_levels(client_df, fr, scen, {})
+                levels = variable_levels(client_df, fr, scen, {}, memo)
                 _emit("client", cid, str(sector), slot, scen, False, levels)
 
     return rows
