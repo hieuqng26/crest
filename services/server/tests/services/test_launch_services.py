@@ -8,6 +8,7 @@ Run from services/server/:
     pytest tests/services/test_launch_services.py -v
 """
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -147,3 +148,89 @@ def test_workflow_create_missing_calibration_dataset_raises_422(app, seed):
     )
     with pytest.raises(UnprocessableEntityError):
         svc.create_workflow(payload, seed["user"].email)
+
+
+# ── workflows.rerun_workflow ───────────────────────────────────────────────
+def test_rerun_workflow_preserves_segmentation(app, seed):
+    """A segmented workflow must relaunch segmented. Segmentation lives on the
+    child CalibrationRun rows (WorkflowRun has no seg columns), so the rerun has
+    to recover it from the original children — otherwise the re-run calibrations
+    are non-segmented and every downstream sector/segment view disappears."""
+    from project import db
+    from project.constants import RunStatus, WorkflowStage
+    from project.db_models.calibration_models import CalibrationRun, Dataset
+    from project.db_models.workflow_models import WorkflowRun
+    from project.services import workflows as svc
+
+    user, cfg, cal_ds = seed["user"], seed["cfg"], seed["dataset"]
+    # rerun reuses the latest 'forecast' dataset — seed only has calibration.
+    fc_ds = Dataset(
+        name="fc-ds",
+        source="upload",
+        file_path="uploads/svc/fc.csv",
+        row_count=10,
+        created_by=user.email,
+        status="ready",
+        kind="forecast",
+    )
+    db.session.add(fc_ds)
+    db.session.commit()
+
+    wf = WorkflowRun(
+        run_id="wf-seg",
+        name="seg wf",
+        status=RunStatus.SUCCESS,
+        current_stage=WorkflowStage.DONE,
+        triggered_by=user.email,
+        calibration_dataset_id=cal_ds.id,
+        forecast_dataset_id=fc_ds.id,
+        targets_json=json.dumps(
+            [
+                {
+                    "target_col": "total_assets",
+                    "model_config_id": cfg.id,
+                    "feature_cols": ["gdp"],
+                }
+            ]
+        ),
+        analysis_params_json=json.dumps(
+            {
+                "exposure": 1.0,
+                "discount_rate": 0.05,
+                "lifetime_horizon": 5,
+                "curve": "baseline",
+            }
+        ),
+    )
+    db.session.add(wf)
+    db.session.flush()
+
+    seg_sectors = json.dumps(["Energy", "Financials"])
+    seg_overrides = json.dumps({"Energy": {"max_segments": 2}})
+    orig_cal = CalibrationRun(
+        run_id="wf-seg-cal",
+        name="seg wf · total_assets",
+        dataset_id=cal_ds.id,
+        model_config_id=cfg.id,
+        status=RunStatus.SUCCESS,
+        triggered_by=user.email,
+        target_col="total_assets",
+        feature_cols_json=json.dumps(["gdp"]),
+        seg_sectors_json=seg_sectors,
+        seg_split_by="subsector",
+        seg_max_segments=3,
+        seg_sector_overrides_json=seg_overrides,
+        workflow_run_id=wf.id,
+    )
+    db.session.add(orig_cal)
+    db.session.commit()
+
+    with patch("project.services.workflows.run_calibration.delay"):
+        result = svc.rerun_workflow("wf-seg", user.email)
+
+    new_run_id = result["targets"][0]["calibration_run_id"]
+    new_cal = CalibrationRun.query.filter_by(run_id=new_run_id).first()
+    assert new_cal.seg_sectors_json == seg_sectors
+    assert new_cal.seg_split_by == "subsector"
+    assert new_cal.seg_max_segments == 3
+    assert new_cal.seg_sector_overrides_json == seg_overrides

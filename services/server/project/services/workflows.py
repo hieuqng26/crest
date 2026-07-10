@@ -256,6 +256,34 @@ def create_workflow(payload: CreateWorkflow, identity: str) -> dict:
     return wf_dict
 
 
+def _original_segmentation(workflow_pk: int) -> dict | None:
+    """Recover a workflow's segmentation config from its child calibration runs.
+
+    Segmentation is persisted per ``CalibrationRun`` (WorkflowRun has no seg
+    columns) and a workflow applies one uniform config to every target, so the
+    first segmented child carries it. Returns ``None`` for a non-segmented
+    workflow (``launch_workflow`` then defaults to no segmentation) — without
+    this, a re-run would silently drop segmentation and lose every downstream
+    sector/segment view (logs, forecast, diagnostics, credit).
+    """
+    child = (
+        CalibrationRun.query.filter(
+            CalibrationRun.workflow_run_id == workflow_pk,
+            CalibrationRun.seg_sectors_json.isnot(None),
+        )
+        .order_by(CalibrationRun.id.asc())
+        .first()
+    )
+    if not child:
+        return None
+    return {
+        "seg_sectors_json": child.seg_sectors_json,
+        "seg_split_by": child.seg_split_by,
+        "seg_max_segments": child.seg_max_segments,
+        "seg_sector_overrides_json": child.seg_sector_overrides_json,
+    }
+
+
 def rerun_workflow(run_id: str, identity: str) -> dict:
     """Relaunch an existing workflow from its stored targets/analysis params.
 
@@ -307,7 +335,12 @@ def rerun_workflow(run_id: str, identity: str) -> dict:
     analysis_params = json.loads(wf.analysis_params_json or "{}")
     name = re.sub(r"( \(re-run\))+$", "", wf.name) + " (re-run)"
     wf_dict, created_list = launch_workflow(
-        name, resolved_targets, analysis_params, datasets, identity
+        name,
+        resolved_targets,
+        analysis_params,
+        datasets,
+        identity,
+        _original_segmentation(wf.id),
     )
     wf_dict["targets"] = created_list
     return wf_dict

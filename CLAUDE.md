@@ -124,6 +124,7 @@ matrix: `.claude/docs/architecture.md`.
   [detached-instance-in-celery-tasks.md](.claude/bugs/detached-instance-in-celery-tasks.md),
   [primevue-multiselect-filter-matchmode.md](.claude/bugs/primevue-multiselect-filter-matchmode.md),
   [workflow-delete-flush-ordering.md](.claude/bugs/workflow-delete-flush-ordering.md),
-  [train-test-split-zero-test-size.md](.claude/bugs/train-test-split-zero-test-size.md)
+  [train-test-split-zero-test-size.md](.claude/bugs/train-test-split-zero-test-size.md),
+  [workflow-rerun-drops-segmentation.md](.claude/bugs/workflow-rerun-drops-segmentation.md)
 
 > When you fix a bug, add a pattern file to `.claude/bugs/`. When you learn a reusable procedure, add it to `.claude/skills/`. Keep CLAUDE.md a pure index.
