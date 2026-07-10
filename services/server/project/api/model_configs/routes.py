@@ -32,6 +32,22 @@ def _validate_segmentation_fields(
     return split_by, max_segments, None
 
 
+def _validate_train_split(raw) -> tuple[float | None, str | None]:
+    """Returns (train_split, error). A validation holdout must always exist:
+    train_split == 1.0 makes sklearn's test_size 0.0, which is rejected. Bounds
+    mirror the SplitSlider UI (train 50–95% / val 5–50%)."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, "train_split must be a number"
+    if not (0.5 <= value <= 0.95):
+        return (
+            None,
+            "train_split must be between 0.5 and 0.95 (a validation holdout is required)",
+        )
+    return value, None
+
+
 def _used_by_label(config_id: int) -> str:
     sectors = (
         CalibrationRunSegment.query.with_entities(CalibrationRunSegment.sector)
@@ -84,7 +100,9 @@ def create_config():
     except ValidationError as e:
         return jsonify({"error": "Invalid hyperparameters", "detail": e.errors()}), 422
 
-    train_split = float(body.get("train_split", 0.8))
+    train_split, split_error = _validate_train_split(body.get("train_split", 0.8))
+    if split_error:
+        return jsonify({"error": split_error}), 400
     scaler = body.get("scaler") or None
     search_config_raw = body.get("search_config")
     search_config_json_val = (
@@ -152,7 +170,10 @@ def update_config(config_id):
         cfg.family = REGISTRY[algorithm].family
         cfg.hyperparams_json = json.dumps(raw_params)
         if "train_split" in body:
-            cfg.train_split = float(body["train_split"])
+            train_split, split_error = _validate_train_split(body["train_split"])
+            if split_error:
+                return jsonify({"error": split_error}), 400
+            cfg.train_split = train_split
         if "scaler" in body:
             cfg.scaler = body.get("scaler") or None
         if "search_config" in body:

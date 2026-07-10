@@ -34,6 +34,16 @@ from project.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _val_test_size(train_split_ratio: float) -> float:
+    """Validation fraction for train_test_split, guaranteed to be a valid
+    sklearn ``test_size`` (a float in the open interval (0, 1)).
+
+    New configs are bounded to 0.5–0.95 at the API, but legacy rows may carry
+    train_split == 1.0, which would yield test_size 0.0 and raise
+    ``InvalidParameterError``. Clamp so a validation holdout always exists."""
+    return float(np.clip(round(1.0 - train_split_ratio, 4), 0.05, 0.95))
+
+
 def _cv_search(
     plugin_cls,
     base_params: dict,
@@ -240,7 +250,7 @@ def _fit_segment(
 
     idx = np.arange(len(df_group))
     idx_train, idx_val = train_test_split(
-        idx, test_size=round(1.0 - train_split_ratio, 4), random_state=42
+        idx, test_size=_val_test_size(train_split_ratio), random_state=42
     )
     X_train, X_val = X[idx_train], X[idx_val]
     y_train, y_val = y[idx_train], y[idx_val]
@@ -570,7 +580,7 @@ def run_calibration(self, run_id: str):
             # Split by index so metadata rows stay aligned with val predictions
             idx = np.arange(len(df))
             idx_train, idx_val = train_test_split(
-                idx, test_size=round(1.0 - train_split_ratio, 4), random_state=42
+                idx, test_size=_val_test_size(train_split_ratio), random_state=42
             )
             X_train, X_val = X[idx_train], X[idx_val]
             y_train, y_val = y[idx_train], y[idx_val]
