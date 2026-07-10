@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 import pandas as pd
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, jsonify, request
 
 from project.api.auditlog.models import AuditLog, log_audit
 from project.api.auth.decorators import require_perm
@@ -12,7 +12,7 @@ auditlog = Blueprint("auditlog", __name__)
 logger = get_logger(__name__)
 
 
-@auditlog.route("/all", methods=["POST"], endpoint="get_all_logs")
+@auditlog.post("/all", endpoint="get_all_logs")
 @require_perm("auditlog:read")
 @validate_request(
     allowed_keys=[
@@ -99,7 +99,7 @@ def get_all_logs():
         # Get total count if requested
         if get_size:
             total_count = query.count()
-            return make_response(jsonify(total_count), 200)
+            return jsonify(total_count), 200
 
         # Apply pagination
         if page is not None and page_size is not None:
@@ -127,13 +127,13 @@ def get_all_logs():
 
         output_json = log_df.to_dict(orient="records")
 
-        return make_response(jsonify(output_json), 200)
+        return jsonify(output_json), 200
     except Exception:
         logger.exception("Failed to query audit logs")
-        return make_response(jsonify({"message": "Failed to query audit logs"}), 500)
+        return jsonify({"message": "Failed to query audit logs"}), 500
 
 
-@auditlog.route("/email/<string:email>", methods=["GET"], endpoint="get_logs_by_user")
+@auditlog.get("/email/<string:email>", endpoint="get_logs_by_user")
 @require_perm("auditlog:read")
 @validate_request()
 def get_logs_by_user(email):
@@ -153,10 +153,10 @@ def get_logs_by_user(email):
         error_codes="",
         database_involved="audit_logs",
     )
-    return make_response(jsonify(log_list), 200)
+    return jsonify(log_list), 200
 
 
-@auditlog.route("/add", methods=["POST"])
+@auditlog.post("/add")
 @require_perm("auditlog:read")
 @validate_request(
     allowed_keys=[
@@ -186,7 +186,7 @@ def add_log():
     database_involved = data.get("database_involved")
 
     if not user_email or not action or not module:
-        return make_response(jsonify({"error": "Invalid input"}), 400)
+        return jsonify({"error": "Invalid input"}), 400
 
     log = log_audit(
         action=action,
@@ -200,4 +200,4 @@ def add_log():
         database_involved=database_involved,
     )
 
-    return make_response(jsonify(log), 201)
+    return jsonify(log), 201

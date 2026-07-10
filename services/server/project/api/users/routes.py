@@ -2,7 +2,8 @@ import json
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, jsonify, request
+from pydantic import ValidationError
 from werkzeug.exceptions import Conflict
 
 from project import bcrypt, db
@@ -12,8 +13,18 @@ from project.api.auth.decorators import require_perm
 from project.api.roles.models import RoleModel
 from project.api.users.models import User
 from project.api.utils import valid_date, valid_uuid, validate_request
+from project.schemas.users import AddUser, UpdateUser
 
 user = Blueprint("user", __name__)
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """First pydantic error as a '<field>: <msg>' string for the {"message"}
+    error shape the UAM frontend reads."""
+    first = exc.errors()[0] if exc.errors() else {}
+    loc = ".".join(str(p) for p in first.get("loc", ()))
+    msg = first.get("msg", "Invalid request")
+    return f"{loc}: {msg}" if loc else msg
 
 
 def _role_exists(role: str) -> bool:
@@ -42,25 +53,25 @@ def _audit_user(
     )
 
 
-@user.route("/all", methods=["GET"])
+@user.get("/all")
 @require_perm("user:read")
 @validate_request()
 def get_all_users():
     """Query all users"""
     users_list = [user.to_dict() for user in User.query.all()]
-    return make_response(jsonify(users_list), 200)
+    return jsonify(users_list), 200
 
 
-@user.route("/is_local_system_admin/<string:username>", methods=["GET"])
+@user.get("/is_local_system_admin/<string:username>")
 @require_perm("user:read")
 @validate_request()
 def get_is_local_system_admin(username):
     LOCAL_SYSTEM_ADMIN_USERNAME = os.getenv("LOCAL_SYSTEM_ADMIN_USERNAME")
     doMatch = username == LOCAL_SYSTEM_ADMIN_USERNAME
-    return make_response(jsonify({"doMatch": doMatch}), 200)
+    return jsonify({"doMatch": doMatch}), 200
 
 
-@user.route("/id/<string:id>", methods=["GET"])
+@user.get("/id/<string:id>")
 @require_perm("user:read")
 @validate_request()
 def get_user_by_id(id):
@@ -69,13 +80,13 @@ def get_user_by_id(id):
         id = valid_uuid(id)
         user = User.query.filter_by(id=id).first()
         if not user:
-            return make_response(jsonify({"message": "User not found"}), 404)
+            return jsonify({"message": "User not found"}), 404
 
         # audit log
         _audit_user(
             action="Retrieve", description=f"User [$USER] retrieved user with id {id}"
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except NameError as e:
         _audit_user(
@@ -84,7 +95,7 @@ def get_user_by_id(id):
             error_codes="404",
             database_involved="jobs, jobHistory",
         )
-        return make_response(jsonify({"message": str(e)}), 404)
+        return jsonify({"message": str(e)}), 404
 
     except Exception as e:
         _audit_user(
@@ -92,10 +103,10 @@ def get_user_by_id(id):
             description=f"User [$USER] failed to retrieve user with id {id}. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/email/<string:email>", methods=["GET"])
+@user.get("/email/<string:email>")
 @require_perm("user:read")
 @validate_request()
 def get_user_by_email(email):
@@ -103,14 +114,14 @@ def get_user_by_email(email):
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            return make_response(jsonify({"message": "User not found"}), 404)
+            return jsonify({"message": "User not found"}), 404
 
         # audit log
         _audit_user(
             action="Retrieve",
             description=f"User [$USER] retrieved user with email {email}",
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except Exception as e:
         _audit_user(
@@ -118,10 +129,10 @@ def get_user_by_email(email):
             description=f"User [$USER] failed to retrieve user with email {email}. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/add_batch", methods=["POST"])
+@user.post("/add_batch")
 @require_perm("user:write")
 @validate_request(allowed_keys=["users"])
 def add_multi_users():
@@ -142,9 +153,7 @@ def add_multi_users():
                     f"row {idx + 1} ({email}): unknown role '{user_data.get('role')}'"
                 )
         if errors:
-            return make_response(
-                jsonify({"message": "Import rejected", "errors": errors}), 400
-            )
+            return jsonify({"message": "Import rejected", "errors": errors}), 400
 
         for user_data in users:
             email = user_data.get("email")
@@ -165,7 +174,7 @@ def add_multi_users():
         db.session.commit()
 
         _audit_user(action="Add", description="User [$USER] added multiple users")
-        return make_response(jsonify({"message": "Users added"}), 201)
+        return jsonify({"message": "Users added"}), 201
     except Exception as e:
         db.session.rollback()
         _audit_user(
@@ -173,31 +182,32 @@ def add_multi_users():
             description=f"User [$USER] failed to add multiple users. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/add", methods=["POST"])
+@user.post("/add")
 @require_perm("user:write")
 @validate_request(
     allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
 )
 def add_user():
     """Add user"""
+    email = None  # bound for the audit descriptions in the except handlers below
     try:
-        data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
-        role = data.get("role")
-        name = data.get("name")
-        status = data.get("status")
-        registered_on = data.get("registeredOn")
+        try:
+            payload = AddUser.model_validate(request.get_json(silent=True) or {})
+        except ValidationError as ve:
+            raise ValueError(_validation_message(ve)) from ve
+        email = payload.email
+        password = payload.password
+        role = payload.role
+        name = payload.name
+        status = payload.status
+        registered_on = payload.registeredOn
 
         user = User.query.filter_by(email=email).first()
         if user:
             raise Conflict("User already exists")
-
-        if not email or not password or not role:
-            raise ValueError("Email, password, and role are required")
 
         if not _role_exists(role):
             raise ValueError(f"Unknown role '{role}'")
@@ -213,7 +223,7 @@ def add_user():
 
         # audit log
         _audit_user(action="Add", description=f"User [$USER] added user {email}")
-        return make_response(jsonify(user.to_dict()), 201)
+        return jsonify(user.to_dict()), 201
 
     except Conflict as e:
         db.session.rollback()
@@ -222,7 +232,7 @@ def add_user():
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="409",
         )
-        return make_response(jsonify({"message": str(e)}), 409)
+        return jsonify({"message": str(e)}), 409
 
     except ValueError as e:
         db.session.rollback()
@@ -231,7 +241,7 @@ def add_user():
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="400",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
@@ -240,10 +250,10 @@ def add_user():
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/update/<string:email>", methods=["PUT"])
+@user.put("/update/<string:email>")
 @require_perm("user:write")
 @validate_request(
     allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
@@ -254,15 +264,18 @@ def update_user(email):
         user = User.query.filter_by(email=email).first()
 
         if not user:
-            return make_response(jsonify({"message": "User not found"}), 404)
+            return jsonify({"message": "User not found"}), 404
 
-        data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
-        role = data.get("role")
-        name = data.get("name")
-        status = data.get("status")
-        registered_on = data.get("registeredOn")
+        try:
+            payload = UpdateUser.model_validate(request.get_json(silent=True) or {})
+        except ValidationError as ve:
+            raise ValueError(_validation_message(ve)) from ve
+        email = payload.email
+        password = payload.password
+        role = payload.role
+        name = payload.name
+        status = payload.status
+        registered_on = payload.registeredOn
 
         previous_data = {}
         new_data = {}
@@ -312,7 +325,7 @@ def update_user(email):
             previous_data=json.dumps(previous_data),
             new_data=json.dumps(new_data),
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except ValueError as e:
         db.session.rollback()
@@ -321,7 +334,7 @@ def update_user(email):
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="400",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
@@ -330,10 +343,10 @@ def update_user(email):
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/updates", methods=["PUT"])
+@user.put("/updates")
 @require_perm("user:write")
 @validate_request(allowed_keys=["users"])
 def update_users():
@@ -345,9 +358,7 @@ def update_users():
 
             user = User.query.filter_by(email=email).first()
             if not user:
-                return make_response(
-                    jsonify({"message": f"User not found: {email}"}), 404
-                )
+                return jsonify({"message": f"User not found: {email}"}), 404
 
             password = (
                 oneOfUsers["password"] if "password" in oneOfUsers.keys() else None
@@ -411,7 +422,7 @@ def update_users():
                 previous_data=json.dumps(previous_data),
                 new_data=json.dumps(new_data),
             )
-        return make_response(jsonify({"message": "Users updated"}), 201)
+        return jsonify({"message": "Users updated"}), 201
 
     except ValueError as e:
         db.session.rollback()
@@ -420,7 +431,7 @@ def update_users():
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="400",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
@@ -429,10 +440,10 @@ def update_users():
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/delete/<string:email>", methods=["DELETE"])
+@user.delete("/delete/<string:email>")
 @require_perm("user:write")
 @validate_request()
 def delete_user(email):
@@ -440,7 +451,7 @@ def delete_user(email):
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            return make_response(jsonify({"message": "User not found"}), 404)
+            return jsonify({"message": "User not found"}), 404
         sessions.revoke_all_for_user(user.email)  # blocks any active tokens immediately
         sessions.delete_all_for_user(
             user.email
@@ -450,7 +461,7 @@ def delete_user(email):
 
         # audit log
         _audit_user(action="Delete", description=f"User [$USER] deleted user {email}")
-        return make_response(jsonify({"message": "User deleted"}), 200)
+        return jsonify({"message": "User deleted"}), 200
 
     except Exception as e:
         db.session.rollback()
@@ -459,4 +470,4 @@ def delete_user(email):
             description=f"User [$USER] failed to delete user {email}. Error: {str(e)}",
             error_codes="500",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
