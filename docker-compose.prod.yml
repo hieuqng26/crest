@@ -5,17 +5,20 @@ services:
       context: services/client
       dockerfile: Dockerfile
     image: deval/frontend:latest
-    ports:
-      - "80:80"
-      - "443:9000"
+    # ports handled by Caddy on host
     environment:
       - SERVER_URL=http://backend:5000
       - DOMAIN=localhost
       - PORT=9000
       - IGNORE=$
     volumes:
+      - /opt/crest/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - frontend_dist_prod:/usr/share/nginx/html # share static files with nginx
       - nginx_logs:/var/log/nginx
+      # Real TLS cert/key for the App Gateway -> backend HTTPS hop (kept out of the git repo).
+      # Overrides the expired self-signed placeholder baked into the image.
+      - /opt/crest/ssl/nginx.crt:/etc/nginx/conf.d/ssl/nginx.crt:ro
+      - /opt/crest/ssl/nginx.key:/etc/nginx/conf.d/ssl/nginx.key:ro
     networks:
       - app-network
     restart: always
@@ -27,6 +30,7 @@ services:
       dockerfile: Dockerfile.prod
     image: deval/backend:latest
     volumes:
+      - /opt/crest/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - backend_data_prod:/home/app/var/lib/app_data
       - gunicorn_logs:/var/log/gunicorn
     ports:
@@ -37,9 +41,13 @@ services:
       - SERVICE_NAME=backend
       - CELERY_BROKER_URL=redis://default:Ey%402026%21@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://default:Ey%402026%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
     depends_on:
       - redis
       - mssql
+      - minio
     networks:
       - app-network
     restart: always
@@ -51,16 +59,21 @@ services:
       dockerfile: Dockerfile.prod
     image: deval/backend:latest
     volumes:
+      - /opt/crest/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - backend_data_prod:/home/app/var/lib/app_data
     depends_on:
       - redis
       - backend
+      - minio
     env_file:
       - env/.env.prod
     environment:
       - SERVICE_NAME=worker
       - CELERY_BROKER_URL=redis://default:Ey%402026%21@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://default:Ey%402026%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
     networks:
       - app-network
     restart: always
@@ -87,11 +100,29 @@ services:
     ports:
       - "1433:1433"  # Expose MSSQL default port
     volumes:
+      - /opt/crest/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - mssql_data_prod:/var/opt/mssql  # Persistent storage
     networks:
       - app-network
     restart: always
     mem_limit: 3g
+
+  # Object storage (artifacts/files)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9100:9000"   # S3 API
+      - "9101:9001"   # web console
+    volumes:
+      - /opt/crest/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - minio_data_prod:/data
+    networks:
+      - app-network
+    restart: always
 
 volumes:
   mssql_data_prod:
@@ -99,6 +130,7 @@ volumes:
   backend_data_prod:
   gunicorn_logs:
   nginx_logs:
+  minio_data_prod:
 
 networks:
   app-network:
