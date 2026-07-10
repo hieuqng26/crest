@@ -19,7 +19,6 @@ COPY Dockerfile .
 COPY index.html .
 COPY jsconfig.json .
 COPY package.json .
-COPY package-lock.json .
 COPY postcss.config.js .
 COPY tailwind.config.js .
 COPY vite.config.js .
