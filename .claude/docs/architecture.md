@@ -173,5 +173,13 @@ plus an Analysis tab, reusing `RunDetailsCard`/`LogsPanel`/`SegmentModelsPanel`/
 
 - MSSQL via `pyodbc` + `ODBC Driver 17 for SQL Server` (installed in Dockerfile).
 - MinIO is S3-compatible; all model pickles, uploads, diagnostics live there.
-- MLflow runs headless — never expose its UI or Celery Flower to users.
+- Never expose Celery Flower to users. (MLflow was removed — no code references it.)
 - PrimeVue 3 is pinned (v4 API differs). Do not upgrade without a full audit.
+
+## Backend layering
+
+Routes are thin: auth + Pydantic parse + a call into `project/services/<domain>.py`
++ serialise. Services are transport-agnostic (no Flask) so the MCP server can
+reuse them; a global error boundary maps `DomainError`s to HTTP status codes.
+Full detail, the error-mapping table, and the "add an endpoint/tool" recipe:
+[backend.md](backend.md).

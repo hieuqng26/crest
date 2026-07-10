@@ -1,51 +1,43 @@
 from datetime import timedelta
 
 import pandas as pd
-from flask import Blueprint, jsonify, make_response, request
-from sqlalchemy import text
+from flask import Blueprint, jsonify, request
+from pydantic import ValidationError
 
 from project.api.auditlog.models import AuditLog, log_audit
 from project.api.auth.decorators import require_perm
-from project.api.utils import valid_date, validate_request
+from project.api.helpers import validation_message
+from project.api.utils import valid_date
+from project.logger import get_logger
+from project.schemas.auditlog import AddAuditLog, GetAuditLogs
 
 auditlog = Blueprint("auditlog", __name__)
+logger = get_logger(__name__)
 
 
-@auditlog.route("/all", methods=["POST"], endpoint="get_all_logs")
+@auditlog.post("/all", endpoint="get_all_logs")
 @require_perm("auditlog:read")
-@validate_request(
-    allowed_keys=[
-        "page",
-        "page_size",
-        "columns",
-        "date_from",
-        "date_to",
-        "user_id",
-        "module",
-        "submodule",
-        "action",
-        "get_size",
-        "sort_column",
-        "sort_order",
-    ]
-)
 def get_all_logs():
     """Query all logs"""
     try:
-        data = request.get_json()
-        page = data.get("page", None)
-        page_size = data.get("page_size", None)
-        columns = data.get("columns")
-        date_from = data.get("date_from", None)
-        date_to = data.get("date_to", None)
-        user_id = data.get("user_id", None)
-        module = data.get("module", None)
-        submodule = data.get("submodule", None)
-        action = data.get("action", None)
-        get_size = data.get("get_size", False)
-        sort_column = data.get("sort_column", None)
-        sort_order = data.get("sort_order", None)
+        f = GetAuditLogs.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"message": validation_message(e)}), 400
 
+    page = f.page
+    page_size = f.page_size
+    columns = f.columns
+    date_from = f.date_from
+    date_to = f.date_to
+    user_id = f.user_id
+    module = f.module
+    submodule = f.submodule
+    action = f.action
+    get_size = f.get_size
+    sort_column = f.sort_column
+    sort_order = f.sort_order
+
+    try:
         columns = (
             None
             if columns in ["undefined", "null", "", None]
@@ -83,9 +75,12 @@ def get_all_logs():
         if action:
             query = query.filter(AuditLog.action.in_(action))
 
-        # order
+        # order — use the mapped Column object and a whitelisted direction so
+        # neither sort_column nor sort_order is ever interpolated into raw SQL.
         if sort_column in column_map:
-            query = query.order_by(text(f"{sort_column} {sort_order}"))
+            col = column_map[sort_column]
+            descending = str(sort_order).lower() == "desc"
+            query = query.order_by(col.desc() if descending else col.asc())
 
         if sort_column != "timestamp":
             query = query.order_by(
@@ -95,7 +90,7 @@ def get_all_logs():
         # Get total count if requested
         if get_size:
             total_count = query.count()
-            return make_response(jsonify(total_count), 200)
+            return jsonify(total_count), 200
 
         # Apply pagination
         if page is not None and page_size is not None:
@@ -123,14 +118,14 @@ def get_all_logs():
 
         output_json = log_df.to_dict(orient="records")
 
-        return make_response(jsonify(output_json), 200)
-    except Exception as e:
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify(output_json), 200
+    except Exception:
+        logger.exception("Failed to query audit logs")
+        return jsonify({"message": "Failed to query audit logs"}), 500
 
 
-@auditlog.route("/email/<string:email>", methods=["GET"], endpoint="get_logs_by_user")
+@auditlog.get("/email/<string:email>", endpoint="get_logs_by_user")
 @require_perm("auditlog:read")
-@validate_request()
 def get_logs_by_user(email):
     """Query all jobs by email"""
     log_list = [
@@ -148,51 +143,28 @@ def get_logs_by_user(email):
         error_codes="",
         database_involved="audit_logs",
     )
-    return make_response(jsonify(log_list), 200)
+    return jsonify(log_list), 200
 
 
-@auditlog.route("/add", methods=["POST"])
+@auditlog.post("/add")
 @require_perm("auditlog:read")
-@validate_request(
-    allowed_keys=[
-        "email",
-        "action",
-        "module",
-        "submodule",
-        "previous_data",
-        "new_data",
-        "description",
-        "status",
-        "error_codes",
-        "database_involved",
-    ]
-)
 def add_log():
-    """Add user"""
-    data = request.get_json()
-    user_email = data.get("email")
-    action = data.get("action")
-    module = data.get("module")
-    submodule = data.get("submodule")
-    previous_data = data.get("previous_data")
-    new_data = data.get("new_data")
-    description = data.get("description")
-    error_codes = data.get("error_codes")
-    database_involved = data.get("database_involved")
-
-    if not user_email or not action or not module:
-        return make_response(jsonify({"error": "Invalid input"}), 400)
+    """Record an audit entry from an explicit request body."""
+    try:
+        body = AddAuditLog.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"message": validation_message(e)}), 400
 
     log = log_audit(
-        action=action,
-        user_email=user_email,
-        module=module,
-        submodule=submodule,
-        previous_data=previous_data,
-        new_data=new_data,
-        description=description,
-        error_codes=error_codes,
-        database_involved=database_involved,
+        action=body.action,
+        user_email=body.email,
+        module=body.module,
+        submodule=body.submodule,
+        previous_data=body.previous_data,
+        new_data=body.new_data,
+        description=body.description,
+        error_codes=body.error_codes,
+        database_involved=body.database_involved,
     )
 
-    return make_response(jsonify(log), 201)
+    return jsonify(log), 201

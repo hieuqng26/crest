@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import uuid
 
 import pandas as pd
@@ -9,7 +10,7 @@ from flask_jwt_extended import get_jwt_identity
 
 from project import app_session, cache
 from project.api.auth.decorators import require_perm
-from project.core import storage, table_query
+from project.core import dataset_io, storage, table_query
 from project.db_models.calibration_models import Dataset
 from project.logger import get_logger
 
@@ -19,20 +20,15 @@ logger = get_logger(__name__)
 
 ALLOWED_EXTENSIONS = {"csv", "xlsx", "parquet"}
 
+# Guards for the raw-SQL /query runner (bounds runtime + result size). The real
+# read-only enforcement is the RISK_DB login (db_datareader), not these.
+_QUERY_CONNECT_TIMEOUT_S = int(os.getenv("RISK_DB_CONNECT_TIMEOUT_S", 30))
+_QUERY_TIMEOUT_S = int(os.getenv("RISK_DB_QUERY_TIMEOUT_S", 30))
+_QUERY_MAX_ROWS = int(os.getenv("RISK_DB_QUERY_MAX_ROWS", 100_000))
+
 
 def _ext(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-
-def _read_dataframe(file_bytes: bytes, ext: str) -> pd.DataFrame:
-    buf = io.BytesIO(file_bytes)
-    if ext == "csv":
-        return pd.read_csv(buf)
-    if ext == "xlsx":
-        return pd.read_excel(buf)
-    if ext == "parquet":
-        return pd.read_parquet(buf)
-    raise ValueError(f"Unsupported file type: {ext}")
 
 
 @datasets.get("/")
@@ -63,7 +59,7 @@ def upload_dataset():
 
     file_bytes = f.read()
     try:
-        df = _read_dataframe(file_bytes, ext)
+        df = dataset_io.read_dataframe(file_bytes, ext)
     except Exception as e:
         return jsonify({"error": f"Failed to parse file: {e}"}), 422
 
@@ -110,19 +106,30 @@ def query_dataset():
     if not sql:
         return jsonify({"error": "sql is required"}), 400
 
-    # Safety: read-only guard — reject anything that isn't a SELECT
+    # Fast-fail UX only — NOT the security boundary. Write-prevention is enforced
+    # by the read-only RISK_DB login (db_datareader); a keyword check can't safely
+    # parse SQL.
     first_word = sql.split()[0].upper() if sql.split() else ""
     if first_word not in ("SELECT", "WITH"):
         return jsonify({"error": "Only SELECT / WITH queries are permitted"}), 400
 
     try:
-        import os
-
         conn_str = os.getenv("RISK_DB_CONN_STR", "")
         if not conn_str:
             return jsonify({"error": "Risk DB not configured"}), 503
-        with pyodbc.connect(conn_str, timeout=30) as conn:
-            df = pd.read_sql(sql, conn)
+        with pyodbc.connect(conn_str, timeout=_QUERY_CONNECT_TIMEOUT_S) as conn:
+            conn.timeout = _QUERY_TIMEOUT_S  # per-statement (query) timeout
+            # Stream in chunks and stop at the row cap so a huge result can't
+            # exhaust memory.
+            frames, rows = [], 0
+            for chunk in pd.read_sql(sql, conn, chunksize=10_000):
+                frames.append(chunk)
+                rows += len(chunk)
+                if rows >= _QUERY_MAX_ROWS:
+                    break
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            if len(df) > _QUERY_MAX_ROWS:
+                df = df.head(_QUERY_MAX_ROWS)
     except Exception as e:
         logger.error(f"Risk DB query failed: {e}")
         return jsonify({"error": f"Query failed: {e}"}), 422
@@ -165,10 +172,7 @@ def _load_dataset_dataframe(ds: Dataset) -> pd.DataFrame:
     if df is not None:
         return df
 
-    object_name = ds.file_path.split("/", 1)[-1]
-    file_bytes = storage.download_bytes(object_name)
-    ext = object_name.rsplit(".", 1)[-1].lower()
-    df = _read_dataframe(file_bytes, ext)
+    df = dataset_io.download_dataset_df(ds)
     cache.set(cache_key, df, timeout=60)
     return df
 

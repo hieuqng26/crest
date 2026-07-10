@@ -164,7 +164,7 @@ class TestRecomputeForecastRunSegment:
         df = pd.DataFrame({"mev": [0.1, 0.2], "date": ["2025", "2026"]})
 
         with patch(
-            "project.workers.tasks.storage.download_bytes",
+            "project.workers.forecast.storage.download_bytes",
             return_value=_artifact(["mev"], const=9.0),
         ):
             n = recompute_forecast_run_segment(

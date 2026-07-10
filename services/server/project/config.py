@@ -1,5 +1,5 @@
 import os
-import urllib
+import urllib.parse
 from datetime import timedelta
 
 from dotenv import load_dotenv
@@ -7,23 +7,132 @@ from dotenv import load_dotenv
 from project.logger import get_logger
 
 logger = get_logger(__name__)
-# import redis
 
 load_dotenv()
 
 
-class Config:
-    """Config class for Flask app"""
+# ---------------------------------------------------------------------------
+# Shared builders — Dev and Prod differ only in a handful of values, so the
+# repeated Redis / MSSQL / MinIO / engine / APM blocks live here once.
+# ---------------------------------------------------------------------------
+def _redis_url() -> str:
+    user = os.getenv("REDIS_USER", "default")
+    password = urllib.parse.quote(os.getenv("REDIS_PASSWORD", ""))
+    host = os.getenv("REDIS_HOST", "localhost")
+    port = os.getenv("REDIS_PORT", "6379")
+    db = os.getenv("REDIS_DB", "0")
+    return f"redis://{user}:{password}@{host}:{port}/{db}"
 
-    SECRET_KEY = os.getenv(
-        "SECRET_KEY", "a311dd3cad98047b3b06d479bce3839de6d05114f84167db0bb34be81eb06d9a"
-    )  # secrets.token_hex()
+
+def _mssql_uri(default_database: str) -> str:
+    """Build the SQLAlchemy MSSQL URI from env.
+
+    No secret has a baked-in default — an unset ``APP_DB_APP_PASSWORD`` yields
+    an empty password (dev supplies it via env/.env.dev; prod is checked by
+    :func:`validate_required_config` before the app boots).
+    """
+    params = urllib.parse.quote_plus(
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        f"SERVER={os.getenv('APP_DB_SERVER', 'tcp:mssql,1433')};"
+        f"DATABASE={os.getenv('APP_DB_DATABASE', default_database)};"
+        f"UID={os.getenv('APP_DB_APP_USERNAME', 'crst')};"
+        f"PWD={os.getenv('APP_DB_APP_PASSWORD', '')};"
+        "Encrypt=no;"
+        "TrustServerCertificate=yes;"
+    )
+    return f"mssql+pyodbc:///?odbc_connect={params}"
+
+
+def _engine_options(
+    *, pool_size: int, max_overflow: int, pool_recycle: int, extra=None
+):
+    opts = {
+        "pool_size": int(os.getenv("APP_DB_POOL_SIZE", pool_size)),
+        "max_overflow": int(os.getenv("APP_DB_MAX_OVERFLOW", max_overflow)),
+        "pool_timeout": int(os.getenv("APP_DB_POOL_TIMEOUT", 30)),
+        "pool_recycle": int(os.getenv("APP_DB_POOL_RECYCLE", pool_recycle)),
+        "pool_pre_ping": os.getenv("APP_DB_POOL_PRE_PING", "True").lower() == "true",
+    }
+    if extra:
+        opts.update(extra)
+    return opts
+
+
+def _minio_settings() -> dict:
+    return {
+        "MINIO_ENDPOINT": os.getenv("MINIO_ENDPOINT", "minio:9000"),
+        "MINIO_ACCESS_KEY": os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+        "MINIO_SECRET_KEY": os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+        "MINIO_BUCKET": os.getenv("MINIO_BUCKET", "mst-artifacts"),
+        "MINIO_SECURE": os.getenv("MINIO_SECURE", "false").lower() == "true",
+    }
+
+
+def _apm(environment: str, log_level: str, debug: bool) -> dict:
+    return {
+        "SERVICE_NAME": os.getenv("ELASTIC_APM_SERVICE_NAME", "crst"),
+        "SECRET_TOKEN": os.getenv("ELASTIC_APM_SECRET_TOKEN"),
+        "SERVER_URL": os.getenv("ELASTIC_APM_SERVER_URL"),
+        "ENVIRONMENT": os.getenv("ELASTIC_APM_ENVIRONMENT", environment),
+        "LOG_LEVEL": log_level,
+        "DEBUG": debug,
+    }
+
+
+# Secrets that must be present when running under CONFIG_NAME=production —
+# there are no safe defaults for these, so the app refuses to boot without them.
+REQUIRED_PRODUCTION_SECRETS = (
+    "SECRET_KEY",
+    "JWT_SECRET_KEY",
+    "APP_DB_APP_PASSWORD",
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "REDIS_PASSWORD",
+)
+
+
+def validate_required_config(config_name: str | None) -> None:
+    """Fail fast if a production deployment is missing a required secret.
+
+    Called from ``create_app``. Only enforced for ``production`` — dev/testing
+    keep convenient defaults.
+    """
+    if config_name != "production":
+        return
+    missing = [key for key in REQUIRED_PRODUCTION_SECRETS if not os.getenv(key)]
+    if missing:
+        raise RuntimeError(
+            "Refusing to start: required production secrets are not set: "
+            + ", ".join(missing)
+        )
+
+
+class Config:
+    """Base config. Secrets have NO baked-in defaults — subclasses add
+    dev-only conveniences; production supplies everything via the environment."""
+
+    SECRET_KEY = os.getenv("SECRET_KEY")
     PERMANENT_SESSION_LIFETIME = timedelta(
         days=int(os.getenv("PERMANENT_SESSION_LIFETIME", 10))
     )
-    ALLOWED_ORIGINS = "*"
 
     CACHE_TYPE = "SimpleCache"  # overridden to RedisCache in Dev/Prod
+
+    # Reject oversized request bodies with 413 before buffering/processing. A
+    # generous ceiling (defense-in-depth behind nginx's client_max_body_size);
+    # must stay above the largest legitimate dataset upload — tune per env.
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH_MB", 1024)) * 1024 * 1024
+
+    # Rate limiting (flask-limiter). Storage is memory:// unless a URI is set
+    # (Dev/Prod point it at Redis); per-route limits live on the endpoints.
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI")
+    RATELIMIT_HEADERS_ENABLED = True
+    # Limit for the auth endpoints (login/refresh/change-password).
+    RATELIMIT_AUTH = os.getenv("RATELIMIT_AUTH", "10 per minute")
+
+    # Demo/mock credit-risk data (mock_credit.py) is a dev/test convenience and
+    # must never be reachable in production. Off by default; Dev/Testing enable it.
+    ALLOW_MOCK_CREDIT = os.getenv("ALLOW_MOCK_CREDIT", "false").lower() == "true"
 
     # Seconds to cache a "session is valid" verdict before re-checking the DB.
     # In-app revocation invalidates the cache synchronously; this TTL only bounds
@@ -46,21 +155,19 @@ class Config:
     JWT_REFRESH_COOKIE_PATH = "/api/auth/refresh"
     JWT_SESSION_COOKIE = False  # persist across browser restarts (until refresh expiry)
 
-    # # Flask Session
-    # SESSION_TYPE = 'redis'
-    # SESSION_REDIS = redis.StrictRedis(host='redis', port=6379, db=1)
-    # SESSION_USE_SIGNER = True  # To sign the session ID for security
-    # SESSION_PERMANENT = False
-    # SESSION_COOKIE_SECURE = False  # Recommended for HTTPS
-    # SESSION_COOKIE_HTTPONLY = True  # Prevent JS access to session cookie
-    # SESSION_COOKIE_SAMESITE = 'None'  # Mitigate CSRF
-    # SESSION_COOKIE_SAMESITE = 'Strict'  # Mitigate CSRF
-
 
 class TestingConfig(Config):
-    ALLOWED_ORIGINS = "*"
+    SECRET_KEY = "test-secret"
+    ALLOW_MOCK_CREDIT = True
+    # Limiter stays wired (memory storage) but effectively unlimited so the
+    # login-heavy suite never trips it; the rate-limit test lowers RATELIMIT_AUTH.
+    RATELIMIT_STORAGE_URI = "memory://"
+    RATELIMIT_AUTH = "1000000 per hour"
+    # Route exceptions through the global error boundary (as prod does) instead
+    # of letting Flask re-raise them under TESTING — so integration tests see
+    # the real DomainError/ValidationError -> HTTP status mapping.
+    PROPAGATE_EXCEPTIONS = False
     REDIS_URL = "redis://localhost:6379/0"
-    REDIS_QUEUES = ["cem", "physical", "netzero"]
     SQLALCHEMY_DATABASE_URI = "sqlite://"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = True
@@ -71,151 +178,60 @@ class TestingConfig(Config):
 
 
 class DevelopmentConfig(Config):
-    ALLOWED_ORIGINS = "*"
+    # Dev-only fallback so a bare `flask run` works without an env file; prod
+    # never inherits this (base Config.SECRET_KEY is None there).
+    SECRET_KEY = os.getenv("SECRET_KEY", "dev-insecure-secret-key")
     JWT_COOKIE_SECURE = os.getenv("JWT_COOKIE_SECURE", "false").lower() == "true"
-    CACHE_TYPE = "RedisCache"
-    REDIS_USER = os.getenv("REDIS_USER", "default")
-    REDIS_PASSWORD = urllib.parse.quote(os.getenv("REDIS_PASSWORD", ""))
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-    REDIS_DB = os.getenv("REDIS_DB", "0")
-    REDIS_URL = (
-        f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-    )
-    REDIS_QUEUES = ["default"]
-    CACHE_REDIS_URL = REDIS_URL
+    ALLOW_MOCK_CREDIT = os.getenv("ALLOW_MOCK_CREDIT", "true").lower() == "true"
 
-    # Celery
+    CACHE_TYPE = "RedisCache"
+    REDIS_URL = _redis_url()
+    CACHE_REDIS_URL = REDIS_URL
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI") or REDIS_URL
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
 
-    # MinIO / S3 artifact store
-    MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
-    MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_BUCKET = os.getenv("MINIO_BUCKET", "mst-artifacts")
-    MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    MINIO_ENDPOINT = _minio_settings()["MINIO_ENDPOINT"]
+    MINIO_ACCESS_KEY = _minio_settings()["MINIO_ACCESS_KEY"]
+    MINIO_SECRET_KEY = _minio_settings()["MINIO_SECRET_KEY"]
+    MINIO_BUCKET = _minio_settings()["MINIO_BUCKET"]
+    MINIO_SECURE = _minio_settings()["MINIO_SECURE"]
 
-    # MLflow (headless)
-
-    # Main application database (for user info, results)
-    mssql_server_main = os.getenv("APP_DB_SERVER", "tcp:mssql,1433")
-    mssql_database_main = os.getenv("APP_DB_DATABASE", "esg_dev")
-    mssql_username_main = os.getenv("APP_DB_APP_USERNAME", "crst")
-    mssql_password_main = os.getenv("APP_DB_APP_PASSWORD", "Ey@2024!")
-
-    params_main = urllib.parse.quote_plus(
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={mssql_server_main};"
-        f"DATABASE={mssql_database_main};"
-        f"UID={mssql_username_main};"
-        f"PWD={mssql_password_main};"
-        "Encrypt=no;"
-        "TrustServerCertificate=yes;"
-    )
-
-    SQLALCHEMY_DATABASE_URI = f"mssql+pyodbc:///?odbc_connect={params_main}"
+    SQLALCHEMY_DATABASE_URI = _mssql_uri(os.getenv("APP_DB_DATABASE", "esg_dev"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = os.getenv("APP_DB_ECHO", "False").lower() == "true"
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_size": int(
-            os.getenv("APP_DB_POOL_SIZE", 5)
-        ),  # Increase the pool size (default is 5)
-        "max_overflow": int(
-            os.getenv("APP_DB_MAX_OVERFLOW", 10)
-        ),  # Allow more overflow connections (default is 10)
-        "pool_timeout": int(
-            os.getenv("APP_DB_POOL_TIMEOUT", 30)
-        ),  # Increase timeout for acquiring a connection (default is 30 seconds)
-        "pool_recycle": int(
-            os.getenv("APP_DB_POOL_RECYCLE", 1800)
-        ),  # Recycle connections after 30 minutes to avoid stale connections
-        "pool_pre_ping": os.getenv("APP_DB_POOL_PRE_PING", "True").lower()
-        == "true",  # Enable pre-ping to check connection health
-    }
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_options(
+        pool_size=5, max_overflow=10, pool_recycle=1800
+    )
 
-    # APM
-    ELASTIC_APM = {
-        "SERVICE_NAME": os.getenv("ELASTIC_APM_SERVICE_NAME", "crst"),
-        "SECRET_TOKEN": os.getenv("ELASTIC_APM_SECRET_TOKEN", "supersecret"),
-        "SERVER_URL": os.getenv("ELASTIC_APM_SERVER_URL"),
-        "ENVIRONMENT": os.getenv("ELASTIC_APM_ENVIRONMENT", "development"),
-        "LOG_LEVEL": "DEBUG",
-        "DEBUG": True,
-    }
+    ELASTIC_APM = _apm("development", log_level="DEBUG", debug=True)
 
 
 class ProductionConfig(Config):
-    ALLOWED_ORIGINS = "*"
     CACHE_TYPE = "RedisCache"
-    REDIS_USER = os.getenv("REDIS_USER", "default")
-    REDIS_PASSWORD = urllib.parse.quote(os.getenv("REDIS_PASSWORD", ""))
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-    REDIS_DB = os.getenv("REDIS_DB", "0")
-    REDIS_URL = (
-        f"redis://{REDIS_USER}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-    )
-    REDIS_QUEUES = ["default"]
+    REDIS_URL = _redis_url()
     CACHE_REDIS_URL = REDIS_URL
-
-    # Celery
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI") or REDIS_URL
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
 
-    # MinIO / S3 artifact store
-    MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
-    MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_BUCKET = os.getenv("MINIO_BUCKET", "mst-artifacts")
-    MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    MINIO_ENDPOINT = _minio_settings()["MINIO_ENDPOINT"]
+    MINIO_ACCESS_KEY = _minio_settings()["MINIO_ACCESS_KEY"]
+    MINIO_SECRET_KEY = _minio_settings()["MINIO_SECRET_KEY"]
+    MINIO_BUCKET = _minio_settings()["MINIO_BUCKET"]
+    MINIO_SECURE = _minio_settings()["MINIO_SECURE"]
 
-    # MLflow (headless)
-
-    # Main application database (for user info, results)
-    mssql_server_main = os.getenv("APP_DB_SERVER", "tcp:mssql,1433")
-    mssql_database_main = os.getenv("APP_DB_DATABASE", "esg_prod")
-    mssql_username_main = os.getenv("APP_DB_APP_USERNAME", "crst")
-    mssql_password_main = os.getenv("APP_DB_APP_PASSWORD", "Ey@2024!")
-
-    params_main = urllib.parse.quote_plus(
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={mssql_server_main};"
-        f"DATABASE={mssql_database_main};"
-        f"UID={mssql_username_main};"
-        f"PWD={mssql_password_main};"
-        "Encrypt=no;"
-        "TrustServerCertificate=yes;"
-    )
-
-    SQLALCHEMY_DATABASE_URI = f"mssql+pyodbc:///?odbc_connect={params_main}"
+    SQLALCHEMY_DATABASE_URI = _mssql_uri(os.getenv("APP_DB_DATABASE", "esg_prod"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_size": int(
-            os.getenv("APP_DB_POOL_SIZE", 20)
-        ),  # Increase the pool size (default is 5)
-        "max_overflow": int(
-            os.getenv("APP_DB_MAX_OVERFLOW", 30)
-        ),  # Allow more overflow connections (default is 10)
-        "pool_timeout": int(
-            os.getenv("APP_DB_POOL_TIMEOUT", 30)
-        ),  # Increase timeout for acquiring a connection (default is 30 seconds)
-        "pool_recycle": int(
-            os.getenv("APP_DB_POOL_RECYCLE", 3600)
-        ),  # Recycle connections after 30 minutes to avoid stale connections
-        "pool_pre_ping": os.getenv("APP_DB_POOL_PRE_PING", "True").lower()
-        == "true",  # Enable pre-ping to check connection health
-        "pool_reset_on_return": "commit",  # Reset connections on return
-        "connect_args": {"timeout": 30, "autocommit": True},
-    }
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_options(
+        pool_size=20,
+        max_overflow=30,
+        pool_recycle=3600,
+        extra={
+            "pool_reset_on_return": "commit",
+            "connect_args": {"timeout": 30, "autocommit": True},
+        },
+    )
 
-    # APM
-    ELASTIC_APM = {
-        "SERVICE_NAME": os.getenv("ELASTIC_APM_SERVICE_NAME", "crst"),
-        "SECRET_TOKEN": os.getenv("ELASTIC_APM_SECRET_TOKEN", "supersecret"),
-        "SERVER_URL": os.getenv("ELASTIC_APM_SERVER_URL"),
-        "ENVIRONMENT": os.getenv("ELASTIC_APM_ENVIRONMENT", "production"),
-        "LOG_LEVEL": "INFO",
-        "DEBUG": False,
-    }
+    ELASTIC_APM = _apm("production", log_level="INFO", debug=False)

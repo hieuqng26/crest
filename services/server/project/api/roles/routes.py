@@ -15,7 +15,6 @@ from project.api.auth.permissions import (
 from project.api.roles import registry
 from project.api.roles.models import RoleModel
 from project.api.users.models import User
-from project.api.utils import validate_request  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # New roles CRUD blueprint (Task 8)  — mounted at /api/roles

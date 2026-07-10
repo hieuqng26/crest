@@ -32,8 +32,6 @@ class AuditLog(db.Model):
     previous_data = db.Column(db.Text, nullable=True)
     new_data = db.Column(db.Text, nullable=True)
     ip_address = db.Column(db.String(45), nullable=True)
-    ip_address2 = db.Column(db.String(45), nullable=True)
-    ip_address3 = db.Column(db.String(45), nullable=True)
     description = db.Column(db.Text, nullable=True)
     device_info = db.Column(db.JSON, nullable=True)
     affected_records = db.Column(db.Text, nullable=True)
@@ -71,8 +69,6 @@ class AuditLog(db.Model):
         new_data="",
         timestamp=datetime.now(timezone.utc),
         ip_address="",
-        ip_address2="",
-        ip_address3="",
         description="",
         status="",
         device_info=None,
@@ -103,8 +99,6 @@ class AuditLog(db.Model):
         self.previous_data = previous_data
         self.new_data = new_data
         self.ip_address = ip_address
-        self.ip_address2 = ip_address2
-        self.ip_address3 = ip_address3
         self.description = description
         self.status = status
         self.device_info = device_info
@@ -137,8 +131,6 @@ class AuditLog(db.Model):
             previous_data=self.previous_data,
             new_data=self.new_data,
             ip_address=self.ip_address,
-            ip_address2=self.ip_address2,
-            ip_address3=self.ip_address3,
             description=self.description,
             status=self.status,
             device_info=self.device_info,
@@ -173,8 +165,6 @@ class AuditLog(db.Model):
             "previous_data": cls.previous_data,
             "new_data": cls.new_data,
             "ip_address": cls.ip_address,
-            "ip_address2": cls.ip_address2,
-            "ip_address3": cls.ip_address3,
             "description": cls.description,
             "status": cls.status,
             "device_info": cls.device_info,
@@ -210,8 +200,6 @@ def log_audit(
     api_endpoints=None,
     device_info=None,
     ip_address=None,
-    ip_address2=None,
-    ip_address3=None,
     job_id="",
     job_judged_by="",
     application_version=os.getenv("APPLICATION_VERSION"),
@@ -222,22 +210,20 @@ def log_audit(
     description = description.replace("$USER", user_email)
     device_info = get_device_info() if device_info is None else device_info
     api_endpoints = request.url if api_endpoints is None else api_endpoints
-    ip_address_header_field = os.getenv("IP_ADDERSS_HEADER_FIELD", "")
-    ip_address_value = (
-        request.headers.getlist(ip_address_header_field)[0]
-        if (ip_address is None and request.headers.getlist(ip_address_header_field))
-        else ip_address
+
+    # Real client IP. ProxyFix (x_for=4, see create_app) rewrites
+    # request.remote_addr to the client address from the X-Forwarded-For chain,
+    # so it is the correct value behind the reverse proxy. An explicit
+    # ``ip_address`` arg or a configured trusted header still takes precedence.
+    ip_address_header_field = os.getenv("IP_ADDRESS_HEADER_FIELD") or os.getenv(
+        "IP_ADDERSS_HEADER_FIELD"  # tolerate the historical misspelling
     )
-    ip_address2 = ip_address if ip_address2 is None else ip_address2
-    ip_address2_value = ip_address_value if ip_address2 is None else ip_address2
-    ip_address2_value = (
-        request.access_route[-1]
-        if (ip_address2 is None and request.access_route)
-        else ip_address2
-    )
-    ip_address3 = ip_address if ip_address3 is None else ip_address3
-    ip_address3_value = ip_address_value if ip_address3 is None else ip_address3
-    ip_address3_value = request.remote_addr if ip_address3 is None else ip_address3
+    if ip_address is not None:
+        ip_address_value = ip_address
+    elif ip_address_header_field and request.headers.getlist(ip_address_header_field):
+        ip_address_value = request.headers.getlist(ip_address_header_field)[0]
+    else:
+        ip_address_value = request.remote_addr
 
     status = "failed" if error_codes else "success"
 
@@ -248,8 +234,6 @@ def log_audit(
         timestamp=datetime.now(timezone.utc),
         application_version=application_version,
         ip_address=ip_address_value,
-        ip_address2=ip_address2_value,
-        ip_address3=ip_address3_value,
         user_email=user_email,
         role=user.role if user else "",
         action=action,

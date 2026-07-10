@@ -1,38 +1,45 @@
 import os
-from contextlib import contextmanager
 
 from flask import Flask, request
-from flask_bcrypt import Bcrypt
-from flask_caching import Cache
-from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from project.config import Config, DevelopmentConfig, ProductionConfig, TestingConfig
+from project.config import (
+    Config,
+    DevelopmentConfig,
+    ProductionConfig,
+    TestingConfig,
+    validate_required_config,
+)
+from project.extensions import (  # re-exported for `from project import db/...`
+    DATA_STORE,
+    app_session,
+    bcrypt,
+    cache,
+    db,
+    limiter,
+    migrate,
+)
 from project.logger import get_logger
 
 logger = get_logger(__name__)
 
-db = SQLAlchemy()
-migrate = Migrate()
-bcrypt = Bcrypt()
-cache = Cache()
-DATA_STORE = os.getenv("DATA_STORE", "/var/lib/app_data")
+__all__ = [
+    "DATA_STORE",
+    "app_session",
+    "bcrypt",
+    "cache",
+    "create_app",
+    "db",
+    "limiter",
+    "migrate",
+]
 
 
-@contextmanager
-def app_session():
-    """Provide a transactional scope around a series of operations."""
-    try:
-        yield db.session
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
-    finally:
-        db.session.close()
+def _cors_allowed_origins() -> list[str]:
+    """Parse the CORS allowlist from the ``CORS_ORIGIN`` env var (comma-separated)."""
+    raw = os.getenv("CORS_ORIGIN", "")
+    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 def create_app():
@@ -43,19 +50,16 @@ def create_app():
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=4, x_host=4)
 
     # Choose the configuration
-    if os.getenv("CONFIG_NAME") == "production":
-        app.config.from_object(ProductionConfig)
-        # allowed_origins = ProductionConfig.ALLOWED_ORIGINS.split(',')
-    elif os.getenv("CONFIG_NAME") == "development":
-        app.config.from_object(DevelopmentConfig)
-        # allowed_origins = DevelopmentConfig.ALLOWED_ORIGINS.split(',')
-    elif os.getenv("CONFIG_NAME") == "testing":
-        app.config.from_object(TestingConfig)
-        # allowed_origins = TestingConfig.ALLOWED_ORIGINS.split(',')
-    else:
-        app.config.from_object(Config)
-        # allowed_origins = Config.ALLOWED_ORIGINS.split(',')
+    config_name = os.getenv("CONFIG_NAME")
+    config_class = {
+        "production": ProductionConfig,
+        "development": DevelopmentConfig,
+        "testing": TestingConfig,
+    }.get(config_name, Config)
+    app.config.from_object(config_class)
 
+    # Refuse to boot a production deployment that is missing a required secret.
+    validate_required_config(config_name)
     if not app.config.get("JWT_SECRET_KEY"):
         raise RuntimeError(
             "JWT_SECRET_KEY environment variable is not set. The app cannot start without it."
@@ -64,30 +68,25 @@ def create_app():
     # cookies
     app.config["SESSION_COOKIE_SAMESITE"] = "Strict"
 
-    # Configure CORS, actually not set here, but set at after_request()
-    allowed_origins = []
-    CORS(
-        app,
-        supports_credentials=True,
-        resources={r"/api/*": {"origins": allowed_origins}},
-    )
+    # CORS is handled entirely by the after_request hook below (it echoes an
+    # allowlisted Origin and drives the CSP origin). Parsed once at boot.
+    allowed_origins = _cors_allowed_origins()
 
     # JWT (cookie mode) — values come from the active config object
     jwt = JWTManager(app)
 
-    from project.api.auth.jwt_callbacks import (
-        register_http_error_handlers,
-        register_jwt_callbacks,
-    )
+    from project.api.auth.jwt_callbacks import register_jwt_callbacks
+    from project.api.error_handlers import register_error_handlers
 
     register_jwt_callbacks(jwt)
-    register_http_error_handlers(app)
+    register_error_handlers(app)
 
     db.init_app(app)
     migrate.init_app(app, db)
     bcrypt.init_app(app)
     jwt.init_app(app)
     cache.init_app(app)
+    limiter.init_app(app)
 
     # Import models so Alembic autogenerate can detect them
     from project.api.auditlog.models import AuditLog  # noqa: F401
@@ -148,10 +147,6 @@ def create_app():
 
     @app.after_request
     def after_request(response):
-        allowed_origins_env = os.getenv("CORS_ORIGIN", "")
-        allowed_origins = [
-            s.strip() for s in allowed_origins_env.split(",") if s.strip()
-        ]
         origin = request.headers.get("Origin")
         if origin in allowed_origins:
             # use "set" instead of "add" to ensure only one origin

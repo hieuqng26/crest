@@ -2,9 +2,10 @@ import json
 from datetime import datetime, timezone
 
 from project import db
+from project.db_models.base_model import SerializerMixin
 
 
-class Dataset(db.Model):
+class Dataset(db.Model, SerializerMixin):
     __tablename__ = "datasets"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -23,20 +24,8 @@ class Dataset(db.Model):
 
     calibration_runs = db.relationship("CalibrationRun", backref="dataset", lazy=True)
 
-    def to_dict(self):
-        return dict(
-            id=self.id,
-            name=self.name,
-            description=self.description,
-            source=self.source,
-            file_path=self.file_path,
-            schema_json=self.schema_json,
-            row_count=self.row_count,
-            created_by=self.created_by,
-            created_at=self.created_at.isoformat() if self.created_at else None,
-            status=self.status,
-            kind=self.kind,
-        )
+    # to_dict() inherited from SerializerMixin (plain column dump; created_at
+    # ISO-formatted) — output identical to the former hand-written version.
 
 
 class ModelConfig(db.Model):

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from project import db
+from project.db_models.base_model import SerializerMixin
 
 
 class ForecastRun(db.Model):
@@ -113,7 +114,7 @@ class ForecastRunResult(db.Model):
     )
 
 
-class ForecastRunLog(db.Model):
+class ForecastRunLog(db.Model, SerializerMixin):
     __tablename__ = "forecast_run_logs"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -126,13 +127,4 @@ class ForecastRunLog(db.Model):
     sector = db.Column(db.String(128), nullable=True)
     segment = db.Column(db.String(128), nullable=True)
 
-    def to_dict(self):
-        return dict(
-            id=self.id,
-            run_id=self.run_id,
-            t=self.t,
-            level=self.level,
-            message=self.message,
-            sector=self.sector,
-            segment=self.segment,
-        )
+    # to_dict() inherited from SerializerMixin (plain column dump).

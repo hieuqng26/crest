@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture()
 def mock_celery_task():
-    with patch("project.api.workflows.routes.run_calibration.delay"):
+    with patch("project.services.workflows.run_calibration.delay"):
         yield
 
 
@@ -173,7 +173,7 @@ class TestCreateWorkflowValidation:
         db.session.commit()
 
         login(user.email)
-        with patch("project.api.workflows.routes.run_calibration.delay"):
+        with patch("project.services.workflows.run_calibration.delay"):
             resp = client.post(
                 "/api/workflows/",
                 json={
@@ -480,7 +480,12 @@ class TestWorkflowDelete:
         )
         db.session.commit()
 
+        # Snapshot the PKs before purge_workflow — it closes the session, which
+        # expires these ORM instances (accessing cal.id/fr.id afterwards would
+        # raise DetachedInstanceError).
         wf_id = wf.id
+        cal_id = cal.id
+        fr_id = fr.id
         # MinIO cleanup is best-effort I/O — stub it out in the unit test.
         with patch("project.core.workflow_delete.storage.remove_prefix") as mock_rm:
             purge_workflow(wf_id)
@@ -491,10 +496,10 @@ class TestWorkflowDelete:
         assert ForecastRun.query.filter_by(run_id="wf-purge-fr-1").first() is None
         assert CalibrationRunLog.query.filter_by(run_id="wf-purge-cal-1").count() == 0
         assert (
-            CalibrationRunSegment.query.filter_by(calibration_run_id=cal.id).count()
+            CalibrationRunSegment.query.filter_by(calibration_run_id=cal_id).count()
             == 0
         )
-        assert ForecastRunResult.query.filter_by(forecast_run_id=fr.id).count() == 0
+        assert ForecastRunResult.query.filter_by(forecast_run_id=fr_id).count() == 0
 
     def test_delete_blocked_while_child_active(
         self, client, login, workflow_with_children

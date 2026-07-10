@@ -2,16 +2,19 @@ import json
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, jsonify, request
+from pydantic import ValidationError
 from werkzeug.exceptions import Conflict
 
 from project import bcrypt, db
 from project.api.auditlog.models import log_audit
 from project.api.auth import sessions
 from project.api.auth.decorators import require_perm
+from project.api.helpers import validation_message
 from project.api.roles.models import RoleModel
 from project.api.users.models import User
-from project.api.utils import valid_date, valid_uuid, validate_request
+from project.api.utils import valid_date, valid_uuid
+from project.schemas.users import AddUser, UpdateUser
 
 user = Blueprint("user", __name__)
 
@@ -20,115 +23,105 @@ def _role_exists(role: str) -> bool:
     return bool(role) and RoleModel.query.filter_by(name=role).first() is not None
 
 
-@user.route("/all", methods=["GET"])
+def _audit_user(
+    action,
+    description,
+    *,
+    error_codes="",
+    previous_data="",
+    new_data="",
+    database_involved="users",
+):
+    """log_audit with the UAM/user constants (module/submodule) pre-filled."""
+    log_audit(
+        action=action,
+        module="uam",
+        submodule="user",
+        previous_data=previous_data,
+        new_data=new_data,
+        description=description,
+        error_codes=error_codes,
+        database_involved=database_involved,
+    )
+
+
+@user.get("/all")
 @require_perm("user:read")
-@validate_request()
 def get_all_users():
     """Query all users"""
     users_list = [user.to_dict() for user in User.query.all()]
-    return make_response(jsonify(users_list), 200)
+    return jsonify(users_list), 200
 
 
-@user.route("/is_local_system_admin/<string:username>", methods=["GET"])
+@user.get("/is_local_system_admin/<string:username>")
 @require_perm("user:read")
-@validate_request()
 def get_is_local_system_admin(username):
     LOCAL_SYSTEM_ADMIN_USERNAME = os.getenv("LOCAL_SYSTEM_ADMIN_USERNAME")
     doMatch = username == LOCAL_SYSTEM_ADMIN_USERNAME
-    return make_response(jsonify({"doMatch": doMatch}), 200)
+    return jsonify({"doMatch": doMatch}), 200
 
 
-@user.route("/id/<string:id>", methods=["GET"])
+@user.get("/id/<string:id>")
 @require_perm("user:read")
-@validate_request()
 def get_user_by_id(id):
     """Query user by uid"""
     try:
         id = valid_uuid(id)
         user = User.query.filter_by(id=id).first()
         if not user:
-            raise Exception("User not found")
+            return jsonify({"message": "User not found"}), 404
 
         # audit log
-        log_audit(
-            action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] retrieved user with id {id}",
-            error_codes="",
-            database_involved="users",
+        _audit_user(
+            action="Retrieve", description=f"User [$USER] retrieved user with id {id}"
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except NameError as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve job. Job_id is invalid. Error: {str(e)}",
             error_codes="404",
             database_involved="jobs, jobHistory",
         )
-        return make_response(jsonify({"message": str(e)}), 404)
+        return jsonify({"message": str(e)}), 404
 
     except Exception as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve user with id {id}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/email/<string:email>", methods=["GET"])
+@user.get("/email/<string:email>")
 @require_perm("user:read")
-@validate_request()
 def get_user_by_email(email):
     """Query user by email"""
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            raise Exception("User not found")
+            return jsonify({"message": "User not found"}), 404
 
         # audit log
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] retrieved user with email {email}",
-            error_codes="",
-            database_involved="users",
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except Exception as e:
-        log_audit(
+        _audit_user(
             action="Retrieve",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to retrieve user with email {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/add_batch", methods=["POST"])
+@user.post("/add_batch")
 @require_perm("user:write")
-@validate_request(allowed_keys=["users"])
 def add_multi_users():
     """Add multiple users. Every row must carry a valid, existing role."""
     try:
@@ -147,9 +140,7 @@ def add_multi_users():
                     f"row {idx + 1} ({email}): unknown role '{user_data.get('role')}'"
                 )
         if errors:
-            return make_response(
-                jsonify({"message": "Import rejected", "errors": errors}), 400
-            )
+            return jsonify({"message": "Import rejected", "errors": errors}), 400
 
         for user_data in users:
             email = user_data.get("email")
@@ -169,54 +160,38 @@ def add_multi_users():
             )
         db.session.commit()
 
-        log_audit(
-            action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description="User [$USER] added multiple users",
-            error_codes="",
-            database_involved="users",
-        )
-        return make_response(jsonify({"message": "Users added"}), 201)
+        _audit_user(action="Add", description="User [$USER] added multiple users")
+        return jsonify({"message": "Users added"}), 201
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add multiple users. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/add", methods=["POST"])
+@user.post("/add")
 @require_perm("user:write")
-@validate_request(
-    allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
-)
 def add_user():
     """Add user"""
+    email = None  # bound for the audit descriptions in the except handlers below
     try:
-        data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
-        role = data.get("role")
-        name = data.get("name")
-        status = data.get("status")
-        registered_on = data.get("registeredOn")
+        try:
+            payload = AddUser.model_validate(request.get_json(silent=True) or {})
+        except ValidationError as ve:
+            raise ValueError(validation_message(ve)) from ve
+        email = payload.email
+        password = payload.password
+        role = payload.role
+        name = payload.name
+        status = payload.status
+        registered_on = payload.registeredOn
 
         user = User.query.filter_by(email=email).first()
         if user:
             raise Conflict("User already exists")
-
-        if not email or not password or not role:
-            raise ValueError("Email, password, and role are required")
 
         if not _role_exists(role):
             raise ValueError(f"Unknown role '{role}'")
@@ -231,81 +206,57 @@ def add_user():
         db.session.commit()
 
         # audit log
-        log_audit(
-            action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] added user {email}",
-            error_codes="",
-            database_involved="users",
-        )
-        return make_response(jsonify(user.to_dict()), 201)
+        _audit_user(action="Add", description=f"User [$USER] added user {email}")
+        return jsonify(user.to_dict()), 201
 
     except Conflict as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="409",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 409)
+        return jsonify({"message": str(e)}), 409
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Add",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to add user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/update/<string:email>", methods=["PUT"])
+@user.put("/update/<string:email>")
 @require_perm("user:write")
-@validate_request(
-    allowed_keys=["email", "password", "role", "name", "status", "registeredOn"]
-)
 def update_user(email):
     """Update user by email"""
     try:
         user = User.query.filter_by(email=email).first()
 
         if not user:
-            raise Exception("User not found")
+            return jsonify({"message": "User not found"}), 404
 
-        data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
-        role = data.get("role")
-        name = data.get("name")
-        status = data.get("status")
-        registered_on = data.get("registeredOn")
+        try:
+            payload = UpdateUser.model_validate(request.get_json(silent=True) or {})
+        except ValidationError as ve:
+            raise ValueError(validation_message(ve)) from ve
+        email = payload.email
+        password = payload.password
+        role = payload.role
+        name = payload.name
+        status = payload.status
+        registered_on = payload.registeredOn
 
         previous_data = {}
         new_data = {}
@@ -349,50 +300,35 @@ def update_user(email):
             sessions.revoke_all_for_user(user.email)
 
         # audit log
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
+            description=f"User [$USER] updated user {email}",
             previous_data=json.dumps(previous_data),
             new_data=json.dumps(new_data),
-            description=f"User [$USER] updated user {email}",
-            error_codes="",
-            database_involved="users",
         )
-        return make_response(jsonify(user.to_dict()), 200)
+        return jsonify(user.to_dict()), 200
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/updates", methods=["PUT"])
+@user.put("/updates")
 @require_perm("user:write")
-@validate_request(allowed_keys=["users"])
 def update_users():
     """Update users"""
     try:
@@ -402,7 +338,7 @@ def update_users():
 
             user = User.query.filter_by(email=email).first()
             if not user:
-                raise Exception("User not found")
+                return jsonify({"message": f"User not found: {email}"}), 404
 
             password = (
                 oneOfUsers["password"] if "password" in oneOfUsers.keys() else None
@@ -460,56 +396,41 @@ def update_users():
                 sessions.revoke_all_for_user(user.email)
 
             # audit log
-            log_audit(
+            _audit_user(
                 action="Update",
-                module="uam",
-                submodule="user",
+                description=f"User [$USER] updated user {email}",
                 previous_data=json.dumps(previous_data),
                 new_data=json.dumps(new_data),
-                description=f"User [$USER] updated user {email}",
-                error_codes="",
-                database_involved="users",
             )
-        return make_response(jsonify({"message": "Users updated"}), 201)
+        return jsonify({"message": "Users updated"}), 201
 
     except ValueError as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="400",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 400)
+        return jsonify({"message": str(e)}), 400
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Update",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to update users. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500
 
 
-@user.route("/delete/<string:email>", methods=["DELETE"])
+@user.delete("/delete/<string:email>")
 @require_perm("user:write")
-@validate_request()
 def delete_user(email):
     """Delete user by email"""
     try:
         user = User.query.filter_by(email=email).first()
         if not user:
-            raise Exception("User not found")
+            return jsonify({"message": "User not found"}), 404
         sessions.revoke_all_for_user(user.email)  # blocks any active tokens immediately
         sessions.delete_all_for_user(
             user.email
@@ -518,28 +439,14 @@ def delete_user(email):
         db.session.commit()
 
         # audit log
-        log_audit(
-            action="Delete",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
-            description=f"User [$USER] deleted user {email}",
-            error_codes="",
-            database_involved="users",
-        )
-        return make_response(jsonify({"message": "User deleted"}), 200)
+        _audit_user(action="Delete", description=f"User [$USER] deleted user {email}")
+        return jsonify({"message": "User deleted"}), 200
 
     except Exception as e:
         db.session.rollback()
-        log_audit(
+        _audit_user(
             action="Delete",
-            module="uam",
-            submodule="user",
-            previous_data="",
-            new_data="",
             description=f"User [$USER] failed to delete user {email}. Error: {str(e)}",
             error_codes="500",
-            database_involved="users",
         )
-        return make_response(jsonify({"message": str(e)}), 500)
+        return jsonify({"message": str(e)}), 500

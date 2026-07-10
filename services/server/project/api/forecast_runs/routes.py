@@ -1,17 +1,16 @@
 import json
-import uuid
 from datetime import datetime, timezone
 
 import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
+from project import app_session
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
 from project.db_models.calibration_models import (
     CalibrationRun,
-    CalibrationRunSegment,
     Dataset,
 )
 from project.db_models.credit_models import CreditRiskForecastInput, CreditRiskRun
@@ -20,6 +19,10 @@ from project.db_models.forecast_models import (
     ForecastRunLog,
     ForecastRunResult,
 )
+from project.api.helpers import pagination_envelope
+from project.schemas.forecast_runs import CreateForecastRun
+from project.services import forecast_runs as forecast_run_service
+from project.services.run_guards import ensure_not_workflow_member
 
 from . import forecast_runs
 
@@ -74,87 +77,14 @@ def list_runs():
             )
         )
 
-    return jsonify(
-        {"items": result, "total": runs.total, "page": page, "pages": runs.pages}
-    ), 200
+    return jsonify(pagination_envelope(result, runs)), 200
 
 
 @forecast_runs.post("")
 @require_perm("forecast:execute")
 def create_run():
-    from project import app_session
-    from project.workers.tasks import run_forecast
-
-    body = request.get_json(silent=True) or {}
-    calibration_run_id = body.get("calibration_run_id")
-    dataset_id = body.get("dataset_id")
-
-    if not calibration_run_id:
-        return jsonify({"error": "calibration_run_id is required"}), 400
-    if not dataset_id:
-        return jsonify({"error": "dataset_id is required"}), 400
-
-    segment_key = body.get("segment_key") or None
-
-    cal_run = CalibrationRun.query.filter_by(run_id=calibration_run_id).first()
-    if not cal_run:
-        return jsonify({"error": "Calibration run not found"}), 404
-    if cal_run.status != "success":
-        return jsonify({"error": "Calibration run must be in success status"}), 400
-
-    if segment_key:
-        # Per-segment forecast run: validate the specific segment exists and succeeded
-        seg = CalibrationRunSegment.query.filter_by(
-            calibration_run_id=cal_run.id, segment_key=segment_key
-        ).first()
-        if not seg:
-            return jsonify(
-                {
-                    "error": f"Segment '{segment_key}' not found under this calibration run"
-                }
-            ), 404
-        if seg.status != "success":
-            return jsonify(
-                {"error": f"Segment '{segment_key}' has not completed successfully"}
-            ), 400
-    else:
-        # No segment_key: segmented runs score every trained segment against the
-        # forecast dataset (one trajectory per segment); non-segmented runs need the
-        # top-level artifact.
-        if not cal_run.seg_sectors_json and not cal_run.artifact_path:
-            return jsonify(
-                {"error": "Calibration run has no saved model artifact"}
-            ), 400
-
-    ds = Dataset.query.get(int(dataset_id))
-    if not ds:
-        return jsonify({"error": "Dataset not found"}), 404
-    if not ds.file_path:
-        return jsonify(
-            {"error": "Dataset has no file — live query results are not supported"}
-        ), 400
-
-    run_id = str(uuid.uuid4())
-    name = body.get("name") or None
-    identity = get_jwt_identity()
-
-    fr = ForecastRun(
-        run_id=run_id,
-        name=name,
-        calibration_run_id=cal_run.id,
-        dataset_id=int(dataset_id),
-        segment_key=segment_key,
-        status="queued",
-        triggered_by=identity,
-        created_at=datetime.now(timezone.utc),
-        progress=0,
-    )
-    with app_session() as s:
-        s.add(fr)
-        s.flush()
-        fr_dict = fr.to_dict()
-
-    run_forecast.delay(run_id)
+    payload = CreateForecastRun.model_validate(request.get_json(silent=True) or {})
+    fr_dict = forecast_run_service.create_run(payload, get_jwt_identity())
     return jsonify(fr_dict), 202
 
 
@@ -196,25 +126,6 @@ def get_refs(run_id: str):
     ), 200
 
 
-def _check_workflow_membership(fr: ForecastRun):
-    """Return a 409 response if this run belongs to a workflow, else None."""
-    if fr.workflow_run_id:
-        from project.db_models.workflow_models import WorkflowRun
-
-        wf = WorkflowRun.query.get(fr.workflow_run_id)
-        wf_name = wf.name if wf else fr.workflow_run_id
-        return (
-            jsonify(
-                {
-                    "error": f"This run belongs to workflow '{wf_name}' — delete "
-                    "or rerun the workflow instead."
-                }
-            ),
-            409,
-        )
-    return None
-
-
 def _cr_refs_for(fr_id: int):
     """Return CreditRiskRun objects that reference this forecast run id."""
     inputs = CreditRiskForecastInput.query.filter_by(forecast_run_id=fr_id).all()
@@ -229,15 +140,12 @@ def _cr_refs_for(fr_id: int):
 @forecast_runs.delete("/<run_id>")
 @require_perm("forecast:write")
 def delete_run(run_id: str):
-    from project import app_session
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
 
-    err = _check_workflow_membership(fr)
-    if err:
-        return err
+    ensure_not_workflow_member(fr)
 
     cr_runs = _cr_refs_for(fr.id)
     if cr_runs:
@@ -260,7 +168,6 @@ def delete_run(run_id: str):
 @forecast_runs.post("/bulk-delete")
 @require_perm("forecast:write")
 def bulk_delete_runs():
-    from project import app_session
 
     run_ids = (request.get_json(silent=True) or {}).get("run_ids", [])
     if not run_ids:
@@ -294,7 +201,6 @@ def bulk_delete_runs():
 @forecast_runs.post("/<run_id>/cancel")
 @require_perm("forecast:execute")
 def cancel_run(run_id: str):
-    from project import app_session
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
@@ -334,15 +240,12 @@ def get_logs(run_id: str):
 @forecast_runs.post("/<run_id>/rerun")
 @require_perm("forecast:execute")
 def rerun_run(run_id: str):
-    from project import app_session
     from project.workers.tasks import run_forecast
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
     if not fr:
         return jsonify({"error": "Not found"}), 404
-    err = _check_workflow_membership(fr)
-    if err:
-        return err
+    ensure_not_workflow_member(fr)
 
     with app_session() as s:
         r = ForecastRun.query.filter_by(run_id=run_id).first()

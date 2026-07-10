@@ -4,7 +4,9 @@
 defineProps({
   modelValue: { type: Number, default: 80 },
   min: { type: Number, default: 50 },
-  max: { type: Number, default: 100 },
+  // Capped below 100 so a validation holdout always exists (val% > 0);
+  // train_split == 1.0 makes sklearn's test_size 0.0, which is invalid.
+  max: { type: Number, default: 95 },
   step: { type: Number, default: 5 },
 })
 const emit = defineEmits(['update:modelValue'])

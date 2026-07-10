@@ -30,6 +30,16 @@ def test_invalid_role_rejected(client, make_user):
     assert resp.status_code == 400
 
 
+def test_add_user_missing_password_rejected_by_schema(client, make_user):
+    """The AddUser Pydantic schema rejects a missing required field with a 400
+    that keeps the {"message": ...} shape the UAM frontend reads."""
+    _login(client, make_user, "sysadmin")
+    resp = client.post("/api/user/add", json={"email": "x@x.io", "role": "viewer"})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert "message" in body and "password" in body["message"]
+
+
 def test_add_user_with_custom_role(client, make_user):
     _login(client, make_user, "sysadmin")
     client.post(

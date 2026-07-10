@@ -86,7 +86,7 @@ const SCORING_OPTIONS = [
 
 const form = ref({
   name: '', algorithm: null, hyperparams: {},
-  trainPct: 100, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
+  trainPct: 80, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
   cvSearch: { mode: 'None', folds: 5, nIter: 20, scoring: 'r2' },
   paramGrid: {}
 })
@@ -143,7 +143,7 @@ const openCreate = (presetAlgorithm = null) => {
   const meta = registry.value.find((a) => a.algorithm === algo)
   form.value = {
     name: '', algorithm: algo, hyperparams: meta ? meta.params.reduce((acc, p) => (acc[p.name] = p.default, acc), {}) : {},
-    trainPct: 100, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
+    trainPct: 80, scaler: 'None', splitBy: 'Subsector', maxSeg: 5,
     cvSearch: { mode: 'None', folds: 5, nIter: 20, scoring: 'r2' },
     paramGrid: buildDefaultGrid(meta?.params ?? [])
   }
