@@ -37,7 +37,9 @@ def upgrade():
             sa.Column(col, sa.String(_LEN[col]), nullable=True),
         )
 
-    # Backfill from meta_json in id-ranged chunks.
+    # Backfill from meta_json in id-ranged chunks. Each chunk's UPDATEs are sent
+    # as one executemany and committed before the next chunk, so a large table
+    # doesn't hold table locks or grow the transaction log for the whole run.
     bind = op.get_bind()
     t = sa.table(
         "forecast_run_results",
@@ -45,13 +47,23 @@ def upgrade():
         sa.column("meta_json", sa.Text),
         *[sa.column(c, sa.String) for c in _COLS],
     )
-    max_id = bind.execute(sa.text("SELECT COALESCE(MAX(id), 0) FROM forecast_run_results")).scalar()
+    update_stmt = (
+        sa.update(t)
+        .where(t.c.id == sa.bindparam("row_id"))
+        .values({c: sa.bindparam(c) for c in _COLS})
+    )
+    max_id = bind.execute(
+        sa.text("SELECT COALESCE(MAX(id), 0) FROM forecast_run_results")
+    ).scalar()
     lo = 0
     while lo < max_id:
         hi = lo + _CHUNK
         rows = bind.execute(
-            sa.select(t.c.id, t.c.meta_json).where(sa.and_(t.c.id > lo, t.c.id <= hi))
+            sa.select(t.c.id, t.c.meta_json).where(
+                sa.and_(t.c.id > lo, t.c.id <= hi)
+            )
         ).fetchall()
+        params = []
         for row in rows:
             if not row.meta_json:
                 continue
@@ -59,12 +71,15 @@ def upgrade():
                 meta = json.loads(row.meta_json)
             except (TypeError, ValueError):
                 continue
-            values = {c: meta.get(c) for c in _COLS if meta.get(c) is not None}
-            if not values:
+            if not isinstance(meta, dict):
                 continue
-            bind.execute(
-                sa.update(t).where(t.c.id == row.id).values(**values)
-            )
+            values = {c: meta.get(c) for c in _COLS}
+            if all(v is None for v in values.values()):
+                continue
+            params.append({"row_id": row.id, **values})
+        if params:
+            bind.execute(update_stmt, params)
+            bind.commit()  # release locks / truncate log between chunks
         lo = hi
 
     for col, name in _INDEXES.items():
