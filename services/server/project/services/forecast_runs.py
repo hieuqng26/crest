@@ -169,6 +169,17 @@ def results_df(fr: ForecastRun) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+def distinct_for_column(fr: ForecastRun, column: str) -> dict:
+    """Distinct values for one result column, for a filter dropdown.
+
+    Single seam used by the route and the benchmark. Its internals are swapped
+    across the scalability options (df scan → cache → indexed SQL); the return
+    shape ``{"values": [...], "truncated": bool}`` is invariant.
+    """
+    df = results_df(fr)
+    return table_query.distinct_values(df, column)
+
+
 def get_results(
     run_id: str,
     page: int = 0,
