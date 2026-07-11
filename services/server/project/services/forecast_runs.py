@@ -26,6 +26,15 @@ from project.schemas.forecast_runs import CreateForecastRun
 from project.services._pagination import pagination_envelope
 from project.workers.tasks import run_forecast
 
+# meta_json keys promoted to indexed columns on forecast_run_results. segment_key
+# was promoted earlier; the rest are added by migration c3d5e7f9a1b3.
+PROMOTED_DIMENSIONS = ("sector", "subsector", "country", "scenario", "segment_key")
+
+
+def promoted_dims_from_meta(meta: dict) -> dict:
+    """Subset of a meta row limited to the promoted dimension columns present."""
+    return {k: meta[k] for k in PROMOTED_DIMENSIONS if meta.get(k) is not None}
+
 
 def create_run(
     payload: CreateForecastRun,

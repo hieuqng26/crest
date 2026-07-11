@@ -181,3 +181,10 @@ def test_promoted_columns_exist_and_writable(app):
                 "ix_frr_run_scenario",
             }
         )
+
+
+def test_promoted_dims_from_meta_extracts_known_keys():
+    from project.services.forecast_runs import promoted_dims_from_meta
+
+    meta = {"sector": "Tech", "scenario": "Adverse", "irrelevant": "x"}
+    assert promoted_dims_from_meta(meta) == {"sector": "Tech", "scenario": "Adverse"}
