@@ -1,14 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import creditRiskAPI from '@/api/creditRiskAPI'
-import { cssVar } from '@/utils/chartTheme'
+import { cssVar, scenarioStyle } from '@/utils/chartTheme'
+import LinePlot from '@/components/charts/LinePlot.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
-
-// apexcharts (~500KB) is code-split here instead of registered globally in
-// main.js, so it only downloads when this chart view actually mounts.
-const apexchart = defineAsyncComponent(() => import('vue3-apexcharts'))
 
 const router = useRouter()
 
@@ -116,42 +113,18 @@ onMounted(async () => {
   // forecast fetch — no explicit call here (avoids a duplicate request).
 })
 
-// ── chart styling ──────────────────────────────────────────────────────────────
-// History occupies the ink slot on this page, so both stress scenarios render
-// muted (solid vs dashed) — colors still come from the chart tokens.
+// ── chart series ─────────────────────────────────────────────────────────────
+// History occupies the ink slot; the three scenarios use the shared scenario
+// styling so they render identically to every other chart in the app.
 const historyColor = () => cssVar('--chart-2')
-const scenarioStyle = (name) => {
-  const styles = {
-    Baseline: { color: cssVar('--chart-1'), width: 2.8, dash: 0 },
-    Adverse: { color: cssVar('--chart-3'), width: 1.8, dash: 0 },
-    'Severely Adverse': { color: cssVar('--chart-3'), width: 1.8, dash: 6 },
-  }
-  return styles[name] ?? { color: cssVar('--chart-4'), width: 1.8, dash: 0 }
-}
+const showHistory = ref(false)
 
-// Legend/scenario visibility is shared across every card: clicking a legend item
-// hides that scenario on all charts at once.
-const hiddenScenarios = ref(new Set())
-const toggleScenario = (name) => {
-  const s = new Set(hiddenScenarios.value)
-  if (s.has(name)) s.delete(name)
-  else s.add(name)
-  hiddenScenarios.value = s
-}
-const isHidden = (name) => hiddenScenarios.value.has(name)
-
-const compactFmt = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
-const fmtNum = (v) => (v == null ? '—' : compactFmt.format(v))
-
-// Which scenario names appear anywhere in the current payload (for the legend).
-const scenarioNames = computed(() => {
-  const names = new Set()
-  for (const m of forecastData.value?.metrics || []) {
-    for (const n of Object.keys(m.scenarios || {})) names.add(n)
-  }
-  const order = { Baseline: 0, Adverse: 1, 'Severely Adverse': 2 }
-  return [...names].sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99))
-})
+// Injected into each plot's kebab menu — toggles the History line on every card.
+const historyMenuItems = computed(() => [{
+  label: showHistory.value ? 'Hide history' : 'Show history',
+  icon: showHistory.value ? 'pi pi-eye-slash' : 'pi pi-eye',
+  command: () => { showHistory.value = !showHistory.value },
+}])
 
 function buildCard(metric) {
   if (!metric.available) return { ...metric, unavailable: true }
@@ -161,109 +134,30 @@ function buildCard(metric) {
   if (!hist.length && !scenarioEntries.length) return { ...metric, unavailable: true }
 
   const lastHist = hist.length ? hist[hist.length - 1] : null
-  const splitYear = lastHist ? lastHist.year : null
 
   const series = []
-  const widths = []
-  const dashes = []
-  const colors = []
-
-  if (hist.length) {
-    series.push({ name: 'History', data: hist.map((p) => ({ x: p.year, y: p.value })) })
-    widths.push(1.8)
-    dashes.push(0)
-    colors.push(historyColor())
+  if (hist.length && showHistory.value) {
+    series.push({
+      name: 'History',
+      x: hist.map((p) => p.year),
+      y: hist.map((p) => p.value),
+      color: historyColor(),
+      width: 1.8,
+    })
   }
 
+  let fallbackIdx = 0
   for (const [name, pts] of scenarioEntries) {
-    if (isHidden(name)) continue
-    const st = scenarioStyle(name)
+    const st = scenarioStyle(name, fallbackIdx++)
     // Prepend history's last point so the forecast path joins continuously
-    // (this is what removes the visual "jump" at the history→forecast boundary).
-    const data = (lastHist ? [{ x: lastHist.year, y: lastHist.value }] : []).concat(
-      pts.map((p) => ({ x: p.year, y: p.value }))
-    )
-    series.push({ name, data })
-    widths.push(st.width)
-    dashes.push(st.dash)
-    colors.push(st.color)
+    // (removes the visual "jump" at the history→forecast boundary).
+    const x = (lastHist ? [lastHist.year] : []).concat(pts.map((p) => p.year))
+    const y = (lastHist ? [lastHist.value] : []).concat(pts.map((p) => p.value))
+    // Dots on the (yearly) scenario paths only — History is dense monthly data.
+    series.push({ name, x, y, color: st.color, width: st.width, dash: st.dash, mode: 'lines+markers' })
   }
 
-  const allYears = [
-    ...hist.map((p) => p.year),
-    ...scenarioEntries.flatMap(([, pts]) => pts.map((p) => p.year)),
-  ]
-  const minYear = allYears.length ? Math.min(...allYears) : 0
-  const maxYear = allYears.length ? Math.max(...allYears) : 0
-
-  const options = {
-    chart: {
-      type: 'line',
-      toolbar: { show: false },
-      zoom: { enabled: false },
-      animations: { enabled: false },
-      fontFamily: 'inherit',
-      parentHeightOffset: 0,
-    },
-    colors,
-    stroke: { curve: 'straight', width: widths, dashArray: dashes },
-    legend: { show: false },
-    grid: {
-      borderColor: cssVar('--surface-border-row'),
-      strokeDashArray: 0,
-      xaxis: { lines: { show: false } },
-      padding: { left: 8, right: 12, top: 0, bottom: 0 },
-    },
-    markers: { size: 0, hover: { size: 4 } },
-    xaxis: {
-      type: 'numeric',
-      min: minYear,
-      max: maxYear,
-      tickAmount: Math.min(8, Math.max(1, maxYear - minYear)),
-      decimalsInFloat: 0,
-      labels: {
-        formatter: (v) => (v == null ? '' : String(Math.round(v))),
-        style: { colors: cssVar('--text-color-muted-2'), fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
-      },
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      crosshairs: { show: true, stroke: { color: cssVar('--surface-border-input'), width: 1, dashArray: 3 } },
-      tooltip: { enabled: false },
-    },
-    yaxis: {
-      labels: {
-        formatter: (v) => fmtNum(v),
-        style: { colors: cssVar('--text-color-muted-2'), fontFamily: 'IBM Plex Mono, monospace', fontSize: '10px' },
-      },
-    },
-    tooltip: {
-      shared: true,
-      intersect: false,
-      x: { formatter: (v) => String(Math.round(v)) },
-      y: { formatter: (v) => (v == null ? '—' : fmtNum(v)) },
-    },
-    annotations: splitYear != null ? {
-      xaxis: [{
-        x: splitYear,
-        strokeDashArray: 4,
-        borderColor: cssVar('--surface-border-input'),
-        label: {
-          text: 'Forecast →',
-          orientation: 'horizontal',
-          position: 'top',
-          offsetY: -4,
-          style: {
-            color: cssVar('--text-color-muted-2'),
-            background: 'transparent',
-            fontFamily: 'IBM Plex Mono, monospace',
-            fontSize: '9px',
-          },
-        },
-      }],
-    } : {},
-  }
-
-  return { ...metric, unavailable: false, series, options }
+  return { ...metric, unavailable: false, series }
 }
 
 const cards = computed(() => (forecastData.value?.metrics || []).map(buildCard))
@@ -338,25 +232,6 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
     </div>
 
     <template v-else>
-      <div class="legend-row">
-        <span class="legend-item is-static"><span class="legend-swatch" style="background:var(--chart-2);height:2px" />History</span>
-        <span
-          v-for="name in scenarioNames" :key="name"
-          class="legend-item"
-          :class="{ 'is-off': isHidden(name) }"
-          @click="toggleScenario(name)"
-        >
-          <span
-            class="legend-swatch"
-            :class="{ 'legend-dashed': scenarioStyle(name).dash }"
-            :style="scenarioStyle(name).dash
-              ? { borderTopColor: scenarioStyle(name).color }
-              : { background: scenarioStyle(name).color, height: (name === 'Baseline' ? '3px' : '2px') }"
-          />
-          {{ name }}
-        </span>
-      </div>
-
       <div
         v-if="!selectedTargets.length"
         class="panel flex flex-column align-items-center justify-content-center gap-2"
@@ -379,12 +254,15 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
           <div v-if="fin.unavailable" class="fin-empty">
             No forecast data available for <span class="font-medium">{{ fin.title }}</span> on the active analysis run.
           </div>
-          <apexchart
+          <LinePlot
             v-else
-            type="line"
-            :height="singleTarget ? 340 : 260"
-            :options="fin.options"
             :series="fin.series"
+            :height="singleTarget ? 340 : 260"
+            y-tick-format=".2s"
+            y-hover-format=".3s"
+            x-tick-format="d"
+            :extra-menu-items="historyMenuItems"
+            :png-filename="`forecast-${fin.key}`"
           />
         </div>
       </div>
@@ -396,14 +274,9 @@ const singleTarget = computed(() => selectedTargets.value.length === 1)
 .field-col { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-color-muted); }
 
-.legend-row { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
-.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-color-secondary); cursor: pointer; user-select: none; transition: opacity 0.15s ease; }
-.legend-item.is-static { cursor: default; }
-.legend-item.is-off { opacity: 0.4; text-decoration: line-through; }
-.legend-swatch { width: 16px; height: 2px; display: inline-block; }
-.legend-dashed { border-top: 2px dashed var(--chart-3); height: 0; background: transparent !important; }
-
-.fin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Container-relative: 2-up on a normal desktop, collapses to one plot per row
+ * when the grid gets narrow (≈ below 975px), independent of the sidebar state. */
+.fin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 16px; }
 .fin-grid--single { grid-template-columns: 1fr; }
 .panel {
   background: var(--surface-card);

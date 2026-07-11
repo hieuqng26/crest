@@ -3,10 +3,12 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import calibrationsAPI from '@/api/calibrationsAPI'
+import { cssVar } from '@/utils/chartTheme'
+import LinePlot from '@/components/charts/LinePlot.vue'
+import DistPlot from '@/components/charts/DistPlot.vue'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import RetrainingBanner from '@/components/ui/RetrainingBanner.vue'
-import FilterBar from '@/components/ui/FilterBar.vue'
 import FilterField from '@/components/ui/FilterField.vue'
 import { probeColumns } from './resultColumns.js'
 
@@ -152,18 +154,8 @@ const metricCards = computed(() => {
     .map((k) => ({ label: k.replace(/_/g, ' ').toUpperCase(), value: d[k].toFixed(4) }))
 })
 
-const residHist = computed(() => {
-  const residuals = diag.value?.residuals
-  if (!residuals?.length) return null
-  const N_BINS = 16
-  const min = Math.min(...residuals), max = Math.max(...residuals)
-  const width = (max - min) / N_BINS || 1
-  const counts = new Array(N_BINS).fill(0)
-  residuals.forEach((r) => { counts[Math.min(Math.floor((r - min) / width), N_BINS - 1)]++ })
-  const modalIdx = counts.indexOf(Math.max(...counts))
-  const maxCount = Math.max(...counts) || 1
-  return counts.map((c, i) => ({ pct: (c / maxCount) * 100, isModal: i === modalIdx }))
-})
+// Full residuals array — binning/KDE now happen client-side inside DistPlot.
+const residualValues = computed(() => diag.value?.residuals ?? [])
 
 // ── Backtest chart (actual vs predicted line, single run/segment only) ──────
 const backtestPairs = computed(() => {
@@ -179,21 +171,15 @@ const backtestPairs = computed(() => {
   const pairs = actual.map((a, i) => ({ a, p: predicted[i] })).filter(({ a, p }) => a != null && p != null)
   return pairs.sort((x, y) => x.a - y.a)
 })
-const backtestPath = (key) => {
+// Two lines — observations sorted by actual value, indexed on the x axis.
+const backtestSeries = computed(() => {
   const pairs = backtestPairs.value
-  if (pairs.length < 2) return ''
-  const values = pairs.map((d) => d[key])
-  const min = Math.min(...values), max = Math.max(...values)
-  const range = max - min || 1
-  const W = 600, H = 160
-  return pairs
-    .map((d, i) => {
-      const x = (i / (pairs.length - 1)) * W
-      const y = H - ((d[key] - min) / range) * H
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
-}
+  const x = pairs.map((_, i) => i)
+  return [
+    { name: 'Actual', x, y: pairs.map((d) => d.a), color: cssVar('--ink-2'), width: 1.6 },
+    { name: 'Predicted', x, y: pairs.map((d) => d.p), color: cssVar('--yellow-chart'), width: 2.4 },
+  ]
+})
 
 // ── Paginated backtest predictions table (single run/segment only) ──────────
 const canShowSinglePredictions = computed(() => !isSegmented.value || !!selectedSegmentKey.value)
@@ -218,7 +204,7 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 
 <template>
   <div class="diag-tab">
-    <FilterBar>
+    <div class="filter-row">
       <FilterField label="Target">
         <EySelect v-model="selectedTargetCol" :options="targets.map(t => ({ label: t.target_col, value: t.target_col }))" optionLabel="label" optionValue="value" class="font-mono" />
       </FilterField>
@@ -228,7 +214,7 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
       <FilterField v-if="isSegmented && selectedSector" label="Segment">
         <EySelect v-model="selectedSegmentKey" :options="segmentOptions" optionLabel="label" optionValue="value" class="font-mono" />
       </FilterField>
-    </FilterBar>
+    </div>
 
     <RetrainingBanner v-if="retrainingCount > 0">
       {{ retrainingCount }} segment{{ retrainingCount > 1 ? 's are' : ' is' }} re-training — the diagnosis below reflects the previous model{{ retrainingCount > 1 ? 's' : '' }} and will refresh when it completes.
@@ -244,28 +230,29 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
         </div>
       </div>
 
-      <div v-if="isRegression && residHist" class="panel chart-card">
-        <div class="chart-title">Residual distribution</div>
-        <div class="hist-wrap">
-          <div v-for="(b, i) in residHist" :key="i" class="hist-bar" :class="{ 'is-modal': b.isModal }" :style="{ height: Math.max(b.pct, 2) + '%' }" />
+      <div class="chart-grid">
+        <div v-if="isRegression && residualValues.length" class="panel chart-card">
+          <div class="chart-title">Residual distribution</div>
+          <DistPlot
+            :values="residualValues"
+            name="Residuals"
+            :height="280"
+            png-filename="residual-distribution"
+          />
         </div>
-        <div class="hist-zero" />
-      </div>
 
-      <div v-if="canShowSinglePredictions && backtestPairs.length > 1" class="panel chart-card">
-        <div class="chart-title">Backtesting — Actual vs Predicted</div>
-        <svg viewBox="0 0 600 160" class="backtest-svg" preserveAspectRatio="none">
-          <line v-for="i in 4" :key="i" :y1="i * 32" :y2="i * 32" x1="0" x2="600" class="gridline" />
-          <path :d="backtestPath('a')" class="line-actual" />
-          <path :d="backtestPath('p')" class="line-predicted" />
-        </svg>
-        <div class="chart-legend">
-          <span class="legend-item"><span class="legend-swatch legend-actual" />Actual</span>
-          <span class="legend-item"><span class="legend-swatch legend-predicted" />Predicted</span>
+        <div v-if="canShowSinglePredictions && backtestPairs.length > 1" class="panel chart-card">
+          <div class="chart-title">Backtesting — Actual vs Predicted</div>
+          <LinePlot
+            :series="backtestSeries"
+            :height="280"
+            curve="linear"
+            png-filename="backtest-actual-vs-predicted"
+          />
         </div>
-      </div>
-      <div v-else-if="!canShowSinglePredictions" class="panel">
-        <EmptyState icon="pi pi-th-large">Select a specific segment above to view its backtesting chart and predictions.</EmptyState>
+        <div v-else-if="!canShowSinglePredictions" class="panel">
+          <EmptyState icon="pi pi-th-large">Select a specific segment above to view its backtesting chart and predictions.</EmptyState>
+        </div>
       </div>
 
       <div v-if="canShowSinglePredictions" class="panel results-panel">
@@ -295,6 +282,8 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 <style scoped>
 .diag-tab { display: flex; flex-direction: column; gap: 16px; }
 
+.filter-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+
 .loading-line { padding: 20px; text-align: center; color: var(--text-color-muted); font-size: 13px; }
 
 /* .panel is global (_brand.scss). */
@@ -304,24 +293,13 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 .metric-value { font-size: 24px; font-weight: 600; }
 .metric-label { margin-top: 6px; }
 
+/* Residual + backtest plots side by side, each half the section; collapses
+ * to one per row once a column would drop below ~360px. */
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+
 .chart-card { padding: 18px 20px; }
 .chart-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
 .results-panel { overflow: hidden; }
-
-.hist-wrap { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
-.hist-bar { flex: 1; background: var(--ink-2); border-radius: 1px 1px 0 0; }
-.hist-bar.is-modal { background: var(--yellow); }
-.hist-zero { border-top: 1px dashed var(--ink); margin-top: 2px; }
-
-.backtest-svg { width: 100%; height: 160px; display: block; }
-.gridline { stroke: #F0F0F3; stroke-width: 1; }
-.line-actual { fill: none; stroke: var(--ink-2); stroke-width: 1.4; }
-.line-predicted { fill: none; stroke: var(--yellow-chart); stroke-width: 2.6; }
-.chart-legend { display: flex; gap: 16px; margin-top: 12px; }
-.legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-color-secondary); }
-.legend-swatch { width: 14px; height: 3px; border-radius: 1px; display: inline-block; }
-.legend-actual { background: var(--ink-2); }
-.legend-predicted { background: var(--yellow-chart); }
 
 .diagnostics-link { display: inline-block; font-size: 12.5px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; width: fit-content; }
 .diagnostics-link:hover { color: var(--ink); }

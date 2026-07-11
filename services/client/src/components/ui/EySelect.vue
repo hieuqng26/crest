@@ -125,6 +125,10 @@ onUnmounted(() => {
   window.removeEventListener('resize', onScroll)
 })
 
+// Search box is opt-in via `filter`, and also switches on automatically once
+// there are enough options that scanning them by eye stops being practical.
+const showFilter = computed(() => props.filter || props.options.length > 5)
+
 // ── filtered list ─────────────────────────────────────────────────────────────
 const filteredOptions = computed(() => {
   const q = filterText.value.trim().toLowerCase()
@@ -206,7 +210,7 @@ function clearValue(e) {
           :style="panelStyle"
         >
           <!-- Filter input -->
-          <div v-if="filter" class="ey-select-filter-wrap">
+          <div v-if="showFilter" class="ey-select-filter-wrap">
             <i class="pi pi-search ey-select-filter-icon" />
             <input
               v-model="filterText"

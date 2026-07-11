@@ -6,7 +6,8 @@ import { useToast } from 'primevue/usetoast'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { localFetchPage } from '@/utils/tableQuery'
-import { scenarioLineStyles, fallbackSeriesColors, axisDefaults } from '@/utils/chartTheme'
+import { scenarioStyle } from '@/utils/chartTheme'
+import LinePlot from '@/components/charts/LinePlot.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
@@ -17,10 +18,22 @@ const runData     = ref(null)
 const loadingRun  = ref(false)
 const noActiveRun = ref(false)
 
-// ── client selector ───────────────────────────────────────────────────────────
-const clients        = ref([])
-const selectedClient = ref(null)
-const loadingKMV     = ref(false)
+// ── sector / client selector ─────────────────────────────────────────────────
+// Sector→client mapping is sourced from the analysis series (same materialised
+// data the Financial Forecast page uses) — best-effort: if it isn't ready yet
+// the sector filter just stays empty and the client list is unfiltered.
+const clients          = ref([])
+const sectors          = ref([])
+const companiesBySector = ref({})
+const selectedSector   = ref(null) // null = all sectors
+const selectedClient   = ref(null)
+const loadingKMV       = ref(false)
+
+const clientOptions = computed(() => {
+  if (!selectedSector.value) return clients.value
+  const inSector = new Set(companiesBySector.value[selectedSector.value] ?? [])
+  return clients.value.filter((c) => inSector.has(c))
+})
 
 // ── KMV data ──────────────────────────────────────────────────────────────────
 const kmvRows = ref([])
@@ -35,58 +48,25 @@ const selectedMetric = ref(METRIC_OPTIONS[0])
 
 // ── chart data ────────────────────────────────────────────────────────────────
 // Scenario → line style comes from the shared token-driven chart theme.
-function buildChartData(field) {
-  const scenarioStyle = scenarioLineStyles()
-  const fallbackColors = fallbackSeriesColors()
+function buildSeries(field) {
   const scenarios = [...new Set((kmvRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
   const allYears  = [...new Set((kmvRows.value || []).map(r => r.YEAR))].sort()
   let fallbackIdx = 0
-  return {
-    labels: allYears,
-    datasets: scenarios.map((scen) => {
-      const rows   = kmvRows.value.filter(r => r.SCENARIO === scen)
-      const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
-      const style = scenarioStyle[scen] ?? { color: fallbackColors[fallbackIdx++ % fallbackColors.length], width: 2, dash: [] }
-      return {
-        label: scen,
-        data: allYears.map(y => byYear[y]?.[field] ?? null),
-        borderColor: style.color,
-        backgroundColor: 'transparent',
-        borderWidth: style.width,
-        borderDash: style.dash,
-        tension: 0.3,
-        pointRadius: 3,
-        pointHoverRadius: 5,
-      }
-    }),
-  }
+  return scenarios.map((scen) => {
+    const byYear = Object.fromEntries(kmvRows.value.filter(r => r.SCENARIO === scen).map(r => [r.YEAR, r]))
+    const st = scenarioStyle(scen, fallbackIdx++)
+    return {
+      name: scen,
+      x: allYears,
+      y: allYears.map(y => byYear[y]?.[field] ?? null),
+      color: st.color,
+      width: st.width,
+      dash: st.dash,
+    }
+  })
 }
 
-const activeChartData = computed(() => buildChartData(selectedMetric.value.value))
-
-function buildChartOptions(pct) {
-  const scales = axisDefaults()
-  if (pct) scales.y.ticks.callback = (v) => (v * 100).toFixed(1) + '%'
-  return {
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        mode: 'index',
-        intersect: false,
-        ...(pct && { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(2)}%` } }),
-      },
-    },
-    interaction: { mode: 'nearest', axis: 'x', intersect: false },
-    scales,
-  }
-}
-
-const activeChartOptions = computed(() => buildChartOptions(selectedMetric.value.pct))
-
-const legendItems = computed(() =>
-  (activeChartData.value.datasets || []).map((d) => ({ label: d.label, color: d.borderColor }))
-)
+const activeSeries = computed(() => buildSeries(selectedMetric.value.value))
 
 // ── data loading ──────────────────────────────────────────────────────────────
 onMounted(async () => {
@@ -105,6 +85,23 @@ onMounted(async () => {
     }
   } finally {
     loadingRun.value = false
+  }
+
+  // Sector filter is best-effort — a 202 (still materialising) or any error
+  // just leaves it empty; the client dropdown keeps working unfiltered.
+  try {
+    const { data } = await creditRiskAPI.analysisMeta()
+    sectors.value = data.sectors ?? []
+    companiesBySector.value = data.companies_by_sector ?? {}
+  } catch {
+    sectors.value = []
+    companiesBySector.value = {}
+  }
+})
+
+watch(selectedSector, () => {
+  if (selectedClient.value && !clientOptions.value.includes(selectedClient.value)) {
+    selectedClient.value = clientOptions.value[0] ?? null
   }
 })
 
@@ -153,13 +150,26 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
           />
         </div>
         <div class="field-col">
+          <span class="field-label">Sector</span>
+          <EySelect
+            v-model="selectedSector"
+            :options="[null, ...sectors]"
+            :optionLabel="v => v ?? 'All sectors'"
+            placeholder="All sectors"
+            :disabled="!sectors.length"
+            showClear
+            style="width: 12rem"
+          />
+        </div>
+        <div class="field-col">
           <span class="field-label">Client</span>
           <EySelect
             v-model="selectedClient"
-            :options="clients"
+            :options="clientOptions"
             :loading="loadingRun"
-            :disabled="!clients.length"
+            :disabled="!clientOptions.length"
             placeholder="Select client"
+            class="font-mono"
             style="width: 12rem"
           />
         </div>
@@ -189,16 +199,15 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
             <div class="panel-title">{{ selectedMetric.title }}</div>
             <div class="text-xs text-color-secondary mt-1">{{ selectedMetric.sub }}</div>
           </div>
-          <div class="legend-row">
-            <span v-for="l in legendItems" :key="l.label" class="legend-pill">
-              <span class="legend-dot" :style="{ background: l.color }" />
-              {{ l.label }}
-            </span>
-          </div>
         </div>
-        <div style="height: 280px">
-          <Chart type="line" :data="activeChartData" :options="activeChartOptions" class="h-full" />
-        </div>
+        <LinePlot
+          :series="activeSeries"
+          :height="420"
+          :y-tick-format="selectedMetric.pct ? '.1%' : ''"
+          :y-hover-format="selectedMetric.pct ? '.2%' : '.4f'"
+          markers
+          :png-filename="`pd-lgd-${selectedMetric.value.toLowerCase()}`"
+        />
       </div>
 
       <!-- Summary table -->
@@ -252,19 +261,6 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
   font-weight: 600;
   color: var(--text-color-secondary);
 }
-
-.legend-row  { display: flex; flex-wrap: wrap; gap: 6px; }
-.legend-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 2px;
-  background: var(--surface-ground);
-  font-size: 0.75rem;
-  color: var(--text-color-secondary);
-}
-.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 .bare-table { margin: 0 -1.25rem -1rem; }
 

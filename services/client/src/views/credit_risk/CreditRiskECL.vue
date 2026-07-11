@@ -6,7 +6,8 @@ import { useToast } from 'primevue/usetoast'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import { localFetchPage } from '@/utils/tableQuery'
-import { scenarioLineStyles, fallbackSeriesColors, axisDefaults } from '@/utils/chartTheme'
+import { scenarioStyle } from '@/utils/chartTheme'
+import LinePlot from '@/components/charts/LinePlot.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 
 const router = useRouter()
@@ -17,27 +18,29 @@ const runData        = ref(null)   // active run object (includes client_ids, ex
 const loadingRun     = ref(false)
 const noActiveRun    = ref(false)
 
-// ── client selector ───────────────────────────────────────────────────────────
+// ── sector / client selector ─────────────────────────────────────────────────
+// Sector→client mapping is sourced from the analysis series (same materialised
+// data the Financial Forecast page uses) — best-effort: if it isn't ready yet
+// the sector filter just stays empty and the client list is unfiltered.
 const clients          = ref([])
+const sectors          = ref([])
+const companiesBySector = ref({})
+const selectedSector   = ref(null) // null = all sectors
 const selectedClient   = ref(null)
-const selectedScenario = ref(null)
 const loadingECL       = ref(false)
 
-const scenarioOptions = computed(() =>
-  [...new Set((eclRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
-)
+const clientOptions = computed(() => {
+  if (!selectedSector.value) return clients.value
+  const inSector = new Set(companiesBySector.value[selectedSector.value] ?? [])
+  return clients.value.filter((c) => inSector.has(c))
+})
 
 // ── ECL data ──────────────────────────────────────────────────────────────────
 const eclRows = ref([])
 
-const filteredRows = computed(() => {
-  if (!selectedScenario.value) return eclRows.value
-  return eclRows.value.filter(r => r.SCENARIO === selectedScenario.value)
-})
-
 // ── KPI strip ─────────────────────────────────────────────────────────────────
 const kpis = computed(() => {
-  const rows = filteredRows.value
+  const rows = eclRows.value
   if (!rows.length) return []
   const maxEcl12   = Math.max(...rows.map(r => r.ECL_12M || 0))
   const maxEclLife = Math.max(...rows.map(r => r.ECL_Lifetime || 0))
@@ -60,46 +63,26 @@ function fmt(v) {
 
 // ── chart data ────────────────────────────────────────────────────────────────
 // Scenario → line style comes from the shared token-driven chart theme.
-function buildEclChart(field) {
-  const scenarioStyle = scenarioLineStyles()
-  const fallbackColors = fallbackSeriesColors()
+function buildEclSeries(field) {
   const scenarios = [...new Set((eclRows.value || []).map(r => r.SCENARIO))].filter(Boolean)
   const allYears  = [...new Set((eclRows.value || []).map(r => r.YEAR))].sort()
   let fallbackIdx = 0
-  return {
-    labels: allYears,
-    datasets: scenarios.map((scen) => {
-      const rows   = eclRows.value.filter(r => r.SCENARIO === scen)
-      const byYear = Object.fromEntries(rows.map(r => [r.YEAR, r]))
-      const style = scenarioStyle[scen] ?? { color: fallbackColors[fallbackIdx++ % fallbackColors.length], width: 2, dash: [] }
-      return {
-        label: scen,
-        data: allYears.map(y => byYear[y]?.[field] ?? null),
-        borderColor: style.color,
-        backgroundColor: 'transparent',
-        borderWidth: style.width,
-        borderDash: style.dash,
-        tension: 0.3,
-        pointRadius: 3,
-        pointHoverRadius: 5,
-      }
-    }),
-  }
+  return scenarios.map((scen) => {
+    const byYear = Object.fromEntries(eclRows.value.filter(r => r.SCENARIO === scen).map(r => [r.YEAR, r]))
+    const st = scenarioStyle(scen, fallbackIdx++)
+    return {
+      name: scen,
+      x: allYears,
+      y: allYears.map(y => byYear[y]?.[field] ?? null),
+      color: st.color,
+      width: st.width,
+      dash: st.dash,
+    }
+  })
 }
 
-const eclChartData   = computed(() => buildEclChart('ECL_Lifetime'))
-const ecl12ChartData = computed(() => buildEclChart('ECL_12M'))
-
-const lineOptions = {
-  maintainAspectRatio: false,
-  plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
-  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-  scales: axisDefaults(),
-}
-
-const legendItems = computed(() =>
-  (eclChartData.value.datasets || []).map((d) => ({ label: d.label, color: d.borderColor }))
-)
+const eclSeries   = computed(() => buildEclSeries('ECL_Lifetime'))
+const ecl12Series = computed(() => buildEclSeries('ECL_12M'))
 
 // ── data loading ──────────────────────────────────────────────────────────────
 onMounted(async () => {
@@ -119,6 +102,23 @@ onMounted(async () => {
   } finally {
     loadingRun.value = false
   }
+
+  // Sector filter is best-effort — a 202 (still materialising) or any error
+  // just leaves it empty; the client dropdown keeps working unfiltered.
+  try {
+    const { data } = await creditRiskAPI.analysisMeta()
+    sectors.value = data.sectors ?? []
+    companiesBySector.value = data.companies_by_sector ?? {}
+  } catch {
+    sectors.value = []
+    companiesBySector.value = {}
+  }
+})
+
+watch(selectedSector, () => {
+  if (selectedClient.value && !clientOptions.value.includes(selectedClient.value)) {
+    selectedClient.value = clientOptions.value[0] ?? null
+  }
 })
 
 watch(selectedClient, (v) => {
@@ -131,13 +131,12 @@ const eclTableColumns = [
   { field: 'ECL_12M', header: '12M ECL', width: '9rem', formatter: (v) => fmt(v) },
   { field: 'ECL_Lifetime', header: 'Lifetime ECL', width: '9rem', formatter: (v) => fmt(v) },
 ]
-const eclFetchPage = localFetchPage(() => filteredRows.value)
+const eclFetchPage = localFetchPage(() => eclRows.value)
 
 async function fetchECL() {
   if (!runData.value?.run_id || !selectedClient.value) return
   loadingECL.value = true
   eclRows.value    = []
-  selectedScenario.value = null
   try {
     const { data } = await creditRiskAPI.getClientResult(runData.value.run_id, selectedClient.value)
     eclRows.value = data.ecl ?? []
@@ -154,25 +153,26 @@ async function fetchECL() {
     <PageHeader eyebrow="ANALYSIS" title="IFRS 9 ECL" subtitle="Expected credit losses by scenario and horizon.">
       <template #actions>
         <div class="field-col">
-          <span class="field-label">Client</span>
+          <span class="field-label">Sector</span>
           <EySelect
-            v-model="selectedClient"
-            :options="clients"
-            :loading="loadingRun"
-            :disabled="!clients.length"
-            placeholder="Select client"
+            v-model="selectedSector"
+            :options="[null, ...sectors]"
+            :optionLabel="v => v ?? 'All sectors'"
+            placeholder="All sectors"
+            :disabled="!sectors.length"
+            showClear
             style="width: 12rem"
           />
         </div>
         <div class="field-col">
-          <span class="field-label">Scenario</span>
+          <span class="field-label">Client</span>
           <EySelect
-            v-model="selectedScenario"
-            :options="[null, ...scenarioOptions]"
-            :optionLabel="v => v ?? 'All scenarios'"
-            placeholder="All scenarios"
-            :disabled="!eclRows.length"
-            showClear
+            v-model="selectedClient"
+            :options="clientOptions"
+            :loading="loadingRun"
+            :disabled="!clientOptions.length"
+            placeholder="Select client"
+            class="font-mono"
             style="width: 12rem"
           />
         </div>
@@ -212,16 +212,15 @@ async function fetchECL() {
               <div class="panel-title">Lifetime ECL</div>
               <div class="text-xs text-color-secondary mt-1">Per year · all scenarios</div>
             </div>
-            <div class="legend-row">
-              <span v-for="l in legendItems" :key="l.label" class="legend-pill">
-                <span class="legend-dot" :style="{ background: l.color }" />
-                {{ l.label }}
-              </span>
-            </div>
           </div>
-          <div style="height: 240px">
-            <Chart type="line" :data="eclChartData" :options="lineOptions" class="h-full" />
-          </div>
+          <LinePlot
+            :series="eclSeries"
+            :height="360"
+            y-tick-format=".2s"
+            y-hover-format=".3s"
+            markers
+            png-filename="ecl-lifetime"
+          />
         </div>
 
         <div class="panel">
@@ -230,16 +229,15 @@ async function fetchECL() {
               <div class="panel-title">12-Month ECL</div>
               <div class="text-xs text-color-secondary mt-1">Per year · all scenarios</div>
             </div>
-            <div class="legend-row">
-              <span v-for="l in legendItems" :key="l.label" class="legend-pill">
-                <span class="legend-dot" :style="{ background: l.color }" />
-                {{ l.label }}
-              </span>
-            </div>
           </div>
-          <div style="height: 240px">
-            <Chart type="line" :data="ecl12ChartData" :options="lineOptions" class="h-full" />
-          </div>
+          <LinePlot
+            :series="ecl12Series"
+            :height="360"
+            y-tick-format=".2s"
+            y-hover-format=".3s"
+            markers
+            png-filename="ecl-12m"
+          />
         </div>
       </div>
 
@@ -247,15 +245,15 @@ async function fetchECL() {
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">ECL detail</span>
-          <span class="text-xs text-color-secondary">{{ filteredRows.length }} rows · client {{ selectedClient }}</span>
+          <span class="text-xs text-color-secondary">{{ eclRows.length }} rows · client {{ selectedClient }}</span>
         </div>
         <div class="bare-table">
           <CommonDataTable
-            :key="`${selectedClient}:${selectedScenario}`"
+            :key="selectedClient"
             :columns="eclTableColumns"
             :fetch-page="eclFetchPage"
             :initial-page-size="500"
-            empty-message="No rows for the selected scenario."
+            empty-message="No ECL rows for this client."
           />
         </div>
       </div>
@@ -308,19 +306,6 @@ async function fetchECL() {
   font-weight: 600;
   color: var(--text-color-secondary);
 }
-
-.legend-row  { display: flex; flex-wrap: wrap; gap: 6px; }
-.legend-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 2px;
-  background: var(--surface-ground);
-  font-size: 0.75rem;
-  color: var(--text-color-secondary);
-}
-.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 .bare-table { margin: 0 -1.25rem -1rem; }
 

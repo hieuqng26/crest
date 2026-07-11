@@ -117,6 +117,12 @@
   --chart-6: #E0792A;
   --chart-7: #0E9BB5;
   --chart-8: #C4331D;
+
+  /* Forecast scenarios — one fixed mapping shared by every line chart.
+   * All three are solid; only the hue distinguishes them. */
+  --scenario-baseline: #C99700;
+  --scenario-adverse:  #1D9E75;
+  --scenario-severe:   #D85A30;
 }
 
 /* ─────────────────────────────────────────────────────────────────────

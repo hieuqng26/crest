@@ -26,6 +26,7 @@ defineProps({
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 22px;
+  flex-wrap: wrap;
 }
 .page-header-text {
   display: flex;
@@ -41,6 +42,6 @@ defineProps({
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 </style>
