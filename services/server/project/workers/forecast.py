@@ -86,18 +86,27 @@ def _forecast_result_mappings(fr_id: int, predicted_list, meta_rows, segment_key
         other_keys_set.update(k for k in r if k != "date")
     other_keys = sorted(other_keys_set)
     meta_dict = {k: [_coerce(r.get(k)) for r in meta_rows] for k in other_keys}
-    return [
-        {
-            "forecast_run_id": fr_id,
-            "date": str(dates_list[i]) if dates_list[i] is not None else None,
-            "predicted": predicted_list[i],
-            "meta_json": json.dumps({k: meta_dict[k][i] for k in other_keys})
-            if other_keys
-            else None,
-            "segment_key": segment_key,
-        }
-        for i in range(len(predicted_list))
-    ]
+
+    from project.services.forecast_runs import promoted_dims_from_meta
+
+    rows = []
+    for i in range(len(predicted_list)):
+        row_meta = {k: meta_dict[k][i] for k in other_keys}
+        rows.append(
+            {
+                "forecast_run_id": fr_id,
+                "date": str(dates_list[i]) if dates_list[i] is not None else None,
+                "predicted": predicted_list[i],
+                "meta_json": json.dumps(row_meta) if other_keys else None,
+                "segment_key": segment_key,
+                **{
+                    k: v
+                    for k, v in promoted_dims_from_meta(row_meta).items()
+                    if k != "segment_key"  # segment_key set explicitly above
+                },
+            }
+        )
+    return rows
 
 
 def recompute_forecast_run_segment(
@@ -341,22 +350,28 @@ def run_forecast(self, run_id: str):
                 r = ForecastRun.query.filter_by(run_id=run_id).first()
                 # segment_key is present in meta only for segmented runs; NULL otherwise.
                 seg_key_col = meta_dict.get("segment_key")
-                result_rows = [
-                    {
-                        "forecast_run_id": r.id,
-                        "date": str(dates_list[i])
-                        if dates_list[i] is not None
-                        else None,
-                        "predicted": predicted_list[i],
-                        "meta_json": json.dumps(
-                            {k: meta_dict[k][i] for k in other_keys}
-                        )
-                        if other_keys
-                        else None,
-                        "segment_key": seg_key_col[i] if seg_key_col else None,
-                    }
-                    for i in range(len(predicted_list))
-                ]
+
+                from project.services.forecast_runs import promoted_dims_from_meta
+
+                result_rows = []
+                for i in range(len(predicted_list)):
+                    row_meta = {k: meta_dict[k][i] for k in other_keys}
+                    result_rows.append(
+                        {
+                            "forecast_run_id": r.id,
+                            "date": str(dates_list[i])
+                            if dates_list[i] is not None
+                            else None,
+                            "predicted": predicted_list[i],
+                            "meta_json": json.dumps(row_meta) if other_keys else None,
+                            "segment_key": seg_key_col[i] if seg_key_col else None,
+                            **{
+                                k: v
+                                for k, v in promoted_dims_from_meta(row_meta).items()
+                                if k != "segment_key"
+                            },
+                        }
+                    )
                 s.bulk_insert_mappings(ForecastRunResult, result_rows)
                 r.status = "success"
                 r.finished_at = datetime.now(timezone.utc)

@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from project import app_session
+from project import app_session, cache, db
 from project.constants import LaunchOrigin, RunStatus
 from project.core import table_query
+from project.core.table_query import DISTINCT_VALUES_LIMIT
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunSegment,
@@ -25,6 +26,15 @@ from project.exceptions import BadRequestError, NotFoundError
 from project.schemas.forecast_runs import CreateForecastRun
 from project.services._pagination import pagination_envelope
 from project.workers.tasks import run_forecast
+
+# meta_json keys promoted to indexed columns on forecast_run_results. segment_key
+# was promoted earlier; the rest are added by migration c3d5e7f9a1b3.
+PROMOTED_DIMENSIONS = ("sector", "subsector", "country", "scenario", "segment_key")
+
+
+def promoted_dims_from_meta(meta: dict) -> dict:
+    """Subset of a meta row limited to the promoted dimension columns present."""
+    return {k: meta[k] for k in PROMOTED_DIMENSIONS if meta.get(k) is not None}
 
 
 def create_run(
@@ -167,6 +177,71 @@ def results_df(fr: ForecastRun) -> pd.DataFrame:
             meta = {}
         records.append({"date": r.date, "predicted": r.predicted, **meta})
     return pd.DataFrame.from_records(records)
+
+
+_FACETS_KEY = "forecast_facets:{run_id}"
+
+
+def _run_facets(fr: ForecastRun) -> dict:
+    """All-column distinct facets for a run, computed once and cached.
+
+    ``run_id`` is immutable, so a successful run's facets never change (a segment
+    re-score changes ``predicted``, not dimension membership); we cache them for
+    an hour and invalidate defensively on re-score. In-progress runs are still
+    accumulating rows, so we never cache those.
+    """
+    key = _FACETS_KEY.format(run_id=fr.run_id)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    df = results_df(fr)
+    facets = {col: table_query.distinct_values(df, col) for col in df.columns}
+    if fr.status == "success":
+        cache.set(key, facets, timeout=3600)
+    return facets
+
+
+def _distinct_promoted(fr: ForecastRun, column: str) -> dict:
+    """Indexed SELECT DISTINCT over a promoted dimension column, via the
+    (forecast_run_id, column) composite index. This is an index scan of the
+    run's entries (still O(rows-in-run) absent a loose-index-scan, but with a
+    tiny constant) — no full-row load into pandas, no JSON parse, and only
+    <=31 short values cross into Python.
+
+    Note: when a column exceeds the cap this returns an arbitrary 30 of the
+    fetched 31 (unordered DISTINCT ... LIMIT), whereas the facet path returns
+    the alphabetically-first 30 of the full set. That divergence is only
+    reachable in the truncated case, where the caller discards `values` and
+    falls back to a text filter, so it is immaterial."""
+    col = getattr(ForecastRunResult, column)
+    rows = (
+        db.session.query(col)
+        .filter(ForecastRunResult.forecast_run_id == fr.id, col.isnot(None))
+        .distinct()
+        .limit(DISTINCT_VALUES_LIMIT + 1)
+        .all()
+    )
+    values = sorted(str(r[0]) for r in rows)
+    truncated = len(values) > DISTINCT_VALUES_LIMIT
+    return {"values": values[:DISTINCT_VALUES_LIMIT], "truncated": truncated}
+
+
+def distinct_for_column(fr: ForecastRun, column: str) -> dict:
+    """Distinct values for one result column, for a filter dropdown.
+
+    Promoted low-cardinality dimensions are answered by an indexed SQL DISTINCT;
+    every other column falls back to the per-run facet cache (one df scan cold,
+    O(1) warm).
+    """
+    if column in PROMOTED_DIMENSIONS:
+        return _distinct_promoted(fr, column)
+    return _run_facets(fr).get(column, {"values": [], "truncated": False})
+
+
+def invalidate_facets(run_id: str) -> None:
+    """Drop a run's cached facets — call after any write that could change its
+    result rows (segment re-score)."""
+    cache.delete(_FACETS_KEY.format(run_id=run_id))
 
 
 def get_results(

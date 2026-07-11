@@ -110,6 +110,13 @@ class ForecastRunResult(db.Model):
     # Denormalised copy of meta_json["segment_key"] so a single segment's rows can
     # be deleted/re-scored in place via an indexed WHERE (see recompute_forecast_run_segment).
     segment_key = db.Column(db.String(256), nullable=True)
+    # Denormalised copies of low-cardinality meta_json dimensions so filter
+    # dropdowns can be answered by an indexed SELECT DISTINCT instead of loading
+    # and JSON-parsing the whole run into pandas. Mirror the segment_key pattern.
+    sector = db.Column(db.String(256), nullable=True)
+    subsector = db.Column(db.String(256), nullable=True)
+    country = db.Column(db.String(128), nullable=True)
+    scenario = db.Column(db.String(128), nullable=True)
 
     __table_args__ = (
         db.Index(
@@ -117,6 +124,10 @@ class ForecastRunResult(db.Model):
             "forecast_run_id",
             "segment_key",
         ),
+        db.Index("ix_frr_run_sector", "forecast_run_id", "sector"),
+        db.Index("ix_frr_run_subsector", "forecast_run_id", "subsector"),
+        db.Index("ix_frr_run_country", "forecast_run_id", "country"),
+        db.Index("ix_frr_run_scenario", "forecast_run_id", "scenario"),
     )
 
 

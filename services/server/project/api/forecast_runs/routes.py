@@ -229,5 +229,4 @@ def get_results_distinct(run_id: str):
     if not column:
         return jsonify({"values": [], "truncated": False}), 200
 
-    df = forecast_run_service.results_df(fr)
-    return jsonify(table_query.distinct_values(df, column)), 200
+    return jsonify(forecast_run_service.distinct_for_column(fr, column)), 200
