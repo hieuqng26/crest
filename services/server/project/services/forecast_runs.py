@@ -202,9 +202,17 @@ def _run_facets(fr: ForecastRun) -> dict:
 
 
 def _distinct_promoted(fr: ForecastRun, column: str) -> dict:
-    """Indexed SELECT DISTINCT over a promoted dimension column. O(distinct
-    values) via the (forecast_run_id, column) composite index — no full-run
-    scan, no JSON parse."""
+    """Indexed SELECT DISTINCT over a promoted dimension column, via the
+    (forecast_run_id, column) composite index. This is an index scan of the
+    run's entries (still O(rows-in-run) absent a loose-index-scan, but with a
+    tiny constant) — no full-row load into pandas, no JSON parse, and only
+    <=31 short values cross into Python.
+
+    Note: when a column exceeds the cap this returns an arbitrary 30 of the
+    fetched 31 (unordered DISTINCT ... LIMIT), whereas the facet path returns
+    the alphabetically-first 30 of the full set. That divergence is only
+    reachable in the truncated case, where the caller discards `values` and
+    falls back to a text filter, so it is immaterial."""
     col = getattr(ForecastRunResult, column)
     rows = (
         db.session.query(col)
