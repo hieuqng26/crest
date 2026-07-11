@@ -78,6 +78,13 @@ def seed(fr_id: int, n_rows: int, chunk: int = 20_000) -> None:
                 "date": f"20{30 + (i % 10)}-{(i % 12) + 1:02d}-01",
                 "predicted": float(i % 1000),
                 "segment_key": seg,
+                # Promoted columns are populated on the real write path
+                # (_forecast_result_mappings); mirror that so the Option 2
+                # indexed SELECT DISTINCT path is exercised, not empty columns.
+                "sector": sector,
+                "subsector": meta["subsector"],
+                "country": meta["country"],
+                "scenario": meta["scenario"],
                 "meta_json": json.dumps(meta),
             }
         )
