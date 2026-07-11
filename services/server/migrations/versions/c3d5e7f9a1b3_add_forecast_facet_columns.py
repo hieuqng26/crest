@@ -8,6 +8,11 @@ Promotes sector/subsector/country/scenario out of meta_json into indexed
 columns so filter-dropdown distinct queries are index scans, not full-run
 pandas loads. Backfills existing rows from meta_json in id-ranged chunks
 (dialect-agnostic Python, works on both SQLite tests and MSSQL prod).
+
+DEPLOY GATES (host had no ODBC driver; not run against MSSQL here):
+ - Run `flask db upgrade` then a `flask db downgrade -1 && flask db upgrade` round-trip against MSSQL before prod.
+ - On a large forecast_run_results table, the four CREATE INDEX statements take a schema-modification lock; run in a maintenance window, or use ONLINE=ON (SQL Server Enterprise only) — do NOT hardcode ONLINE (fails on Standard edition).
+ - Confirm production meta_json actually uses keys sector/subsector/country (only 'scenario' is confirmed in-code; the other three derive from dataset column names) before relying on the backfilled values.
 """
 import json
 
@@ -31,16 +36,23 @@ _CHUNK = 20_000
 
 
 def upgrade():
+    # Idempotent: the per-chunk commit in the backfill persists the add_column DDL
+    # before Alembic stamps alembic_version, so a mid-backfill crash leaves the
+    # columns in place. On re-run, skip any column/index that already exists.
+    bind = op.get_bind()
+    existing_cols = {
+        c["name"] for c in sa.inspect(bind).get_columns("forecast_run_results")
+    }
     for col in _COLS:
-        op.add_column(
-            "forecast_run_results",
-            sa.Column(col, sa.String(_LEN[col]), nullable=True),
-        )
+        if col not in existing_cols:
+            op.add_column(
+                "forecast_run_results",
+                sa.Column(col, sa.String(_LEN[col]), nullable=True),
+            )
 
     # Backfill from meta_json in id-ranged chunks. Each chunk's UPDATEs are sent
     # as one executemany and committed before the next chunk, so a large table
     # doesn't hold table locks or grow the transaction log for the whole run.
-    bind = op.get_bind()
     t = sa.table(
         "forecast_run_results",
         sa.column("id", sa.Integer),
@@ -82,12 +94,26 @@ def upgrade():
             bind.commit()  # release locks / truncate log between chunks
         lo = hi
 
+    existing_indexes = {
+        ix["name"] for ix in sa.inspect(bind).get_indexes("forecast_run_results")
+    }
     for col, name in _INDEXES.items():
-        op.create_index(name, "forecast_run_results", ["forecast_run_id", col])
+        if name not in existing_indexes:
+            op.create_index(name, "forecast_run_results", ["forecast_run_id", col])
 
 
 def downgrade():
+    bind = op.get_bind()
+    existing_indexes = {
+        ix["name"] for ix in sa.inspect(bind).get_indexes("forecast_run_results")
+    }
     for name in _INDEXES.values():
-        op.drop_index(name, table_name="forecast_run_results")
+        if name in existing_indexes:
+            op.drop_index(name, table_name="forecast_run_results")
+
+    existing_cols = {
+        c["name"] for c in sa.inspect(bind).get_columns("forecast_run_results")
+    }
     for col in _COLS:
-        op.drop_column("forecast_run_results", col)
+        if col in existing_cols:
+            op.drop_column("forecast_run_results", col)
