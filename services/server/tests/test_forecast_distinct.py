@@ -145,3 +145,39 @@ def test_invalidate_facets_clears_cache(app):
         assert cache.get(f"forecast_facets:{fr.run_id}") is not None
         svc.invalidate_facets(fr.run_id)
         assert cache.get(f"forecast_facets:{fr.run_id}") is None
+
+
+def test_promoted_columns_exist_and_writable(app):
+    # Task 6: sector/subsector/country/scenario are promoted from meta_json into
+    # real indexed columns so filter-dropdown distinct queries can be answered
+    # by an indexed SELECT DISTINCT instead of loading the whole run into pandas.
+    with app.app_context():
+        fr = _seed_run(n_per_sector=1)
+        row = ForecastRunResult(
+            forecast_run_id=fr.id,
+            date="2030-01-01",
+            predicted=1.0,
+            segment_key="seg_Energy",
+            sector="Energy",
+            subsector="Oil & Gas",
+            country="US",
+            scenario="Adverse",
+        )
+        db.session.add(row)
+        db.session.commit()
+
+        fetched = ForecastRunResult.query.filter_by(id=row.id).one()
+        assert fetched.sector == "Energy"
+        assert fetched.subsector == "Oil & Gas"
+        assert fetched.country == "US"
+        assert fetched.scenario == "Adverse"
+
+        index_names = {ix.name for ix in ForecastRunResult.__table__.indexes}
+        assert index_names.issuperset(
+            {
+                "ix_frr_run_sector",
+                "ix_frr_run_subsector",
+                "ix_frr_run_country",
+                "ix_frr_run_scenario",
+            }
+        )
