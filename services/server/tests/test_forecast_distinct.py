@@ -3,6 +3,7 @@ of which implementation (df / cache / SQL) backs it. Seeded via bulk insert."""
 
 import json
 
+import pytest
 
 from project import db
 from project.api.users.models import User
@@ -73,6 +74,8 @@ def _seed_run(status="success", n_per_sector=5):
                 "date": f"2030-{(i % 12) + 1:02d}-01",
                 "predicted": float(i),
                 "segment_key": f"seg_{sector}",
+                "sector": sector,
+                "scenario": "Baseline",
                 "meta_json": json.dumps(
                     {
                         "sector": sector,
@@ -114,9 +117,12 @@ def test_facets_cached_after_first_call(app, monkeypatch):
 
         monkeypatch.setattr(svc, "results_df", counting_results_df)
 
-        # Two different columns, two calls — but only ONE df load (facets cached).
-        svc.distinct_for_column(fr, "sector")
-        svc.distinct_for_column(fr, "scenario")
+        # Two calls on the same non-promoted column — but only ONE df load
+        # (facets cached). sector/scenario are promoted (Task 6/7) and now
+        # answered via SQL, so they'd never hit results_df at all; probe a
+        # non-promoted column instead.
+        svc.distinct_for_column(fr, "date")
+        svc.distinct_for_column(fr, "date")
         assert calls["n"] == 1
 
 
@@ -131,8 +137,8 @@ def test_inprogress_run_not_cached(app, monkeypatch):
             return real_results_df(fr_)
 
         monkeypatch.setattr(svc, "results_df", counting_results_df)
-        svc.distinct_for_column(fr, "sector")
-        svc.distinct_for_column(fr, "scenario")
+        svc.distinct_for_column(fr, "date")
+        svc.distinct_for_column(fr, "date")
         assert calls["n"] == 2  # not cached while status != success
 
 
@@ -141,7 +147,9 @@ def test_invalidate_facets_clears_cache(app):
 
     with app.app_context():
         fr = _seed_run()
-        svc.distinct_for_column(fr, "sector")  # populate cache
+        # "sector" is promoted (SQL path, no facet cache involved) — probe a
+        # non-promoted column so this actually exercises the facet cache.
+        svc.distinct_for_column(fr, "date")  # populate cache
         assert cache.get(f"forecast_facets:{fr.run_id}") is not None
         svc.invalidate_facets(fr.run_id)
         assert cache.get(f"forecast_facets:{fr.run_id}") is None
@@ -229,3 +237,47 @@ def test_forecast_result_mappings_populates_promoted_columns():
     assert json.loads(m0["meta_json"])["sector"] == "Energy"
     # second row's scenario differs
     assert mappings[1]["scenario"] == "Adverse"
+
+
+def test_promoted_column_uses_sql_not_df(app, monkeypatch):
+    with app.app_context():
+        fr = _seed_run()
+        # If the SQL path is taken, results_df must NOT be called for a promoted col.
+        monkeypatch.setattr(
+            svc,
+            "results_df",
+            lambda *_a, **_k: pytest.fail("results_df called for promoted col"),
+        )
+        out = svc.distinct_for_column(fr, "sector")
+        assert out["values"] == ["Energy", "Financials", "Tech"]
+        assert out["truncated"] is False
+
+
+def test_promoted_column_truncation_flag(app):
+    with app.app_context():
+        # ForecastRun.calibration_run_id / dataset_id are NOT NULL FKs (see
+        # _seed_run above) — reuse its parent chain instead of duplicating it.
+        base = _seed_run(n_per_sector=1)
+        fr = ForecastRun(
+            run_id="trunc-run",
+            status="success",
+            calibration_run_id=base.calibration_run_id,
+            dataset_id=base.dataset_id,
+        )
+        db.session.add(fr)
+        db.session.flush()
+        rows = [
+            {
+                "forecast_run_id": fr.id,
+                "date": "2030-01-01",
+                "predicted": 1.0,
+                "sector": f"S{i:03d}",
+                "meta_json": json.dumps({"sector": f"S{i:03d}"}),
+            }
+            for i in range(40)  # > DISTINCT_VALUES_LIMIT (30)
+        ]
+        db.session.bulk_insert_mappings(ForecastRunResult, rows)
+        db.session.commit()
+        out = svc.distinct_for_column(fr, "sector")
+        assert out["truncated"] is True
+        assert len(out["values"]) == 30

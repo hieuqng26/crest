@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from project import app_session, cache
+from project import app_session, cache, db
 from project.constants import LaunchOrigin, RunStatus
 from project.core import table_query
+from project.core.table_query import DISTINCT_VALUES_LIMIT
 from project.db_models.calibration_models import (
     CalibrationRun,
     CalibrationRunSegment,
@@ -200,12 +201,32 @@ def _run_facets(fr: ForecastRun) -> dict:
     return facets
 
 
+def _distinct_promoted(fr: ForecastRun, column: str) -> dict:
+    """Indexed SELECT DISTINCT over a promoted dimension column. O(distinct
+    values) via the (forecast_run_id, column) composite index — no full-run
+    scan, no JSON parse."""
+    col = getattr(ForecastRunResult, column)
+    rows = (
+        db.session.query(col)
+        .filter(ForecastRunResult.forecast_run_id == fr.id, col.isnot(None))
+        .distinct()
+        .limit(DISTINCT_VALUES_LIMIT + 1)
+        .all()
+    )
+    values = sorted(str(r[0]) for r in rows)
+    truncated = len(values) > DISTINCT_VALUES_LIMIT
+    return {"values": values[:DISTINCT_VALUES_LIMIT], "truncated": truncated}
+
+
 def distinct_for_column(fr: ForecastRun, column: str) -> dict:
     """Distinct values for one result column, for a filter dropdown.
 
-    Single seam used by the route and the benchmark. Backed by a per-run facet
-    cache so N dropdown probes on table load cost one df scan (cold) then O(1).
+    Promoted low-cardinality dimensions are answered by an indexed SQL DISTINCT;
+    every other column falls back to the per-run facet cache (one df scan cold,
+    O(1) warm).
     """
+    if column in PROMOTED_DIMENSIONS:
+        return _distinct_promoted(fr, column)
     return _run_facets(fr).get(column, {"values": [], "truncated": False})
 
 
