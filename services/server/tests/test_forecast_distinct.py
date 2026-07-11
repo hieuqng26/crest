@@ -188,3 +188,44 @@ def test_promoted_dims_from_meta_extracts_known_keys():
 
     meta = {"sector": "Tech", "scenario": "Adverse", "irrelevant": "x"}
     assert promoted_dims_from_meta(meta) == {"sector": "Tech", "scenario": "Adverse"}
+    # a promoted key present but None is dropped, not carried as a null column
+    assert promoted_dims_from_meta({"sector": "X", "country": None}) == {"sector": "X"}
+
+
+def test_forecast_result_mappings_populates_promoted_columns():
+    from project.workers.forecast import _forecast_result_mappings
+
+    meta_rows = [
+        {
+            "date": "2030-01-01",
+            "sector": "Energy",
+            "country": "US",
+            "scenario": "Baseline",
+        },
+        {
+            "date": "2031-01-01",
+            "sector": "Energy",
+            "country": "US",
+            "scenario": "Adverse",
+        },
+    ]
+    mappings = _forecast_result_mappings(42, [1.5, 2.5], meta_rows, "seg_energy")
+
+    assert len(mappings) == 2
+    m0 = mappings[0]
+    # promoted columns populated from meta
+    assert m0["sector"] == "Energy"
+    assert m0["country"] == "US"
+    assert m0["scenario"] == "Baseline"
+    # segment_key set once from the explicit param, not duplicated/overridden
+    assert m0["segment_key"] == "seg_energy"
+    # unchanged fields preserved
+    assert m0["forecast_run_id"] == 42
+    assert m0["date"] == "2030-01-01"
+    assert m0["predicted"] == 1.5
+    # meta_json still holds the full row meta
+    import json
+
+    assert json.loads(m0["meta_json"])["sector"] == "Energy"
+    # second row's scenario differs
+    assert mappings[1]["scenario"] == "Adverse"
