@@ -6,7 +6,7 @@
 import { fmtTime } from '@/utils/datetime'
 export const forecastResultColumns = [
   { field: 'date', header: 'Date', width: '128px', mono: true },
-  { field: 'predicted', header: 'Predicted', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toFixed(4) : '—') }
+  { field: 'predicted', header: 'Predicted', width: '128px', align: 'right', mono: true, filterable: false, formatter: (v) => (v != null ? v.toFixed(4) : '—') }
 ]
 
 export const analysisResultColumns = [
@@ -16,9 +16,9 @@ export const analysisResultColumns = [
   { field: 'scenario', header: 'Scenario', width: '128px' },
   { field: 'year', header: 'Year', width: '88px', align: 'right', mono: true },
   { field: 'stage', header: 'Stage', width: '96px' },
-  { field: 'pd', header: 'PD', width: '100px', align: 'right', mono: true, formatter: (v) => (v != null ? (v * 100).toFixed(3) + '%' : '—') },
-  { field: 'lgd', header: 'LGD', width: '100px', align: 'right', mono: true, formatter: (v) => (v != null ? (v * 100).toFixed(1) + '%' : '—') },
-  { field: 'ecl', header: 'ECL', width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
+  { field: 'pd', header: 'PD', width: '100px', align: 'right', mono: true, filterable: false, formatter: (v) => (v != null ? (v * 100).toFixed(3) + '%' : '—') },
+  { field: 'lgd', header: 'LGD', width: '100px', align: 'right', mono: true, filterable: false, formatter: (v) => (v != null ? (v * 100).toFixed(1) + '%' : '—') },
+  { field: 'ecl', header: 'ECL', width: '128px', align: 'right', mono: true, filterable: false, formatter: (v) => (v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') }
 ]
 
 // Unified workflow log table (Overview tab). Step/Target/Sector/Segment/Level are
@@ -46,7 +46,7 @@ export function columnsFromNames(names) {
   return names.map((f) => {
     if (f === 'correct') return { field: f, header: 'CORRECT', width: '100px', align: 'center', formatter: (v) => (v ? '✓' : '✗') }
     if (NUMERIC_FIELDS.has(f)) {
-      return { field: f, header: f.toUpperCase(), width: '128px', align: 'right', mono: true, formatter: (v) => (v != null ? Number(v).toFixed(4) : '—') }
+      return { field: f, header: f.toUpperCase(), width: '128px', align: 'right', mono: true, filterable: false, formatter: (v) => (v != null ? Number(v).toFixed(4) : '—') }
     }
     return { field: f, header: f.replace(/_/g, ' ').toUpperCase() }
   })
