@@ -118,7 +118,7 @@ def main() -> None:
         # the minimal parent chain (user -> dataset -> model config ->
         # calibration run) before creating the forecast run itself.
         user = User(
-            email="bench@example.com",
+            email=f"bench-{uuid.uuid4()}@example.com",
             password="Passw0rd!",
             role="sysadmin",
             name="bench",
@@ -196,8 +196,16 @@ def main() -> None:
         print(f"\nwrote {out}")
 
         # Clean up so repeat runs don't accumulate rows in a persistent DB.
+        # Delete children first, then walk the parent chain back in FK-safe
+        # order (forecast results -> forecast run -> calibration run ->
+        # model config + dataset -> user) so a persistent MSSQL instance is
+        # left clean and reruns can re-seed without unique/FK collisions.
         ForecastRunResult.query.filter_by(forecast_run_id=fr.id).delete()
         db.session.query(ForecastRun).filter_by(id=fr.id).delete()
+        db.session.query(CalibrationRun).filter_by(id=cal.id).delete()
+        db.session.query(ModelConfig).filter_by(id=cfg.id).delete()
+        db.session.query(Dataset).filter_by(id=ds.id).delete()
+        db.session.query(User).filter_by(id=user.id).delete()
         db.session.commit()
 
 
