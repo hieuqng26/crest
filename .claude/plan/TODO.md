@@ -1,3 +1,22 @@
+# TODO
+- [ ] Redesign Job History table
+- [ ] Backtesting plots: interactive, add coefs (with p-value and statistical tests), qq plots
+- [ ] Stepper for workflow progress tracking, including step after credit analysis is done
+- [ ] Add more audit logs
+- [ ] Test and verify all models. If the error occurs during job run, we should have clear message of what goes wrong (input data is invalid, model is not appropriate, etc.)
+- [ ] Add model for panel data
+- [ ] Add customized models (with optimization)
+- [ ] Add outlier detection pipeline
+- [ ] Add feature selection pipeline
+- [ ] Verify ECL and KMV core code
+- [ ] Add client segmentation analysis
+- [ ] Develop PD model by logistic regression
+- [ ] Create staging ETL: transform bank's raw data, merge files, ...
+- [ ] Cleanup unused env variables
+- [ ] Email when training jobs complete
+- [ ] Dont store json in database tables
+
+# COMPLETED
 - Workflow details:
     - [x] SegmentModelsPanel: Move log inside the same collapsible box (Use PrimeVue's Panel component as it has collapsible function) with Run Details (Run Details on the left 40% of the box, Log on right with 60% width). When the job is running, make the run details & log visible, don't load or show the segment models table. When job is finished, collapse the run details & log box, show the segment models table. Add a column Sector in Segment Models table.
     - [x] Forecast tab: remove SCENARIO filter. Add the log in a collapsible panel below the forecast data table. Show the log only when the job is running.
@@ -8,11 +27,9 @@
     - [x] Make the plots interactive: on hovering, able to disable the scenarios when clicking on legend items
     - [x] Dont index all series to 100 at base year by default. Give user the option to switch it on if they want. Disable by default
 - [x] Some pages are loading too slow: Heatmap, Financial Forecast, Job History, Job View
-- [ ] Add more audit logs
 
 - Job History: 
     - [x] Add Delete, Multi-delete, Rerun, Cancel action buttons. "Type" should be MANUAL or AUTO, not Workflow, Training, Forecast,  or Analysis. Add ability to activate a job so Analysis pages will load
-    - [ ] Backtesting plots: interactive, add coefs (with p-value and statistical tests), qq plots
 
 - [x] Financial Forecast page: add multi-select dropdown for which target variables to show (only show target variables of the active job, not some derived ones like cogs/revenue)
 - [x] Modelling workflow:
@@ -50,20 +67,10 @@
     - [x] Then look at the fit, I want the fit is relatively good (R2 at least 20%, ideally 50% and above)
     - [x] Need to make sure end-to-end is producing correct results
     
-- Add a shared component for data table that will be used across the application (unless we need a very customized one) for example in the dataset views, backtesting, forecast results. The table should clean, easy to read. It should have filters for each column. For categorical columns with less than 30 unique values, it should have dropdown (with search). It should also have sorting function for each column. Most importantly, it should has pagination and able to load large data seemlessly
-- Add ability to give the calibration a name
-- Redesign UI for every page
-- Test and verify all models. If the error occurs during job run, we should have clear message of what goes wrong (input data is invalid, model is not appropriate, etc.)
-- Add model for panel data
-- Add customized models (with optimization)
-- Add outlier detection pipeline
-- Verify ECL and KMV core code
-- Add client segmentation analysis
-- Develop PD model by logistic regression
-- Create staging ETL: transform bank's raw data, merge files, ...
-- Cleanup unused env variables
-- Email when training jobs complete
-- Dont store json in database tables
+- [x] Add a shared component for data table that will be used across the application (unless we need a very customized one) for example in the dataset views, backtesting, forecast results. The table should clean, easy to read. It should have filters for each column. For categorical columns with less than 30 unique values, it should have dropdown (with search). It should also have sorting function for each column. Most importantly, it should has pagination and able to load large data seemlessly
+- [x] Add ability to give the calibration a name
+- [x] Redesign UI for every page
+
 ---
 
 - [x] Results table in Forecast job and Backtesting's prediction table in Calibration job: show the row number "x to y" corresponding to the selected page
