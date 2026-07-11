@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from project import app_session
+from project import app_session, cache
 from project.constants import LaunchOrigin, RunStatus
 from project.core import table_query
 from project.db_models.calibration_models import (
@@ -169,15 +169,41 @@ def results_df(fr: ForecastRun) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+_FACETS_KEY = "forecast_facets:{run_id}"
+
+
+def _run_facets(fr: ForecastRun) -> dict:
+    """All-column distinct facets for a run, computed once and cached.
+
+    ``run_id`` is immutable, so a successful run's facets never change (a segment
+    re-score changes ``predicted``, not dimension membership); we cache them for
+    an hour and invalidate defensively on re-score. In-progress runs are still
+    accumulating rows, so we never cache those.
+    """
+    key = _FACETS_KEY.format(run_id=fr.run_id)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    df = results_df(fr)
+    facets = {col: table_query.distinct_values(df, col) for col in df.columns}
+    if fr.status == "success":
+        cache.set(key, facets, timeout=3600)
+    return facets
+
+
 def distinct_for_column(fr: ForecastRun, column: str) -> dict:
     """Distinct values for one result column, for a filter dropdown.
 
-    Single seam used by the route and the benchmark. Its internals are swapped
-    across the scalability options (df scan → cache → indexed SQL); the return
-    shape ``{"values": [...], "truncated": bool}`` is invariant.
+    Single seam used by the route and the benchmark. Backed by a per-run facet
+    cache so N dropdown probes on table load cost one df scan (cold) then O(1).
     """
-    df = results_df(fr)
-    return table_query.distinct_values(df, column)
+    return _run_facets(fr).get(column, {"values": [], "truncated": False})
+
+
+def invalidate_facets(run_id: str) -> None:
+    """Drop a run's cached facets — call after any write that could change its
+    result rows (segment re-score)."""
+    cache.delete(_FACETS_KEY.format(run_id=run_id))
 
 
 def get_results(

@@ -100,3 +100,37 @@ def test_distinct_for_column_unknown_column_is_empty(app):
         fr = _seed_run()
         out = svc.distinct_for_column(fr, "does_not_exist")
         assert out == {"values": [], "truncated": False}
+
+
+def test_facets_cached_after_first_call(app, monkeypatch):
+    with app.app_context():
+        fr = _seed_run()
+        calls = {"n": 0}
+        real_results_df = svc.results_df
+
+        def counting_results_df(fr_):
+            calls["n"] += 1
+            return real_results_df(fr_)
+
+        monkeypatch.setattr(svc, "results_df", counting_results_df)
+
+        # Two different columns, two calls — but only ONE df load (facets cached).
+        svc.distinct_for_column(fr, "sector")
+        svc.distinct_for_column(fr, "scenario")
+        assert calls["n"] == 1
+
+
+def test_inprogress_run_not_cached(app, monkeypatch):
+    with app.app_context():
+        fr = _seed_run(status="running")
+        calls = {"n": 0}
+        real_results_df = svc.results_df
+
+        def counting_results_df(fr_):
+            calls["n"] += 1
+            return real_results_df(fr_)
+
+        monkeypatch.setattr(svc, "results_df", counting_results_df)
+        svc.distinct_for_column(fr, "sector")
+        svc.distinct_for_column(fr, "scenario")
+        assert calls["n"] == 2  # not cached while status != success
