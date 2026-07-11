@@ -134,3 +134,14 @@ def test_inprogress_run_not_cached(app, monkeypatch):
         svc.distinct_for_column(fr, "sector")
         svc.distinct_for_column(fr, "scenario")
         assert calls["n"] == 2  # not cached while status != success
+
+
+def test_invalidate_facets_clears_cache(app):
+    from project import cache
+
+    with app.app_context():
+        fr = _seed_run()
+        svc.distinct_for_column(fr, "sector")  # populate cache
+        assert cache.get(f"forecast_facets:{fr.run_id}") is not None
+        svc.invalidate_facets(fr.run_id)
+        assert cache.get(f"forecast_facets:{fr.run_id}") is None

@@ -122,6 +122,11 @@ def recompute_segment_downstream(self, run_id: str, segment_key: str):
                     fr.progress = 100
                     fr.finished_at = datetime.now(timezone.utc)
                     s.add(fr)
+                # Facets for this run were cached while it was previously
+                # successful; the re-score changed its rows, so drop them.
+                from project.services import forecast_runs as forecast_run_service
+
+                forecast_run_service.invalidate_facets(fr_run_uuid)
             except Exception as exc:
                 logger.error(
                     f"Segment forecast recompute failed for {fr_run_uuid}: {exc}",
