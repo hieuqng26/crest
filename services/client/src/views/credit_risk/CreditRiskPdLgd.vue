@@ -25,14 +25,26 @@ const noActiveRun = ref(false)
 const clients          = ref([])
 const sectors          = ref([])
 const companiesBySector = ref({})
-const selectedSector   = ref(null) // null = all sectors
+const selectedSectors  = ref([]) // [] = all sectors
 const selectedClient   = ref(null)
 const loadingKMV       = ref(false)
 
+// Union of companies across the selected sectors — empty selection = all clients.
 const clientOptions = computed(() => {
-  if (!selectedSector.value) return clients.value
-  const inSector = new Set(companiesBySector.value[selectedSector.value] ?? [])
-  return clients.value.filter((c) => inSector.has(c))
+  if (!selectedSectors.value.length) return clients.value
+  const inSelection = new Set(
+    selectedSectors.value.flatMap((s) => companiesBySector.value[s] ?? [])
+  )
+  return clients.value.filter((c) => inSelection.has(c))
+})
+
+// Reverse map client_id → sector, used to stamp the Sector column onto KMV rows.
+const sectorByClient = computed(() => {
+  const map = {}
+  for (const [sector, ids] of Object.entries(companiesBySector.value)) {
+    for (const id of ids) map[id] = sector
+  }
+  return map
 })
 
 // ── KMV data ──────────────────────────────────────────────────────────────────
@@ -99,7 +111,7 @@ onMounted(async () => {
   }
 })
 
-watch(selectedSector, () => {
+watch(selectedSectors, () => {
   if (selectedClient.value && !clientOptions.value.includes(selectedClient.value)) {
     selectedClient.value = clientOptions.value[0] ?? null
   }
@@ -113,7 +125,8 @@ async function fetchKMV() {
   kmvRows.value    = []
   try {
     const { data } = await creditRiskAPI.getClientResult(runData.value.run_id, selectedClient.value)
-    kmvRows.value = data.kmv ?? []
+    const sector = sectorByClient.value[selectedClient.value] ?? null
+    kmvRows.value = (data.kmv ?? []).map((r) => ({ ...r, SECTOR: sector }))
   } catch (e) {
     toast.add({ severity: 'error', summary: 'Failed to load results', detail: e?.response?.data?.error ?? e.message, life: 5000 })
   } finally {
@@ -126,6 +139,7 @@ function num(v) { return v != null && isFinite(v) ? Number(v).toFixed(4) : '—'
 
 const kmvTableColumns = [
   { field: 'YEAR', header: 'Year', width: '7rem' },
+  { field: 'SECTOR', header: 'Sector', width: '11rem' },
   { field: 'SCENARIO', header: 'Scenario', width: '9rem' },
   { field: 'Rating', header: 'Rating', width: '7rem' },
   { field: 'PD', header: 'PD', width: '8rem', formatter: (v) => pct(v) },
@@ -152,13 +166,13 @@ const kmvFetchPage = localFetchPage(() => kmvRows.value)
         <div class="field-col">
           <span class="field-label">Sector</span>
           <EySelect
-            v-model="selectedSector"
-            :options="[null, ...sectors]"
-            :optionLabel="v => v ?? 'All sectors'"
+            v-model="selectedSectors"
+            :options="sectors"
+            multiple
+            showToggleAll
             placeholder="All sectors"
             :disabled="!sectors.length"
-            showClear
-            style="width: 12rem"
+            style="width: 13rem"
           />
         </div>
         <div class="field-col">
