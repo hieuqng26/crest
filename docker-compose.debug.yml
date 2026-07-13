@@ -50,6 +50,39 @@ services:
       - app-network
     restart: always
 
+  mcp:
+    image: mst-dev/backend:latest
+    env_file:
+      - env/.env.dev
+    environment:
+      - SERVICE_NAME=mcp
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8090
+      # Fails closed without a token. Supply a strong secret in prod (this dev
+      # default is a placeholder — override MCP_AUTH_TOKEN in your shell/.env).
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-dev-mcp-token-change-me}
+      # triggered_by on launched runs — must be an existing users.email.
+      - MCP_IDENTITY=${MCP_IDENTITY:-admin}
+      # Dev convenience: the published localhost port sends Host: localhost.
+      # In prod, DROP this and set MCP_ALLOWED_HOSTS to your public hostname(s).
+      - MCP_DISABLE_DNS_REBINDING_PROTECTION=true
+      - CELERY_BROKER_URL=redis://default:Ey%40123%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%40123%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    ports:
+      - "8090:8090"
+    depends_on:
+      - redis
+      - mssql
+      - minio
+      - backend
+    networks:
+      - app-network
+    restart: always
+
   redis:
     image: redis:alpine
     command: ["redis-server", "--requirepass", "Ey@123!"]

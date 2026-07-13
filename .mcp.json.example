@@ -4,6 +4,7 @@
   "//deps": "The debug image installs the mcp SDK (services/server/Dockerfile). If your image predates that, run once: docker compose -f docker-compose.debug.yml exec backend pip install 'mcp>=1.9,<2'",
   "//identity": "Add '-e','MCP_IDENTITY=<email>' to the args to attribute launched jobs to a user. It MUST be an existing users.email (triggered_by is an FK) or launches fail — e.g. 'admin'. Jobs launched via MCP are tagged AUTO in job history; the New Model wizard is MANUAL.",
   "//host-alt": "To run on the host instead (no Docker for the app): install unixodbc + msodbcsql18, pip install -r services/server/requirements-mcp.txt, and set command=python3 with env {PYTHONPATH:services/server, CONFIG_NAME:development, ENV_FILE:env/.env.dev, JWT_SECRET_KEY:..., APP_DB_SERVER:tcp:localhost,1433, REDIS_HOST:localhost, MINIO_ENDPOINT:localhost:9100}. Note MinIO is published on 9100, and redis is not published by docker-compose.debug.yml.",
+  "//remote": "For the remote streamable-http transport instead of stdio, run the 'mcp' compose service (docker compose -f docker-compose.debug.yml up -d mcp) and register by URL: replace the 'crest' block with {\"url\": \"http://localhost:8090/mcp\", \"headers\": {\"Authorization\": \"Bearer <MCP_AUTH_TOKEN>\"}}. See docs/api/mcp-server.md.",
   "mcpServers": {
     "crest": {
       "command": "docker",

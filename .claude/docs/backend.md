@@ -104,9 +104,12 @@ principled controls are:
 
 ## MCP server (`project/mcp_server/`)
 
-A stdio MCP server exposing 27 `crest_*` tools (launch + monitor + reads) —
-a sibling transport to `project/api/` that calls the same `services/` functions
-and validates the same `schemas/` models.
+An MCP server exposing 27 `crest_*` tools (launch + monitor + reads) — a sibling
+transport to `project/api/` that calls the same `services/` functions and
+validates the same `schemas/` models. `MCP_TRANSPORT` selects **stdio** (default,
+local) or **streamable-http** (remote: the `mcp` compose service on `:8090/mcp`,
+bearer-token auth via `MCP_AUTH_TOKEN`, fail-closed without it — see
+`docs/api/mcp-server.md`).
 
 - **Run**: `python -m project.mcp_server` from `services/server/`. It calls
   `create_app()`, so it needs the app's **native deps** (`pyodbc`/unixodbc) and

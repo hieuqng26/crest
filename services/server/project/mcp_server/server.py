@@ -9,6 +9,10 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "crest_mcp",
+    # Stateless JSON for the streamable-http transport — each request is
+    # self-contained (simpler to scale / load-balance). Harmless for stdio.
+    stateless_http=True,
+    json_response=True,
     instructions=(
         "CREST banking ML calibration platform. Typical pipeline: discover "
         "inputs (crest_list_datasets / crest_list_model_configs / "
