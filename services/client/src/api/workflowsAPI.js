@@ -18,6 +18,14 @@ const workflowsAPI = {
   // Unified training + forecast + credit logs (backs the Overview log panel).
   logs:         (runId, pageState) => httpClient.get(`/workflows/${runId}/logs`, { params: toPageParams(pageState) }),
   logsDistinct: (runId, column)    => httpClient.get(`/workflows/${runId}/logs/distinct`, { params: { column } }),
+
+  // Downloadable exports (backs the Download tab): list outputs, request an async
+  // build (csv/xlsx), poll jobs, and download the finished file as a blob.
+  exportOutputs:  (runId)                 => httpClient.get(`/workflows/${runId}/exports/outputs`),
+  listExports:    (runId)                 => httpClient.get(`/workflows/${runId}/exports`),
+  createExport:   (runId, output, format) => httpClient.post(`/workflows/${runId}/exports`, { output, format }),
+  getExport:      (runId, jobId)          => httpClient.get(`/workflows/${runId}/exports/${jobId}`),
+  downloadExport: (runId, jobId)          => httpClient.get(`/workflows/${runId}/exports/${jobId}/download`, { responseType: 'blob' }),
 }
 
 export default workflowsAPI

@@ -5,7 +5,7 @@ import pandas as pd
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
-from project import app_session, cache, db
+from project import app_session, db
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
@@ -203,7 +203,7 @@ def recalibrate_segment(run_id, segment_key):
 
     # The segment's cached backtest predictions are now stale — its model is being
     # re-fit. Drop them so the next read rebuilds from the fresh val_obs.
-    _invalidate_segment_predictions(run_id, segment_key)
+    calibration_service.invalidate_segment_predictions(run_id, segment_key)
     run_segment_calibration.delay(run_id, segment_key)
     return jsonify(result), 202
 
@@ -238,120 +238,6 @@ def get_forecast(run_id):
     return jsonify(result), 200
 
 
-def _predictions_df(
-    actual: list, predicted: list, meta: dict, model_family: str | None
-):
-    """Build a predictions DataFrame (actual/predicted/meta columns, plus a
-    derived residual or pred_class+correct column) from parallel arrays."""
-    records = {"actual": actual, "predicted": predicted, **meta}
-    df = pd.DataFrame(records)
-    if df.empty:
-        return df
-    df = df[df["actual"].notna() & df["predicted"].notna()].reset_index(drop=True)
-    if model_family == "classification":
-        df["pred_class"] = (df["predicted"] >= 0.5).astype(int)
-        df["correct"] = df["actual"].round().astype(int) == df["pred_class"]
-    else:
-        df["residual"] = df["actual"] - df["predicted"]
-    return df
-
-
-def _run_predictions_df(run: CalibrationRun) -> pd.DataFrame:
-    """Predictions for a non-segmented run, from Forecast/ForecastResult rows.
-
-    Cached per immutable run_id for successful, non-segmented runs (their results
-    never change), so paging/sorting/filtering the backtest table doesn't reload and
-    re-parse every ForecastResult row on each request. Segmented runs are excluded —
-    a segment re-run can change their downstream forecast."""
-
-    cacheable = run.status == "success" and not run.is_segmented
-    cache_key = f"calib_run_preds:{run.run_id}"
-    if cacheable:
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-    forecast = (
-        Forecast.query.filter_by(calibration_run_id=run.id)
-        .order_by(Forecast.created_at)
-        .first()
-    )
-    if not forecast:
-        return pd.DataFrame()
-    data = _load_forecast_data(forecast)
-    family = run.model_config.family if run.model_config else None
-    df = _predictions_df(
-        data.get("actual", []), data.get("predicted", []), data.get("meta", {}), family
-    )
-    if cacheable:
-        cache.set(cache_key, df, timeout=3600)
-    return df
-
-
-def _segment_predictions_df(
-    run: CalibrationRun, segment_key: str
-) -> pd.DataFrame | None:
-    """Predictions for one segment, from CalibrationRunSegment.val_metrics_json's
-    val_obs. Returns None if the segment doesn't exist. Older runs (predating
-    val_obs) fall back to reconstructing actual/predicted from fitted+residuals
-    (regression only — mirrors SegmentBacktestTab.vue's client-side fallback)."""
-    seg = CalibrationRunSegment.query.filter_by(
-        calibration_run_id=run.id, segment_key=segment_key
-    ).first()
-    if not seg:
-        return None
-
-    # Cache per (run, segment) while the segment is successful — its val_obs only
-    # changes when the segment is re-fit (which deletes this key, see
-    # _invalidate_segment_predictions). Avoids re-parsing the whole val_obs blob on
-    # every page/sort/filter of the backtest table.
-    cacheable = seg.status == "success"
-    cache_key = _segment_predictions_cache_key(run.run_id, segment_key)
-    if cacheable:
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-    diag = json.loads(seg.val_metrics_json or "{}")
-    family = run.model_config.family if run.model_config else None
-
-    df = _build_segment_predictions_df(diag, family)
-    if cacheable:
-        cache.set(cache_key, df, timeout=3600)
-    return df
-
-
-def _segment_predictions_cache_key(run_id: str, segment_key: str) -> str:
-    return f"calib_seg_preds:{run_id}:{segment_key}"
-
-
-def _invalidate_segment_predictions(run_id: str, segment_key: str):
-    """Drop the cached backtest DataFrame for a segment (call when it is re-fit)."""
-    cache.delete(_segment_predictions_cache_key(run_id, segment_key))
-
-
-def _build_segment_predictions_df(diag: dict, family: str | None) -> pd.DataFrame:
-    val_obs = diag.get("val_obs")
-    if val_obs:
-        return _predictions_df(
-            val_obs.get("actual", []),
-            val_obs.get("predicted", []),
-            val_obs.get("meta", {}),
-            family,
-        )
-
-    fitted = diag.get("fitted")
-    if fitted and family != "classification":
-        residuals = diag.get("residuals", [])
-        actual = [
-            f + (residuals[i] if i < len(residuals) else 0)
-            for i, f in enumerate(fitted)
-        ]
-        return _predictions_df(actual, fitted, {}, family)
-
-    return pd.DataFrame()
-
-
 def _predictions_page_response(df: pd.DataFrame):
     page, total = table_query.query_page(
         df,
@@ -380,7 +266,7 @@ def get_backtest_predictions(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    return _predictions_page_response(_run_predictions_df(run))
+    return _predictions_page_response(calibration_service.run_predictions_df(run))
 
 
 @calibrations.get("/<run_id>/backtest/predictions/distinct")
@@ -389,7 +275,7 @@ def get_backtest_predictions_distinct(run_id):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    return _predictions_distinct_response(_run_predictions_df(run))
+    return _predictions_distinct_response(calibration_service.run_predictions_df(run))
 
 
 @calibrations.get("/<run_id>/segments/<segment_key>/backtest/predictions")
@@ -400,7 +286,7 @@ def get_segment_backtest_predictions(run_id, segment_key):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    df = _segment_predictions_df(run, segment_key)
+    df = calibration_service.segment_predictions_df(run, segment_key)
     if df is None:
         return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
     return _predictions_page_response(df)
@@ -412,7 +298,7 @@ def get_segment_backtest_predictions_distinct(run_id, segment_key):
     run = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not run:
         return jsonify({"error": "Not found"}), 404
-    df = _segment_predictions_df(run, segment_key)
+    df = calibration_service.segment_predictions_df(run, segment_key)
     if df is None:
         return jsonify({"error": f"Segment '{segment_key}' not found"}), 404
     return _predictions_distinct_response(df)

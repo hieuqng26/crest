@@ -50,6 +50,44 @@ services:
       - app-network
     restart: always
 
+  export-worker:
+    image: mst-dev/backend:latest
+    volumes:
+      - backend_data:/var/lib/app_data
+    env_file:
+      - env/.env.dev
+    environment:
+      - SERVICE_NAME=export-worker
+      - CELERY_BROKER_URL=redis://default:Ey%40123%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%40123%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - app-network
+    restart: always
+
+  beat:
+    image: mst-dev/backend:latest
+    env_file:
+      - env/.env.dev
+    environment:
+      - SERVICE_NAME=beat
+      - CELERY_BROKER_URL=redis://default:Ey%40123%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%40123%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - app-network
+    restart: always
+
   mcp:
     image: mst-dev/backend:latest
     env_file:

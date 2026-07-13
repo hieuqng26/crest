@@ -16,6 +16,7 @@ import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
 import ForecastResultsTab from './parts/ForecastResultsTab.vue'
+import DownloadTab from './parts/DownloadTab.vue'
 import WorkflowLogsPanel from './parts/WorkflowLogsPanel.vue'
 import BaseTable from '@/views/composables/BaseTable.vue'
 
@@ -138,7 +139,8 @@ const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'diagnosis', label: 'Diagnosis & Backtesting' },
   { key: 'forecast', label: 'Forecast' },
-  { key: 'credit', label: 'Credit Results' }
+  { key: 'credit', label: 'Credit Results' },
+  { key: 'download', label: 'Download' }
 ]
 const activeTab = computed({
   get: () => TABS.find((t) => t.key === route.query.tab)?.key || 'overview',
@@ -369,6 +371,9 @@ const confirmDelete = () => {
           </div>
         </template>
       </div>
+
+      <!-- Download -->
+      <DownloadTab v-else-if="activeTab === 'download'" :run-id="runId" />
     </template>
   </div>
 </template>

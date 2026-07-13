@@ -1,14 +1,16 @@
+import io
 from datetime import datetime, timezone
 
 import pandas as pd
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
 from project.api.auth.decorators import current_permissions, require_perm
 from project.api.auth.permissions import has_permission
-from project.core import table_query
+from project.core import storage, table_query
 from project.schemas.workflows import CreateWorkflow
+from project.services import workflow_exports as export_service
 from project.services import workflows as workflow_service
 from project.db_models.calibration_models import (
     CalibrationRun,
@@ -21,6 +23,7 @@ from project.db_models.credit_models import (
 from project.db_models.forecast_models import ForecastRun
 from project.db_models.workflow_models import WorkflowRun
 from project.workers.tasks import delete_workflow as delete_workflow_task
+from project.workers.tasks import export_dataset as export_dataset_task
 
 from . import workflows
 
@@ -82,73 +85,13 @@ def get_workflow_logs_distinct(run_id):
     ), 200
 
 
-# ── Combined forecast results ───────────────────────────────────────────────────
-# Every target's forecast run unioned into one paginated table with derived
-# target/sector/segment columns, so the Forecast tab shows all targets at once and
-# filters by them via the table's own column filters (no per-target dropdown).
-
-_FORECAST_COL_ORDER = ["target", "sector", "segment", "date", "predicted"]
-
-
-def _combined_forecast_df(wf) -> pd.DataFrame:
-    from project.services.forecast_runs import results_df as _forecast_results_df
-
-    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
-    cal_ids = {fr.calibration_run_id for fr in fcs}
-    cal_target = (
-        {
-            c.id: c.target_col
-            for c in CalibrationRun.query.filter(CalibrationRun.id.in_(cal_ids)).all()
-        }
-        if cal_ids
-        else {}
-    )
-
-    frames = []
-    for fr in fcs:
-        df = _forecast_results_df(fr)
-        if df.empty:
-            continue
-        df = df.copy()
-        df.insert(0, "target", cal_target.get(fr.calibration_run_id))
-        if "segment_key" in df.columns:
-            sk = df["segment_key"].astype("object")
-            derived_sector = sk.map(lambda v: _seg_part(v, 0))
-            df["segment"] = sk.map(lambda v: _seg_part(v, 1))
-            df["sector"] = (
-                derived_sector.where(sk.notna(), df.get("sector"))
-                if "sector" in df.columns
-                else derived_sector
-            )
-            df = df.drop(columns=["segment_key"])
-        else:
-            if "sector" not in df.columns:
-                df["sector"] = None
-            df["segment"] = None
-        frames.append(df)
-
-    if not frames:
-        return pd.DataFrame(columns=_FORECAST_COL_ORDER)
-    combined = pd.concat(frames, ignore_index=True, sort=False)
-    front = [c for c in _FORECAST_COL_ORDER if c in combined.columns]
-    rest = [c for c in combined.columns if c not in front]
-    return combined[front + rest]
-
-
-def _seg_part(segment_key, idx):
-    """sector (idx 0) or split value (idx 1) from a "{sector}__{split}" key."""
-    if not isinstance(segment_key, str) or "__" not in segment_key:
-        return segment_key if idx == 0 and isinstance(segment_key, str) else None
-    return segment_key.split("__", 1)[idx]
-
-
 @workflows.get("/<run_id>/forecast-results")
 @require_perm("forecast:read")
 def get_workflow_forecast_results(run_id):
     wf = WorkflowRun.query.filter_by(run_id=run_id).first()
     if not wf:
         return jsonify({"error": "Not found"}), 404
-    df = _combined_forecast_df(wf)
+    df = workflow_service.combined_forecast_df(wf)
     page, total = table_query.query_page(
         df,
         page=int(request.args.get("page", 0)),
@@ -170,7 +113,70 @@ def get_workflow_forecast_results_distinct(run_id):
     column = request.args.get("column", "")
     if not column:
         return jsonify({"values": [], "truncated": False}), 200
-    return jsonify(table_query.distinct_values(_combined_forecast_df(wf), column)), 200
+    return jsonify(
+        table_query.distinct_values(workflow_service.combined_forecast_df(wf), column)
+    ), 200
+
+
+# ── Downloadable exports ────────────────────────────────────────────────────────
+# The Download tab: list a workflow's exportable outputs, request an async build
+# (csv/xlsx) on the dedicated `exports` queue, poll the job, and stream the file.
+
+
+@workflows.get("/<run_id>/exports/outputs")
+@require_perm("calibration:read")
+def list_export_outputs(run_id):
+    return jsonify({"outputs": export_service.list_outputs(run_id)}), 200
+
+
+@workflows.get("/<run_id>/exports")
+@require_perm("calibration:read")
+def list_exports(run_id):
+    return jsonify({"jobs": export_service.list_export_jobs(run_id)}), 200
+
+
+@workflows.post("/<run_id>/exports")
+@require_perm("calibration:read")
+def create_export(run_id):
+    body = request.get_json(silent=True) or {}
+    output_key = body.get("output")
+    fmt = body.get("format")
+
+    # Enforce the output's own read permission (calibration/forecast/credit_risk).
+    if output_key in export_service.OUTPUTS:
+        perm = export_service.OUTPUTS[output_key]["perm"]
+        if not has_permission(current_permissions(), perm):
+            return jsonify({"error": f"Requires {perm} permission"}), 403
+
+    job = export_service.create_export_job(run_id, output_key, fmt, get_jwt_identity())
+    # Dispatch only newly-queued builds; a reused running/successful job is left
+    # as-is (the commit inside create_export_job has already landed).
+    if job.get("status") == "queued":
+        export_dataset_task.apply_async(args=[job["job_id"]], queue="exports")
+    return jsonify(job), 202
+
+
+@workflows.get("/<run_id>/exports/<job_id>")
+@require_perm("calibration:read")
+def get_export(run_id, job_id):
+    return jsonify(export_service.get_export_job(job_id)), 200
+
+
+@workflows.get("/<run_id>/exports/<job_id>/download")
+@require_perm("calibration:read")
+def download_export(run_id, job_id):
+    job = export_service.get_download_target(run_id, job_id)
+    perm = export_service.output_perm(job.output_key)
+    if not has_permission(current_permissions(), perm):
+        return jsonify({"error": f"Requires {perm} permission"}), 403
+
+    data = storage.download_bytes(job.object_path.split("/", 1)[-1])
+    return send_file(
+        io.BytesIO(data),
+        mimetype=job.mimetype or "application/octet-stream",
+        as_attachment=True,
+        download_name=job.filename or f"{job.output_key}.{job.fmt}",
+    )
 
 
 @workflows.post("/")

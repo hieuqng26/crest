@@ -489,7 +489,10 @@ class TestWorkflowDelete:
         # MinIO cleanup is best-effort I/O — stub it out in the unit test.
         with patch("project.core.workflow_delete.storage.remove_prefix") as mock_rm:
             purge_workflow(wf_id)
-        mock_rm.assert_called_once_with("artifacts/wf-purge-cal-1/")
+        # Per-calibration artifact prefix + the workflow's export-file prefix.
+        mock_rm.assert_any_call("artifacts/wf-purge-cal-1/")
+        mock_rm.assert_any_call("exports/wf-purge-1/")
+        assert mock_rm.call_count == 2
 
         assert WorkflowRun.query.filter_by(id=wf_id).first() is None
         assert CalibrationRun.query.filter_by(run_id="wf-purge-cal-1").first() is None
