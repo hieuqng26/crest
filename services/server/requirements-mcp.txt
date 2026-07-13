@@ -3,3 +3,5 @@
 # only requirements.txt and stay unchanged.
 -r requirements.txt
 mcp>=1.9,<2
+# uvicorn ships transitively with mcp; pin it for the streamable-http transport.
+uvicorn>=0.30,<1

@@ -59,6 +59,11 @@ then
         celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
     fi
 
+elif [ "$SERVICE_NAME" = "mcp" ]
+then
+    # Remote MCP server (streamable-http). Fails closed if MCP_AUTH_TOKEN is unset.
+    python3.11 -m project.mcp_server
+
 else
     echo "Unknown SERVICE_NAME: $SERVICE_NAME"
     exit 1

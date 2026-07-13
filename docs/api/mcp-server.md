@@ -26,32 +26,58 @@ Python entry point (run from `services/server/`):
 python -m project.mcp_server
 ```
 
-The process calls `create_app()` for config/DB/cache wiring — no HTTP server is
-started. Logs go to stderr so stdout stays clean for MCP protocol traffic; the
-runtime force-disables `SQLALCHEMY_ECHO` for the same reason (see
+The process calls `create_app()` for config/DB/cache wiring. Logs go to stderr
+so stdout stays clean for stdio protocol traffic; the runtime force-disables
+`SQLALCHEMY_ECHO` for the same reason (see
 `.claude/bugs/mcp-stdio-sqlalchemy-echo.md`).
 
 ## Transports
 
-Transport is **stdio only** in v1. The server is designed to be launched by the
-MCP client as a subprocess and communicates over stdin/stdout.
+Transport is selected with `MCP_TRANSPORT`.
 
-Because the backend runs in Docker (`./build_debug.sh up`) and the host usually
-lacks the native DB deps (`pyodbc`/unixodbc), the recommended way to run it is
-**inside the backend container**, which already has the deps, `env/.env.dev`,
-and network access to `mssql`/`redis`/`minio`:
+| Transport | `MCP_TRANSPORT` | Use case |
+|-----------|-----------------|----------|
+| stdio | `stdio` (default, or unset) | Local desktop/CLI assistant; the client spawns the process as a subprocess |
+| Streamable HTTP | `streamable-http` | A **remote** networked service that clients reach by URL (e.g. the New Model "Auto" mode, or the Claude API MCP connector) |
+
+### stdio
+
+Launched by the MCP client as a subprocess over stdin/stdout. Because the
+backend runs in Docker (`./build_debug.sh up`) and the host usually lacks the
+native DB deps (`pyodbc`/unixodbc), run it **inside the backend container**,
+which already has the deps, `env/.env.dev`, and DB/Redis/MinIO network access:
 
 ```bash
 docker compose -f docker-compose.debug.yml exec -T backend python3 -m project.mcp_server
 ```
 
-To run on the host instead, install unixodbc + msodbcsql18, `pip install -r
-services/server/requirements-mcp.txt`, and provide the runtime settings below.
+### Streamable HTTP (remote)
+
+A long-lived HTTP service (stateless JSON). The debug stack runs it as the
+`mcp` compose service on port `8090`, path `/mcp`. Every request must carry
+`Authorization: Bearer <MCP_AUTH_TOKEN>`; an unauthenticated `GET /healthz` is
+provided for liveness probes. See **Security** below — the server has no
+per-user auth, so the token + TLS + network controls are the boundary.
+
+```bash
+# Bring it up (debug)
+docker compose -f docker-compose.debug.yml up -d mcp
+
+# Health (no auth)
+curl http://localhost:8090/healthz            # -> ok
+
+# Missing/invalid token -> 401
+curl -X POST http://localhost:8090/mcp        # -> 401
+```
+
+The server **fails closed**: with `MCP_TRANSPORT=streamable-http` and no
+`MCP_AUTH_TOKEN`, it refuses to start.
 
 ## Registration (Claude Code / Desktop)
 
-Copy `.mcp.json.example` (repo root) to `.mcp.json` (gitignored). The container
-form needs no extra env — the container already has it — except an identity:
+Copy `.mcp.json.example` (repo root) to `.mcp.json` (gitignored).
+
+**stdio (local)** — container form needs no extra env except an identity:
 
 ```json
 {
@@ -63,6 +89,20 @@ form needs no extra env — the container already has it — except an identity:
         "-e", "MCP_IDENTITY=admin",
         "backend", "python3", "-m", "project.mcp_server"
       ]
+    }
+  }
+}
+```
+
+**Streamable HTTP (remote)** — clients that connect by URL send the bearer
+token as a header:
+
+```json
+{
+  "mcpServers": {
+    "crest": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
     }
   }
 }
@@ -81,10 +121,42 @@ selected by `CONFIG_NAME`. It needs the same environment as the API process.
 | `APP_DB_SERVER` / `APP_DB_*` | env | MSSQL connection (pyodbc + ODBC Driver 18) |
 | `REDIS_HOST` / `CELERY_BROKER_URL` | env | Redis for Celery dispatch |
 | `MINIO_ENDPOINT` / `MINIO_*` | env | MinIO for artifact/dataset reads |
-| `APP_DB_ECHO` | `false` | Keep off — echo writes to stdout and corrupts the JSON-RPC stream |
+| `APP_DB_ECHO` | `false` | Keep off — echo writes to stdout and corrupts the stdio JSON-RPC stream |
+
+Streamable-http adds:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
+| `MCP_AUTH_TOKEN` | — | **Required** for streamable-http (fails closed). Bearer secret shared with clients |
+| `MCP_HOST` / `MCP_PORT` | `0.0.0.0` / `8090` | Bind address |
+| `MCP_STREAMABLE_PATH` | `/mcp` | HTTP path |
+| `MCP_ALLOWED_HOSTS` | — | Comma-separated public hostname(s) for DNS-rebinding protection (SDK returns `421` for any other `Host`) |
+| `MCP_ALLOWED_ORIGINS` | = `MCP_ALLOWED_HOSTS` | Comma-separated allowed origins |
+| `MCP_DISABLE_DNS_REBINDING_PROTECTION` | `false` | Set `true` only when a trusted ingress already validates `Host` |
 
 Celery + Redis must be running for a launched run to progress past `queued`;
 the MCP server only enqueues.
+
+## Security
+
+The MCP server has **no per-user authentication or RBAC** — it runs as a single
+service identity (`MCP_IDENTITY`) and every tool is reachable by any caller that
+gets in. Over stdio, "getting in" means being able to spawn the process (e.g.
+`docker compose exec`). Over streamable-http, the controls are:
+
+- **Bearer token** (`MCP_AUTH_TOKEN`) — the app-level trust boundary. Anyone
+  holding it can launch and read everything. Rotate/revoke out-of-band; supply
+  it from a secret, never commit it. The server refuses to start without it.
+- **TLS + rate limiting at the ingress** — terminate TLS and rate-limit in
+  nginx/your load balancer in front of the server; do not expose the raw port
+  publicly.
+- **DNS-rebinding protection** — on by default; set `MCP_ALLOWED_HOSTS` to your
+  public hostname(s) in production. Disable it only when the ingress validates
+  `Host`.
+
+Per-user identity + RBAC is a possible future enhancement; today the token is
+the boundary.
 
 ## Common Response Rules
 
