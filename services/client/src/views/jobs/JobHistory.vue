@@ -395,7 +395,6 @@ async function deleteJob(j) {
         dataKey="key"
         :rowClass="(row) => ({
           'jh-row': true,
-          'jh-row--workflow': row.type === 'workflow',
           'jh-row--selected': isSelected(row.key),
         })"
         @row-click="clickRow"
@@ -603,8 +602,8 @@ async function deleteJob(j) {
 .cell-truncate { display: inline-block; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 .progress-row { display: flex; align-items: center; gap: 8px; }
-.progress-track { flex: 1; min-width: 60px; height: 5px; background: var(--surface-border-row); border-radius: 1px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--yellow); }
+.progress-track { flex: 1; min-width: 60px; height: 6px; background: var(--surface-border-row); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--yellow); border-radius: 3px; }
 /* Indeterminate "deleting" bar — a stripe sliding across the track. */
 .progress-fill--deleting {
   width: 40%;
@@ -650,7 +649,6 @@ async function deleteJob(j) {
 /* Row variants — target the <tr> BaseTable renders (out of this component's
    scoped reach). Override BaseTable's base row background/hover. */
 .ey-table.p-datatable .p-datatable-tbody > tr.jh-row { cursor: pointer; }
-.ey-table.p-datatable .p-datatable-tbody > tr.jh-row--workflow { background: var(--surface-inset); }
 .ey-table.p-datatable .p-datatable-tbody > tr.jh-row--selected,
 .ey-table.p-datatable .p-datatable-tbody > tr.jh-row--selected:hover {
   background: color-mix(in srgb, var(--yellow) 8%, transparent);
