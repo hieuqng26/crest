@@ -5,21 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "env": {"PYTHONPATH": "${workspaceRoot}\\services\\server"},
+            "env": {"PYTHONPATH": "${workspaceRoot}/services/server"},
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             // "module": "test.${fileBasenameNoExtension}",
             "console": "integratedTerminal",
-            "cwd":"${workspaceRoot}\\services\\server"
+            "cwd":"${workspaceRoot}/services/server"
         },
         {
             "type": "msedge",
             "request": "launch",
             "name": "Debug Vue in Edge",
             "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}\\services\\client"
+            "webRoot": "${workspaceFolder}/services/client"
         },
         {
             "name": "Python: Backend",
@@ -50,18 +50,6 @@
                     "remoteRoot": "/usr/src/app"
                 }
             ]
-        },
-        {
-            "env": {"PYTHONPATH": "${workspaceRoot}\\server"},
-            "name": "Python Profiler: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "cProfile",
-            "args": [
-                "-o", "/temp/tmp.prof", "${file}"
-            ],
-            "cwd":"${workspaceRoot}\\server",
-            "postDebugTask": "Display SnakeViz profiler result",
-        },
+        }
     ]
 }
