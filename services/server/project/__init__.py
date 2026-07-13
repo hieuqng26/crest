@@ -121,6 +121,7 @@ def create_app():
         CreditRiskRunLog,  # noqa: F401
         PdRating,  # noqa: F401
     )
+    from project.db_models.export_models import ExportJob  # noqa: F401
     from project.db_models.forecast_models import (  # noqa: F401
         ForecastRun,
         ForecastRunResult,

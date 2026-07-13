@@ -29,6 +29,7 @@ from project.db_models.credit_models import (
     CreditRiskRun,
     CreditRiskRunLog,
 )
+from project.db_models.export_models import ExportJob
 from project.db_models.forecast_models import (
     ForecastRun,
     ForecastRunLog,
@@ -47,6 +48,9 @@ def purge_workflow(wf_id: int) -> None:
 
     Must run inside a Flask app context (the Celery task provides one).
     """
+    wf = WorkflowRun.query.filter_by(id=wf_id).first()
+    wf_run_uuid = wf.run_id if wf else None
+
     cals = CalibrationRun.query.filter_by(workflow_run_id=wf_id).all()
     fcs = ForecastRun.query.filter_by(workflow_run_id=wf_id).all()
     crs = CreditRiskRun.query.filter_by(workflow_run_id=wf_id).all()
@@ -100,6 +104,9 @@ def purge_workflow(wf_id: int) -> None:
             CalibrationRunSegment, CalibrationRunSegment.calibration_run_id, cal_ids
         )
 
+        # Async download exports for this workflow (independent of the runs above).
+        _bulk_delete(ExportJob, ExportJob.workflow_run_id, [wf_id])
+
         # --- Level 2: the run tables themselves ---
         _bulk_delete(CreditRiskRun, CreditRiskRun.id, cr_ids)
         _bulk_delete(ForecastRun, ForecastRun.id, fr_ids)
@@ -113,6 +120,10 @@ def purge_workflow(wf_id: int) -> None:
     # so removing that prefix per calibration run covers everything.
     for run_uuid in cal_uuids:
         storage.remove_prefix(f"artifacts/{run_uuid}/")
+
+    # Generated download-export files for this workflow.
+    if wf_run_uuid:
+        storage.remove_prefix(f"exports/{wf_run_uuid}/")
 
     logger.info(
         "Purged workflow %s: %d calibration, %d forecast, %d credit-risk runs",

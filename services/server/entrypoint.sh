@@ -59,6 +59,17 @@ then
         celery -A project.workers.tasks.celery_app worker --loglevel=info -Q default
     fi
 
+elif [ "$SERVICE_NAME" = "export-worker" ]
+then
+    # Dedicated worker for the `exports` queue (async csv/xlsx file builds) so a
+    # heavy export never blocks the calibration/forecast/credit pipeline.
+    celery -A project.workers.tasks.celery_app worker --loglevel=info -Q exports
+
+elif [ "$SERVICE_NAME" = "beat" ]
+then
+    # Scheduler: drives the hourly purge of expired export files/rows.
+    celery -A project.workers.tasks.celery_app beat --loglevel=info
+
 elif [ "$SERVICE_NAME" = "mcp" ]
 then
     # Remote MCP server (streamable-http). Fails closed if MCP_AUTH_TOKEN is unset.

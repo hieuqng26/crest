@@ -33,6 +33,10 @@ from project.workers.credit import (
     backfill_analysis_series,
     run_credit_analysis,
 )
+from project.workers.export import (
+    export_dataset,
+    purge_expired_exports,
+)
 from project.workers.forecast import (
     recompute_forecast_run_segment,
     run_forecast,
@@ -55,7 +59,9 @@ __all__ = [
     "backfill_analysis_series",
     "celery_app",
     "delete_workflow",
+    "export_dataset",
     "format_failure",
+    "purge_expired_exports",
     "recompute_forecast_run_segment",
     "recompute_segment_downstream",
     "run_calibration",

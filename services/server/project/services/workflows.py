@@ -691,3 +691,66 @@ def get_workflow_logs(
     )
     rows = page_df.where(pd.notnull(page_df), None).to_dict(orient="records")
     return {"rows": rows, "total": total, "columns": list(df.columns)}
+
+
+# ── Combined forecast results ───────────────────────────────────────────────────
+# Every target's forecast run unioned into one table with derived
+# target/sector/segment columns, so the Forecast tab shows all targets at once and
+# the workflow export builds a single forecast-results file. Column order below.
+
+FORECAST_COL_ORDER = ["target", "sector", "segment", "date", "predicted"]
+
+
+def _seg_part(segment_key, idx):
+    """sector (idx 0) or split value (idx 1) from a "{sector}__{split}" key."""
+    if not isinstance(segment_key, str) or "__" not in segment_key:
+        return segment_key if idx == 0 and isinstance(segment_key, str) else None
+    return segment_key.split("__", 1)[idx]
+
+
+def combined_forecast_df(wf: WorkflowRun) -> pd.DataFrame:
+    """Union every target's forecast-run results into one frame with derived
+    ``target``/``sector``/``segment`` columns. Empty frame with the canonical
+    columns when the workflow has no forecast rows yet."""
+    from project.services.forecast_runs import results_df as _forecast_results_df
+
+    fcs = ForecastRun.query.filter_by(workflow_run_id=wf.id).all()
+    cal_ids = {fr.calibration_run_id for fr in fcs}
+    cal_target = (
+        {
+            c.id: c.target_col
+            for c in CalibrationRun.query.filter(CalibrationRun.id.in_(cal_ids)).all()
+        }
+        if cal_ids
+        else {}
+    )
+
+    frames = []
+    for fr in fcs:
+        df = _forecast_results_df(fr)
+        if df.empty:
+            continue
+        df = df.copy()
+        df.insert(0, "target", cal_target.get(fr.calibration_run_id))
+        if "segment_key" in df.columns:
+            sk = df["segment_key"].astype("object")
+            derived_sector = sk.map(lambda v: _seg_part(v, 0))
+            df["segment"] = sk.map(lambda v: _seg_part(v, 1))
+            df["sector"] = (
+                derived_sector.where(sk.notna(), df.get("sector"))
+                if "sector" in df.columns
+                else derived_sector
+            )
+            df = df.drop(columns=["segment_key"])
+        else:
+            if "sector" not in df.columns:
+                df["sector"] = None
+            df["segment"] = None
+        frames.append(df)
+
+    if not frames:
+        return pd.DataFrame(columns=FORECAST_COL_ORDER)
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    front = [c for c in FORECAST_COL_ORDER if c in combined.columns]
+    rest = [c for c in combined.columns if c not in front]
+    return combined[front + rest]
