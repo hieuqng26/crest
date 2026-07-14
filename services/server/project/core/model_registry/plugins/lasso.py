@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 from sklearn.linear_model import Lasso as _Lasso
 
 from project.core.model_registry.base import BaseMLModel
-from project.core.model_registry.diagnostics import regression_diagnostics
+from project.core.model_registry.diagnostics import (
+    coefficient_inference,
+    regression_diagnostics,
+)
 
 
 class LassoParams(BaseModel):
@@ -19,6 +22,7 @@ class LassoPlugin(BaseMLModel):
 
     def __init__(self):
         self._model: _Lasso | None = None
+        self._inference = None
 
     def fit(self, X, y, params: LassoParams) -> None:
         self._model = _Lasso(
@@ -27,6 +31,9 @@ class LassoPlugin(BaseMLModel):
             fit_intercept=params.fit_intercept,
         )
         self._model.fit(X, y)
+        self._inference = coefficient_inference(
+            X, y, self._model.coef_, self._model.intercept_, exact=False
+        )
 
     def predict(self, X) -> np.ndarray:
         return self._model.predict(X)
@@ -34,7 +41,7 @@ class LassoPlugin(BaseMLModel):
     def diagnostics(self, X, y) -> dict:
         y_pred = self.predict(X)
         diag = regression_diagnostics(
-            y, y_pred, self._model.coef_, self._model.intercept_
+            y, y_pred, self._model.coef_, self._model.intercept_, self._inference
         )
         diag["n_nonzero_coef"] = int(np.sum(self._model.coef_ != 0))
         return diag

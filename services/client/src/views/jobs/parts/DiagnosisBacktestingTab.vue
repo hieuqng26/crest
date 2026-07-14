@@ -6,10 +6,12 @@ import calibrationsAPI from '@/api/calibrationsAPI'
 import { cssVar } from '@/utils/chartTheme'
 import LinePlot from '@/components/charts/LinePlot.vue'
 import DistPlot from '@/components/charts/DistPlot.vue'
+import QqPlot from '@/components/charts/QqPlot.vue'
 import CommonDataTable from '@/components/Table/CommonDataTable.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import RetrainingBanner from '@/components/ui/RetrainingBanner.vue'
 import FilterField from '@/components/ui/FilterField.vue'
+import CoefficientTable from './CoefficientTable.vue'
 import { probeColumns } from './resultColumns.js'
 
 const props = defineProps({
@@ -154,8 +156,23 @@ const metricCards = computed(() => {
     .map((k) => ({ label: k.replace(/_/g, ' ').toUpperCase(), value: d[k].toFixed(4) }))
 })
 
-// Full residuals array — binning/KDE now happen client-side inside DistPlot.
+// Full residuals array — binning/KDE now happen client-side inside DistPlot,
+// and the QQ plot derives its theoretical quantiles from the same array.
 const residualValues = computed(() => diag.value?.residuals ?? [])
+
+// Coefficient inference + fit statistics (present on single-run / single-segment
+// diagnostics across regression, GLM and ARIMA; the aggregate weighted-mean view
+// has none). The family is inferred from which stats bundle the backend emitted.
+const coefTable = computed(() => diag.value?.coef_table ?? [])
+const modelStats = computed(() => {
+  const d = diag.value
+  if (!d) return null
+  if (d.regression_stats) return { family: 'regression', stats: d.regression_stats }
+  if (d.glm_stats) return { family: 'glm', stats: d.glm_stats }
+  if (d.arima_stats) return { family: 'arima', stats: d.arima_stats }
+  return null
+})
+const hasCoefPanel = computed(() => coefTable.value.length > 0 || modelStats.value != null)
 
 // ── Backtest chart (actual vs predicted line, single run/segment only) ──────
 const backtestPairs = computed(() => {
@@ -241,6 +258,11 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
           />
         </div>
 
+        <div v-if="isRegression && residualValues.length > 1" class="panel chart-card">
+          <div class="chart-title">Normal Q–Q</div>
+          <QqPlot :values="residualValues" :height="280" png-filename="residual-qq-plot" />
+        </div>
+
         <div v-if="canShowSinglePredictions && backtestPairs.length > 1" class="panel chart-card">
           <div class="chart-title">Backtesting — Actual vs Predicted</div>
           <LinePlot
@@ -253,6 +275,14 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
         <div v-else-if="!canShowSinglePredictions" class="panel">
           <EmptyState icon="pi pi-th-large">Select a specific segment above to view its backtesting chart and predictions.</EmptyState>
         </div>
+      </div>
+
+      <div v-if="hasCoefPanel" class="panel coef-panel">
+        <CoefficientTable
+          :coef-table="coefTable"
+          :stats="modelStats?.stats ?? null"
+          :family="modelStats?.family ?? 'regression'"
+        />
       </div>
 
       <div v-if="canShowSinglePredictions" class="panel results-panel">
@@ -299,6 +329,7 @@ watch([predictionsKey, canShowSinglePredictions], async () => {
 
 .chart-card { padding: 18px 20px; }
 .chart-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
+.coef-panel { padding: 18px 20px; }
 .results-panel { overflow: hidden; }
 
 .diagnostics-link { display: inline-block; font-size: 12.5px; font-weight: 600; color: var(--text-color-secondary); cursor: pointer; border-bottom: 2px solid var(--yellow); padding-bottom: 1px; width: fit-content; }

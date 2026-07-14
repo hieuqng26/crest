@@ -280,11 +280,15 @@ def _fit_segment(
     plugin.fit(X_train, y_train, params_obj)
 
     diag = plugin.diagnostics(X_val, y_val)
-    for key in ("feature_importance", "coef_table"):
-        if key in diag and feature_cols:
-            for i, entry in enumerate(diag[key]):
-                if i < len(feature_cols):
-                    entry["feature"] = feature_cols[i]
+    # Patch placeholder feature names (f0, f1…) with actual column names. Skipped
+    # for timeseries: ARIMA's coef_table rows are lag terms (ar.L1, ma.L1), not
+    # dataset columns, and already carry their own descriptive names.
+    if model_family != "timeseries":
+        for key in ("feature_importance", "coef_table"):
+            if key in diag and feature_cols:
+                for i, entry in enumerate(diag[key]):
+                    if i < len(feature_cols):
+                        entry["feature"] = feature_cols[i]
 
     # Per-observation validation data for backtesting UI (mirrors non-segmented path)
     def _cv(v):
@@ -624,12 +628,15 @@ def run_calibration(self, run_id: str):
 
             # --- 6. Diagnostics ---
             diag = plugin.diagnostics(X_val, y_val)
-            # Patch placeholder feature names (f0, f1…) with actual column names
-            for key in ("feature_importance", "coef_table"):
-                if key in diag and feature_cols:
-                    for i, entry in enumerate(diag[key]):
-                        if i < len(feature_cols):
-                            entry["feature"] = feature_cols[i]
+            # Patch placeholder feature names (f0, f1…) with actual column names.
+            # Skipped for timeseries: ARIMA's coef_table rows are lag terms
+            # (ar.L1, ma.L1), not dataset columns, and self-describe already.
+            if model_family != "timeseries":
+                for key in ("feature_importance", "coef_table"):
+                    if key in diag and feature_cols:
+                        for i, entry in enumerate(diag[key]):
+                            if i < len(feature_cols):
+                                entry["feature"] = feature_cols[i]
 
             y_train_pred = plugin.predict(X_train)
             y_val_pred = plugin.predict(X_val)

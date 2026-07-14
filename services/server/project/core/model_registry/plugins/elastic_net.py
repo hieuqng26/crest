@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 from sklearn.linear_model import ElasticNet as _ElasticNet
 
 from project.core.model_registry.base import BaseMLModel
-from project.core.model_registry.diagnostics import regression_diagnostics
+from project.core.model_registry.diagnostics import (
+    coefficient_inference,
+    regression_diagnostics,
+)
 
 
 class ElasticNetParams(BaseModel):
@@ -27,6 +30,7 @@ class ElasticNetPlugin(BaseMLModel):
 
     def __init__(self):
         self._model: _ElasticNet | None = None
+        self._inference = None
 
     def fit(self, X, y, params: ElasticNetParams) -> None:
         self._model = _ElasticNet(
@@ -36,6 +40,9 @@ class ElasticNetPlugin(BaseMLModel):
             fit_intercept=params.fit_intercept,
         )
         self._model.fit(X, y)
+        self._inference = coefficient_inference(
+            X, y, self._model.coef_, self._model.intercept_, exact=False
+        )
 
     def predict(self, X) -> np.ndarray:
         return self._model.predict(X)
@@ -43,7 +50,7 @@ class ElasticNetPlugin(BaseMLModel):
     def diagnostics(self, X, y) -> dict:
         y_pred = self.predict(X)
         diag = regression_diagnostics(
-            y, y_pred, self._model.coef_, self._model.intercept_
+            y, y_pred, self._model.coef_, self._model.intercept_, self._inference
         )
         diag["n_nonzero_coef"] = int(np.sum(self._model.coef_ != 0))
         diag["l1_ratio"] = float(self._model.l1_ratio)
