@@ -1,6 +1,6 @@
 # TODO
-- [ ] Redesign Job History table
-- [ ] Backtesting plots: interactive, add coefs (with p-value and statistical tests), qq plots
+- [x] Redesign Job History table
+- [x] Backtesting plots: interactive, add coefs (with p-value and statistical tests), qq plots
 - [ ] Stepper for workflow progress tracking, including step after credit analysis is done
 - [ ] Add more audit logs
 - [ ] Test and verify all models. If the error occurs during job run, we should have clear message of what goes wrong (input data is invalid, model is not appropriate, etc.)
