@@ -9,6 +9,7 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session, cache
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import require_perm
 from project.core import dataset_io, storage, table_query
 from project.db_models.calibration_models import Dataset
@@ -40,6 +41,16 @@ def list_datasets():
 
 @datasets.post("/upload")
 @require_perm("dataset:write")
+@audit_action(
+    "Upload",
+    "datasets",
+    "dataset",
+    database_involved="datasets",
+    describe=lambda kw, body: (
+        f"User [$USER] uploaded dataset "
+        f"{(body or {}).get('name', '')} (id {(body or {}).get('id', '')})"
+    ),
+)
 def upload_dataset():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -94,6 +105,16 @@ def upload_dataset():
 
 @datasets.post("/query")
 @require_perm("dataset:write")
+@audit_action(
+    "Query",
+    "datasets",
+    "dataset",
+    database_involved="datasets",
+    describe=lambda kw, body: (
+        f"User [$USER] created dataset from live query "
+        f"{(body or {}).get('name', '')} (id {(body or {}).get('id', '')})"
+    ),
+)
 def query_dataset():
     body = request.get_json(silent=True) or {}
     sql = body.get("sql", "").strip()
@@ -383,6 +404,13 @@ def get_dataset_correlations(dataset_id):
 
 @datasets.delete("/<int:dataset_id>")
 @require_perm("dataset:write")
+@audit_action(
+    "Delete",
+    "datasets",
+    "dataset",
+    database_involved="datasets",
+    describe=lambda kw, body: f"User [$USER] deleted dataset {kw.get('dataset_id')}",
+)
 def delete_dataset(dataset_id):
     ds = Dataset.query.filter_by(id=dataset_id).first()
     if not ds or ds.status == "deleted":
@@ -395,6 +423,15 @@ def delete_dataset(dataset_id):
 
 @datasets.post("/bulk-delete")
 @require_perm("dataset:write")
+@audit_action(
+    "Delete",
+    "datasets",
+    "dataset",
+    database_involved="datasets",
+    describe=lambda kw, body: (
+        f"User [$USER] bulk-deleted {(body or {}).get('deleted', 0)} dataset(s)"
+    ),
+)
 def bulk_delete_datasets():
     ids = (request.get_json(silent=True) or {}).get("ids", [])
     if not ids:

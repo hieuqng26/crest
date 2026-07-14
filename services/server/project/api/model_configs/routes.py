@@ -5,6 +5,7 @@ from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError
 
 from project import app_session
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import require_perm
 from project.core.model_registry import REGISTRY, get_model_class, registry_metadata
 from project.db_models.calibration_models import (
@@ -62,6 +63,16 @@ def list_configs():
 
 @model_configs.post("/")
 @require_perm("model_config:write")
+@audit_action(
+    "Add",
+    "models",
+    "model_config",
+    database_involved="model_configs",
+    describe=lambda kw, body: (
+        f"User [$USER] created model config "
+        f"{(body or {}).get('name', '')} (id {(body or {}).get('id', '')})"
+    ),
+)
 def create_config():
     body = request.get_json(silent=True) or {}
     required = ("name", "algorithm")
@@ -124,6 +135,15 @@ def get_config(config_id):
 
 @model_configs.patch("/<int:config_id>")
 @require_perm("model_config:write")
+@audit_action(
+    "Update",
+    "models",
+    "model_config",
+    database_involved="model_configs",
+    describe=lambda kw, body: (
+        f"User [$USER] updated model config {kw.get('config_id')}"
+    ),
+)
 def update_config(config_id):
     body = request.get_json(silent=True) or {}
 
@@ -202,6 +222,15 @@ def get_refs(config_id: int):
 
 @model_configs.delete("/<int:config_id>")
 @require_perm("model_config:write")
+@audit_action(
+    "Delete",
+    "models",
+    "model_config",
+    database_involved="model_configs",
+    describe=lambda kw, body: (
+        f"User [$USER] deleted model config {kw.get('config_id')}"
+    ),
+)
 def delete_config(config_id):
     cfg = ModelConfig.query.filter_by(id=config_id).first()
     if not cfg:
@@ -221,6 +250,15 @@ def delete_config(config_id):
 
 @model_configs.post("/bulk-delete")
 @require_perm("model_config:write")
+@audit_action(
+    "Delete",
+    "models",
+    "model_config",
+    database_involved="model_configs",
+    describe=lambda kw, body: (
+        f"User [$USER] bulk-deleted {(body or {}).get('deleted', 0)} model config(s)"
+    ),
+)
 def bulk_delete_configs():
     ids = (request.get_json(silent=True) or {}).get("ids", [])
     if not ids:

@@ -4,6 +4,7 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
@@ -34,6 +35,15 @@ def list_runs():
 
 @forecast_runs.post("")
 @require_perm("forecast:execute")
+@audit_action(
+    "Launch",
+    "models",
+    "forecast",
+    database_involved="forecast_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] launched forecast run {(body or {}).get('run_id', '')}"
+    ),
+)
 def create_run():
     payload = CreateForecastRun.model_validate(request.get_json(silent=True) or {})
     fr_dict = forecast_run_service.create_run(payload, get_jwt_identity())
@@ -82,6 +92,13 @@ def _cr_refs_for(fr_id: int):
 
 @forecast_runs.delete("/<run_id>")
 @require_perm("forecast:write")
+@audit_action(
+    "Delete",
+    "models",
+    "forecast",
+    database_involved="forecast_runs",
+    describe=lambda kw, body: f"User [$USER] deleted forecast run {kw.get('run_id')}",
+)
 def delete_run(run_id: str):
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
@@ -110,6 +127,15 @@ def delete_run(run_id: str):
 
 @forecast_runs.post("/bulk-delete")
 @require_perm("forecast:write")
+@audit_action(
+    "Delete",
+    "models",
+    "forecast",
+    database_involved="forecast_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] bulk-deleted {(body or {}).get('deleted', 0)} forecast run(s)"
+    ),
+)
 def bulk_delete_runs():
 
     run_ids = (request.get_json(silent=True) or {}).get("run_ids", [])
@@ -143,6 +169,13 @@ def bulk_delete_runs():
 
 @forecast_runs.post("/<run_id>/cancel")
 @require_perm("forecast:execute")
+@audit_action(
+    "Cancel",
+    "models",
+    "forecast",
+    database_involved="forecast_runs",
+    describe=lambda kw, body: f"User [$USER] cancelled forecast run {kw.get('run_id')}",
+)
 def cancel_run(run_id: str):
 
     fr = ForecastRun.query.filter_by(run_id=run_id).first()
@@ -182,6 +215,13 @@ def get_logs(run_id: str):
 
 @forecast_runs.post("/<run_id>/rerun")
 @require_perm("forecast:execute")
+@audit_action(
+    "Rerun",
+    "models",
+    "forecast",
+    database_involved="forecast_runs",
+    describe=lambda kw, body: f"User [$USER] re-ran forecast run {kw.get('run_id')}",
+)
 def rerun_run(run_id: str):
     from project.workers.tasks import run_forecast
 

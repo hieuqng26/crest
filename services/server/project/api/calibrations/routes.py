@@ -6,6 +6,7 @@ from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session, db
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
@@ -47,6 +48,15 @@ def list_runs():
 
 @calibrations.post("/")
 @require_perm("calibration:execute")
+@audit_action(
+    "Launch",
+    "models",
+    "calibration",
+    database_involved="calibration_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] launched calibration run {(body or {}).get('run_id', '')}"
+    ),
+)
 def create_run():
     payload = CreateCalibrationRun.model_validate(request.get_json(silent=True) or {})
     result = calibration_service.create_run(payload, get_jwt_identity())
@@ -138,6 +148,16 @@ def get_segment_sectors(run_id):
 
 @calibrations.post("/<run_id>/segments/<segment_key>/recalibrate")
 @require_perm("calibration:execute")
+@audit_action(
+    "Recalibrate",
+    "models",
+    "calibration",
+    database_involved="calibration_run_segments",
+    describe=lambda kw, body: (
+        f"User [$USER] recalibrated segment {kw.get('segment_key')} "
+        f"of calibration run {kw.get('run_id')}"
+    ),
+)
 def recalibrate_segment(run_id, segment_key):
     """Re-fit a single segment of a segmented run with an optional configuration,
     feature-column and/or hyperparameter override. Only this segment is retrained
@@ -306,6 +326,15 @@ def get_segment_backtest_predictions_distinct(run_id, segment_key):
 
 @calibrations.post("/<run_id>/cancel")
 @require_perm("calibration:write")
+@audit_action(
+    "Cancel",
+    "models",
+    "calibration",
+    database_involved="calibration_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] cancelled calibration run {kw.get('run_id')}"
+    ),
+)
 def cancel_run(run_id):
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()
@@ -375,6 +404,15 @@ def _check_forecast_references(cal_run_id: int):
 
 @calibrations.delete("/<run_id>")
 @require_perm("calibration:write")
+@audit_action(
+    "Delete",
+    "models",
+    "calibration",
+    database_involved="calibration_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] deleted calibration run {kw.get('run_id')}"
+    ),
+)
 def delete_run(run_id):
     r = CalibrationRun.query.filter_by(run_id=run_id).first()
     if not r:
@@ -392,6 +430,15 @@ def delete_run(run_id):
 
 @calibrations.post("/bulk-delete")
 @require_perm("calibration:write")
+@audit_action(
+    "Delete",
+    "models",
+    "calibration",
+    database_involved="calibration_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] bulk-deleted {(body or {}).get('deleted', 0)} calibration run(s)"
+    ),
+)
 def bulk_delete_runs():
     run_ids = (request.get_json(silent=True) or {}).get("run_ids", [])
     if not run_ids:
@@ -423,6 +470,13 @@ def bulk_delete_runs():
 
 @calibrations.post("/<run_id>/recalibrate")
 @require_perm("calibration:execute")
+@audit_action(
+    "Rerun",
+    "models",
+    "calibration",
+    database_involved="calibration_runs",
+    describe=lambda kw, body: f"User [$USER] re-ran calibration run {kw.get('run_id')}",
+)
 def recalibrate(run_id):
     with app_session() as s:
         r = CalibrationRun.query.filter_by(run_id=run_id).first()
