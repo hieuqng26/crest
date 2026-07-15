@@ -110,6 +110,9 @@ matrix: `.claude/docs/architecture.md`.
 - [conventions.md](.claude/docs/conventions.md) — Python & Vue code style / formatting.
 
 **`.claude/skills/`** — reusable procedures:
+- [debug-stack](.claude/skills/debug-stack/SKILL.md) — verify a backend change on a
+  live stack (MSSQL/Redis/MinIO): build the worktree image and attach it to the
+  running debug stack, or bring up an isolated parallel stack.
 - [frontend-design](.claude/skills/frontend-design/SKILL.md) — aesthetic direction,
   typography, and distinctive UI/visual design choices.
 - [mcp-builder](.claude/skills/mcp-builder/SKILL.md) — building MCP servers (Python

@@ -7,6 +7,7 @@ from flask import current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from project import DATA_STORE, app_session, cache
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import require_perm
 from project.api.utils import paginate_logs
 from project.core import table_query
@@ -243,6 +244,15 @@ def list_runs():
 
 @credit_risk.post("/runs")
 @require_perm("credit_risk:execute")
+@audit_action(
+    "Launch",
+    "analysis",
+    "credit_risk",
+    database_involved="credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] launched credit risk analysis run {(body or {}).get('run_id', '')}"
+    ),
+)
 def create_run():
     payload = CreateCreditRiskRun.model_validate(request.get_json(silent=True) or {})
     cr_dict = credit_risk_service.create_run(payload, get_jwt_identity())
@@ -257,6 +267,15 @@ def get_active_run():
 
 @credit_risk.put("/runs/<cr_run_id>/active")
 @require_perm("credit_risk:execute")
+@audit_action(
+    "Activate",
+    "analysis",
+    "credit_risk",
+    database_involved="credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] set credit risk run {kw.get('cr_run_id')} as active"
+    ),
+)
 def set_active_run(cr_run_id: str):
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
@@ -278,6 +297,15 @@ def set_active_run(cr_run_id: str):
 
 @credit_risk.post("/runs/<cr_run_id>/rerun")
 @require_perm("credit_risk:execute")
+@audit_action(
+    "Rerun",
+    "analysis",
+    "credit_risk",
+    database_involved="credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] re-ran credit risk analysis run {kw.get('cr_run_id')}"
+    ),
+)
 def rerun_run(cr_run_id: str):
     from project.workers.tasks import run_credit_analysis
 
@@ -305,6 +333,15 @@ def rerun_run(cr_run_id: str):
 
 @credit_risk.post("/runs/<cr_run_id>/cancel")
 @require_perm("credit_risk:execute")
+@audit_action(
+    "Cancel",
+    "analysis",
+    "credit_risk",
+    database_involved="credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] cancelled credit risk analysis run {kw.get('cr_run_id')}"
+    ),
+)
 def cancel_run(cr_run_id: str):
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
@@ -361,6 +398,15 @@ def get_run_results_distinct(cr_run_id: str):
 
 @credit_risk.delete("/runs/<cr_run_id>")
 @require_perm("credit_risk:write")
+@audit_action(
+    "Delete",
+    "analysis",
+    "credit_risk",
+    database_involved="credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] deleted credit risk analysis run {kw.get('cr_run_id')}"
+    ),
+)
 def delete_run(cr_run_id: str):
 
     cr = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()

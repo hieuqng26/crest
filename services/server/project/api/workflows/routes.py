@@ -6,6 +6,7 @@ from flask import jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity
 
 from project import app_session
+from project.api.auditlog.decorators import audit_action
 from project.api.auth.decorators import current_permissions, require_perm
 from project.api.auth.permissions import has_permission
 from project.core import storage, table_query
@@ -137,6 +138,16 @@ def list_exports(run_id):
 
 @workflows.post("/<run_id>/exports")
 @require_perm("calibration:read")
+@audit_action(
+    "Export",
+    "models",
+    "workflow",
+    database_involved="workflow_export_jobs",
+    describe=lambda kw, body: (
+        f"User [$USER] created export job {(body or {}).get('job_id', '')} "
+        f"for workflow {kw.get('run_id')}"
+    ),
+)
 def create_export(run_id):
     body = request.get_json(silent=True) or {}
     output_key = body.get("output")
@@ -164,6 +175,16 @@ def get_export(run_id, job_id):
 
 @workflows.get("/<run_id>/exports/<job_id>/download")
 @require_perm("calibration:read")
+@audit_action(
+    "Download",
+    "models",
+    "workflow",
+    database_involved="workflow_export_jobs",
+    describe=lambda kw, body: (
+        f"User [$USER] downloaded export {kw.get('job_id')} "
+        f"for workflow {kw.get('run_id')}"
+    ),
+)
 def download_export(run_id, job_id):
     job = export_service.get_download_target(run_id, job_id)
     perm = export_service.output_perm(job.output_key)
@@ -181,6 +202,15 @@ def download_export(run_id, job_id):
 
 @workflows.post("/")
 @require_perm("calibration:execute")
+@audit_action(
+    "Launch",
+    "models",
+    "workflow",
+    database_involved="workflow_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] launched workflow {(body or {}).get('run_id', '')}"
+    ),
+)
 def create_workflow():
     perms = current_permissions()
     if not (
@@ -201,6 +231,13 @@ def create_workflow():
 
 @workflows.post("/<run_id>/cancel")
 @require_perm("calibration:write")
+@audit_action(
+    "Cancel",
+    "models",
+    "workflow",
+    database_involved="workflow_runs",
+    describe=lambda kw, body: f"User [$USER] cancelled workflow {kw.get('run_id')}",
+)
 def cancel_workflow(run_id):
     wf = WorkflowRun.query.filter_by(run_id=run_id).first()
     if not wf:
@@ -241,6 +278,13 @@ def cancel_workflow(run_id):
 
 @workflows.post("/<run_id>/rerun")
 @require_perm("calibration:execute")
+@audit_action(
+    "Rerun",
+    "models",
+    "workflow",
+    database_involved="workflow_runs",
+    describe=lambda kw, body: f"User [$USER] re-ran workflow {kw.get('run_id')}",
+)
 def rerun_workflow(run_id):
     perms = current_permissions()
     if not (
@@ -260,6 +304,15 @@ def rerun_workflow(run_id):
 
 @workflows.put("/<run_id>/activate")
 @require_perm("credit_risk:write")
+@audit_action(
+    "Activate",
+    "models",
+    "workflow",
+    database_involved="workflow_runs,credit_risk_runs",
+    describe=lambda kw, body: (
+        f"User [$USER] activated credit risk run of workflow {kw.get('run_id')}"
+    ),
+)
 def activate_workflow(run_id):
     """Set the workflow's credit risk run as the active analysis run,
     deactivating all others. Returns 404 if the workflow has no credit run."""
@@ -285,6 +338,13 @@ def activate_workflow(run_id):
 
 @workflows.delete("/<run_id>")
 @require_perm("calibration:write")
+@audit_action(
+    "Delete",
+    "models",
+    "workflow",
+    database_involved="workflow_runs",
+    describe=lambda kw, body: f"User [$USER] deleted workflow {kw.get('run_id')}",
+)
 def delete_workflow(run_id):
     wf = WorkflowRun.query.filter_by(run_id=run_id).first()
     if not wf:
