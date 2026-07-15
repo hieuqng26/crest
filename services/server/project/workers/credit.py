@@ -19,6 +19,13 @@ from project.logger import get_logger
 
 logger = get_logger(__name__)
 
+# The credit run's 0–100 progress is split into two phases: the per-client KMV+ECL
+# computation runs 0 → _CLIENT_COMPUTE_END, and the "Finalizing" analysis-series
+# materialisation runs _CLIENT_COMPUTE_END → 100. The frontend stepper reads the
+# same boundary to split the "Credit Analysis" vs "Complete" steps, so keep the two
+# in sync (services/client/src/components/ui/WorkflowStepper.vue).
+_CLIENT_COMPUTE_END = 80
+
 
 def _compute_credit_for_clients(
     cr_run_id: str,
@@ -383,13 +390,68 @@ def run_credit_analysis(self, cr_run_id: str):
                 exposure,
                 discount_rate,
                 lifetime_horizon,
+                progress_span=_CLIENT_COMPUTE_END,
             )
 
-            # 6. Mark success
-            summary = f"Completed: {succeeded}/{n_clients} clients succeeded"
+            # 6. Client risk computation done — the KMV+ECL results now exist, but the
+            # run stays "running" through the finalization below so the workflow
+            # doesn't complete (and the stepper stays out of "Complete") until the
+            # analysis views are materialised. Progress sits at _CLIENT_COMPUTE_END.
+            summary = (
+                f"Client risk computation complete: {succeeded}/{n_clients} clients"
+            )
             if failed_clients:
                 summary += f" ({failed_clients} failed)"
-            _cr_log(cr_run_id, summary, progress=100)
+            _cr_log(cr_run_id, summary, progress=_CLIENT_COMPUTE_END)
+
+            # 7. Materialise the Heatmap / Financial Forecast level series so those
+            # pages load from cheap indexed SELECTs instead of recomputing from
+            # MinIO + pandas on every request. Best-effort: a failure here must not
+            # fail the analysis run (the pages fall back to lazy on-demand compute).
+            # Progress runs _CLIENT_COMPUTE_END → 100 across this phase.
+            try:
+                from project.services.credit_risk_analysis import (
+                    analysis_portfolio_df as _analysis_portfolio_df,
+                )
+                from project.services.credit_risk_analysis import (
+                    slot_forecast_runs as _slot_forecast_runs,
+                )
+                from project.core.credit_risk.analysis_series import (
+                    materialize_analysis_series,
+                )
+
+                def _mat_progress(message: str, frac: float):
+                    prog = _CLIENT_COMPUTE_END + round(
+                        frac * (100 - _CLIENT_COMPUTE_END)
+                    )
+                    _cr_log(cr_run_id, message, progress=prog)
+
+                _cr_log(
+                    cr_run_id,
+                    "Finalizing analysis views (heatmap & financial forecast)…",
+                    progress=_CLIENT_COMPUTE_END,
+                )
+                with app_session():
+                    cr_obj = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
+                    portfolio_df = _analysis_portfolio_df(cr_obj)
+                    slots = _slot_forecast_runs(cr_obj)
+                    n_series = materialize_analysis_series(
+                        cr_obj, portfolio_df, slots, on_progress=_mat_progress
+                    )
+                _cr_log(cr_run_id, f"Materialised {n_series} analysis series rows")
+            except Exception as mat_err:
+                logger.error(
+                    f"Analysis-series materialisation failed for {cr_run_id}: {mat_err}",
+                    exc_info=True,
+                )
+                _cr_log(
+                    cr_run_id,
+                    f"Analysis series not materialised: {mat_err}",
+                    level="warn",
+                )
+
+            # 8. Mark success (progress 100) and invalidate cached reads. Done only
+            # after finalization so success ⇒ analysis views are ready.
             with app_session() as s:
                 r = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
                 r.status = "success"
@@ -409,38 +471,6 @@ def run_credit_analysis(self, cr_run_id: str):
                 # persistently broken cache backend is still visible.
                 logger.exception(
                     "Cache invalidation failed for credit run %s", cr_run_id
-                )
-
-            # 7. Materialise the Heatmap / Financial Forecast level series so those
-            # pages load from cheap indexed SELECTs instead of recomputing from
-            # MinIO + pandas on every request. Best-effort: a failure here must not
-            # fail the analysis run (the pages fall back to lazy on-demand compute).
-            try:
-                from project.services.credit_risk_analysis import (
-                    analysis_portfolio_df as _analysis_portfolio_df,
-                )
-                from project.services.credit_risk_analysis import (
-                    slot_forecast_runs as _slot_forecast_runs,
-                )
-                from project.core.credit_risk.analysis_series import (
-                    materialize_analysis_series,
-                )
-
-                with app_session():
-                    cr_obj = CreditRiskRun.query.filter_by(run_id=cr_run_id).first()
-                    portfolio_df = _analysis_portfolio_df(cr_obj)
-                    slots = _slot_forecast_runs(cr_obj)
-                    n_series = materialize_analysis_series(cr_obj, portfolio_df, slots)
-                _cr_log(cr_run_id, f"Materialised {n_series} analysis series rows")
-            except Exception as mat_err:
-                logger.error(
-                    f"Analysis-series materialisation failed for {cr_run_id}: {mat_err}",
-                    exc_info=True,
-                )
-                _cr_log(
-                    cr_run_id,
-                    f"Analysis series not materialised: {mat_err}",
-                    level="warn",
                 )
 
             if workflow_run_id:
@@ -490,7 +520,12 @@ def backfill_analysis_series(cr_run_id: str):
                 return
             portfolio_df = _analysis_portfolio_df(cr)
             slots = _slot_forecast_runs(cr)
-            n_series = materialize_analysis_series(cr, portfolio_df, slots)
+            n_series = materialize_analysis_series(
+                cr,
+                portfolio_df,
+                slots,
+                on_progress=lambda msg, frac: _cr_log(cr_run_id, msg),
+            )
         _cr_log(cr_run_id, f"Backfilled {n_series} analysis series rows")
     except Exception as exc:
         logger.error(

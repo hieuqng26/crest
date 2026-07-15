@@ -12,6 +12,7 @@ import StatusDot from '@/components/ui/StatusDot.vue'
 import StageTag from '@/components/ui/StageTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import RetrainingBanner from '@/components/ui/RetrainingBanner.vue'
+import WorkflowStepper from '@/components/ui/WorkflowStepper.vue'
 import creditRiskAPI from '@/api/creditRiskAPI'
 import { analysisResultColumns } from './parts/resultColumns.js'
 import DiagnosisBacktestingTab from './parts/DiagnosisBacktestingTab.vue'
@@ -265,6 +266,8 @@ const confirmDelete = () => {
         </div>
       </div>
 
+      <WorkflowStepper :wf="wf" class="wf-stepper-block" />
+
       <div v-if="wf.error_message" class="error-banner">{{ wf.error_message }}</div>
 
       <nav class="tab-bar">
@@ -394,6 +397,8 @@ const confirmDelete = () => {
 .type-tag { display: inline-block; margin-left: 4px; padding: 3px 7px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-color-secondary); border: 1px solid var(--surface-border-input); border-radius: 2px; }
 .job-header-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-header { height: 38px; }
+
+.wf-stepper-block { margin-bottom: 22px; }
 
 .error-banner { font-size: 12.5px; color: var(--error-text-color); background: rgba(196, 51, 29, 0.08); border: 1px solid rgba(196, 51, 29, 0.2); border-radius: 2px; padding: 10px 14px; margin-bottom: 16px; }
 
