@@ -73,6 +73,24 @@ curl -X POST http://localhost:8090/mcp        # -> 401
 The server **fails closed**: with `MCP_TRANSPORT=streamable-http` and no
 `MCP_AUTH_TOKEN`, it refuses to start.
 
+### Production
+
+`docker-compose.prod.yml` runs the same `mcp` service from `Dockerfile.prod`
+(which installs the MCP SDK). Unlike debug it is **not** published on a host
+port — the nginx/Caddy ingress terminates TLS and reverse-proxies `/mcp` to
+`mcp:8090` over the internal network. The in-repo reference block is in
+`services/client/nginx.conf`; prod overrides that file with the host-mounted
+`/opt/crest/nginx/nginx.conf`, so **keep that copy in sync**.
+
+Set in `env/.env.prod`:
+
+- `MCP_AUTH_TOKEN` — a strong secret (fails closed without it).
+- `MCP_IDENTITY` — an existing `users.email`.
+- `MCP_ALLOWED_HOSTS` — the public hostname(s) the ingress forwards as `Host`
+  (DNS-rebinding protection stays **on** in prod; a mismatch returns `421`).
+
+Clients then connect to `https://<host>/mcp` with the bearer header.
+
 ## Registration (Claude Code / Desktop)
 
 Copy `.mcp.json.example` (repo root) to `.mcp.json` (gitignored).

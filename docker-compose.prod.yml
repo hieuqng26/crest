@@ -123,6 +123,42 @@ services:
       - app-network
     restart: always
 
+  # Remote MCP server (streamable-http). Not published directly — the nginx/
+  # Caddy ingress terminates TLS and reverse-proxies /mcp to this service on the
+  # app-network. Secrets come from env/.env.prod:
+  #   MCP_AUTH_TOKEN  (required — fails closed without it)
+  #   MCP_IDENTITY    (an existing users.email; triggered_by on launched runs)
+  #   MCP_ALLOWED_HOSTS  (public hostname(s) the ingress forwards as Host)
+  mcp:
+    build:
+      context: services/server
+      dockerfile: Dockerfile.prod
+    image: deval/backend:latest
+    volumes:
+      - backend_data_prod:/home/app/var/lib/app_data
+    env_file:
+      - env/.env.prod
+    environment:
+      - SERVICE_NAME=mcp
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8090
+      # DNS-rebinding protection stays ON in prod — set MCP_ALLOWED_HOSTS in
+      # env/.env.prod. Do NOT set MCP_DISABLE_DNS_REBINDING_PROTECTION here.
+      - CELERY_BROKER_URL=redis://default:Ey%402026%21@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://default:Ey%402026%21@redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - redis
+      - mssql
+      - minio
+      - backend
+    networks:
+      - app-network
+    restart: always
+
   # Redis service
   redis:
     image: 'redis:alpine'
