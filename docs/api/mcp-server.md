@@ -78,9 +78,17 @@ The server **fails closed**: with `MCP_TRANSPORT=streamable-http` and no
 `docker-compose.prod.yml` runs the same `mcp` service from `Dockerfile.prod`
 (which installs the MCP SDK). Unlike debug it is **not** published on a host
 port — the nginx/Caddy ingress terminates TLS and reverse-proxies `/mcp` to
-`mcp:8090` over the internal network. The in-repo reference block is in
-`services/client/nginx.conf`; prod overrides that file with the host-mounted
-`/opt/crest/nginx/nginx.conf`, so **keep that copy in sync**.
+`mcp:8090` over the internal network.
+
+Deploy with `./build_prod.sh up`, which (before `docker compose up --build`):
+
+1. **Preflights** `env/.env.prod` for the MCP vars below and aborts with
+   guidance if any are missing (so the fail-closed `mcp` container doesn't
+   crash-loop).
+2. **Syncs the ingress config** — copies `services/client/nginx.conf` (the
+   `/mcp` block lives there) to the host-mounted `/opt/crest/nginx/nginx.conf`,
+   backing up the previous file, then reloads nginx. So the repo is the source
+   of truth; don't hand-edit the host file (the `.bak.*` is your rollback).
 
 Set in `env/.env.prod`:
 
