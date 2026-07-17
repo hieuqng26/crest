@@ -5,7 +5,8 @@ services:
       context: services/client
       dockerfile: Dockerfile
     image: deval/frontend:latest
-    # ports handled by Caddy on host
+    ports:
+      - "127.0.0.1:8080:80"
     environment:
       - SERVER_URL=http://backend:5000
       - DOMAIN=localhost
