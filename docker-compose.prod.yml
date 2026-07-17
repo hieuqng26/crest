@@ -6,7 +6,10 @@ services:
       dockerfile: Dockerfile
     image: deval/frontend:latest
     ports:
-      - "127.0.0.1:8080:80"
+      # Caddy on the host terminates public TLS and reverse-proxies to the app,
+      # which nginx serves on :9000 (ssl). Port 80 is redirect-only, so Caddy
+      # must target 9000 — pointing it at 80 causes an infinite HTTP->HTTPS loop.
+      - "127.0.0.1:9000:9000"
     environment:
       - SERVER_URL=http://backend:5000
       - DOMAIN=localhost
